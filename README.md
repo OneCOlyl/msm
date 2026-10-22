@@ -2,7 +2,7 @@
 
 Мод для [MS_KIT](https://github.com/Kysnez4/MS_KIT): Magic Survival на 2–4 игроков через интернет, в том числе из разных городов и стран. Свой сервер (VPS) не нужен — он встроен в мод и запускается у одного из игроков (хоста) по кнопке. Телефоны соединяются через бесплатную виртуальную сеть: Anywherelan, Tailscale или ZeroTier.
 
-> **Игрокам нужен только один файл — [`release/coop.zip`](release/coop.zip).** Остальное в репозитории — исходный код для тех, кто хочет изменить или пересобрать мод (см. «Для разработчиков» в конце).
+> **Игрокам нужен только один файл — [`coop.zip`](https://github.com/OneCOlyl/msm/releases/latest/download/coop.zip)** (страница [релизов](https://github.com/OneCOlyl/msm/releases)). Остальное в репозитории — исходный код для тех, кто хочет изменить или пересобрать мод (см. «Для разработчиков» в конце).
 
 ## Что даёт мод
 
@@ -19,7 +19,7 @@
 
 - Android-телефон с процессором arm64 у каждого игрока.
 - Приложение виртуальной сети на всех телефонах: [Anywherelan](https://f-droid.org/packages/com.anywherelan.awl/), [Tailscale](https://tailscale.com/download/android) или [ZeroTier](https://www.zerotier.com/download/). Все игроки должны быть в одной сети.
-- Файл мода [`release/coop.zip`](release/coop.zip).
+- Файл мода [`coop.zip`](https://github.com/OneCOlyl/msm/releases/latest/download/coop.zip) из последнего [релиза](https://github.com/OneCOlyl/msm/releases).
 
 ## Установка
 
@@ -102,3 +102,5 @@ REF=/путь/к/ref bash build.sh
 ```
 
 **Протокол v2:** JSON-строки поверх TCP. Клиент отправляет `CREATE_ROOM`, `JOIN_ROOM`, `PLAYER_STATE`, `EVENT`, `PING`, `LEAVE_ROOM`. Сервер отвечает `WELCOME`, `ROOM_CREATED`, `ROOM_JOINED`, `PLAYER_JOINED`, `PLAYER_LEFT`, `REMOTE_PLAYER_STATE`, `REMOTE_EVENT`, `PONG`, `ERROR`. `JOIN_ROOM` с пустым кодом заходит в комнату на сервере или создаёт её.
+
+**Новая версия:** поднимите `version` в `mod/coop/mod.json` и `ModVersion` в `mod/coop/CoopMod.cs`, затем отправьте метку `git tag v1.0.1 && git push origin v1.0.1`. GitHub Actions соберёт мод, прогонит тесты и опубликует релиз с `coop.zip`.
