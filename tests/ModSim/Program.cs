@@ -68,7 +68,7 @@ Console.WriteLine("2г. мобильная сеть: пакеты приходя
     var rnd = new Random(7);
     var sw = System.Diagnostics.Stopwatch.StartNew();
     double nextSend = 0, nextPump = 0, lastFrame = 0, x0 = 97;   // от -3 до +5 от старта друга: союзник всё время в пределах дальности 6
-    var frameX = new List<double>();
+    var frameX = new List<double>(); var frameT = new List<double>();
     B.Combat.Pos = new Vector3((float)x0, 104, 0); TickAll(600);
     double t0 = sw.Elapsed.TotalSeconds;
     while (sw.Elapsed.TotalSeconds - t0 < 2.0)
@@ -77,15 +77,22 @@ Console.WriteLine("2г. мобильная сеть: пакеты приходя
         B.Combat.Pos = new Vector3((float)(x0 + 4 * now), 104, 0);        // друг идёт ровно 4 ед/с
         if (now >= nextSend) { B.Tick(); nextSend = now + 0.1; }            // друг отправляет 10 раз в секунду
         if (now >= nextPump) { A.Call("Pump"); nextPump = now + (rnd.NextDouble() < 0.3 ? 0.15 + rnd.NextDouble() * 0.15 : 0.02 + rnd.NextDouble() * 0.06); }
-        if (now - lastFrame >= 1.0 / 60) { lastFrame = now; A.Call("FrameStep"); frameX.Add(g.Offset.x); }
+        if (now - lastFrame >= 1.0 / 60) { lastFrame = now; A.Call("FrameStep"); frameX.Add(g.Offset.x); frameT.Add(sw.Elapsed.TotalSeconds); }
         Thread.Sleep(2);
     }
-    // после разгона: шаги по кадрам должны быть ровными (идеал 4/60 ≈ 0,067)
-    var steps = frameX.Skip(40).Zip(frameX.Skip(41), (p0, p1) => p1 - p0).Where(d => Math.Abs(d) < 1).ToList();
-    double mean = steps.Average(), sd = Math.Sqrt(steps.Average(d => (d - mean) * (d - mean)));
+    // после разгона: скорость союзника по кадрам (шаг / длина кадра) должна быть ровной, идеал — 4 ед/с.
+    // Делим на реальную длину кадра: под нагрузкой кадры неравномерны, и сам шаг за кадр «гуляет» без вины мода.
+    var speeds = new List<double>(); var steps = new List<double>();
+    for (int i = 40; i + 1 < frameX.Count; i++)
+    {
+        double d = frameX[i + 1] - frameX[i], dtf = frameT[i + 1] - frameT[i];
+        if (Math.Abs(d) > 1 || dtf < 0.005) continue;
+        steps.Add(d); speeds.Add(d / dtf);
+    }
+    double mean = speeds.Average(), sd = Math.Sqrt(speeds.Average(v => (v - mean) * (v - mean)));
     int stops = steps.Count(d => d < 0.01), back = steps.Count(d => d < -0.005);
-    Console.WriteLine($"    шаг за кадр: средний {mean:0.000}, разброс {sd:0.000}, остановок {stops}, откатов назад {back} (кадров {steps.Count})");
-    Check(sd < 0.01, $"движение ровное: разброс шага {sd:0.000} (меньше 0,01)");
+    Console.WriteLine($"    скорость союзника: средняя {mean:0.00} ед/с (друг идёт 4), разброс {sd:0.00} ({sd / mean * 100:0}%), остановок {stops}, откатов {back} (кадров {steps.Count})");
+    Check(sd / mean < 0.15, $"движение ровное: скорость колеблется на {sd / mean * 100:0}% (меньше 15%)");
     Check(stops <= 2 && back == 0, $"без остановок и откатов: {stops} остановок, {back} откатов");
 }
 

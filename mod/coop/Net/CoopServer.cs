@@ -18,7 +18,7 @@ namespace MagicSurvivalCoop.Net
     public sealed class CoopServer : IDisposable
     {
         private const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-        private const double IdleTimeoutSec = 25;
+        private const double IdleTimeoutSec = 40;
 
         private readonly object _lock = new object();
         private readonly Dictionary<string, Room> _rooms = new Dictionary<string, Room>(StringComparer.OrdinalIgnoreCase);

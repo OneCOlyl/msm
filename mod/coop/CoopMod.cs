@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.2.0";
+        public const string ModVersion = "1.2.1";
 
         public ModDef Define() => new ModDef
         {
@@ -110,7 +110,12 @@ namespace MagicSurvivalCoop
         private int _writeFails;
         private Type _compType;
         private FieldInfo _compTr;
-        private PropertyInfo _compPos;
+        private Transform _heroTr;                 // объект героя — один раз за бой (без мусора в каждом кадре)
+        private bool _heroTrTried;
+        private double _heroTrRetryAt;
+        private Action _sendAction;
+        private int _bestSpell;
+        private double _bestSpellAt = -1;
         private const int PortSpan = 4;            // если основной порт занят, хост берёт следующий (до +4), клиенты ищут его сами
 
         // интерфейс
@@ -133,6 +138,7 @@ namespace MagicSurvivalCoop
             public readonly List<(double t, double x, double y)> Track = new List<(double, double, double)>();
             public double ClockOff;
             public bool HasClock;
+            public Transform GhostTr;          // объект союзника — берётся один раз, а не каждый кадр
             public ICompanion Ghost;
             public int GhostSpell = -1;
             public double NextSpawn;
@@ -161,6 +167,7 @@ namespace MagicSurvivalCoop
             ctx.Events.On("battleEnd", _ => ctx.Guard("конец боя", OnBattleEnd));
             ctx.Events.On("enemyDeath", _ => { if (_inRun) _kills++; });
 
+            _sendAction = SendState;
             ctx.Every(50, Tick);
             try { ctx.Before("C_Battle_Manager", "Update", 0, (self, args) => FrameStep()); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
@@ -267,7 +274,7 @@ namespace MagicSurvivalCoop
             double interval = 1.0 / Math.Max(1, _ctx.Setting("sendHz"));
             _nextSend = Math.Max(now, _nextSend + interval);                // ровный шаг без накопления сдвига
             if (_nextSend - now > interval) _nextSend = now + interval;
-            _ctx.Guard("отправка состояния", SendState);
+            _ctx.Guard("отправка состояния", _sendAction);
         }
 
         private void Pump()
@@ -457,6 +464,8 @@ namespace MagicSurvivalCoop
             _wasDead = false;
             _healReadyAt = 0; _nextSos = 0;
             _fpsSince = -1; _fpsFrames = 0; _fpsLogged = false;
+            _heroTr = null; _heroTrTried = false; _bestSpellAt = -1;
+            foreach (var p in _partners.Values) p.GhostTr = null;
             foreach (var p in _partners.Values) { p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; }
             DestroyBtn(ref _menuBtn);
             _nextSend = 0;
@@ -489,13 +498,19 @@ namespace MagicSurvivalCoop
             }
 
             // лучшее «стреляющее» заклинание — им будет бить ваш призрак у друзей
-            int spell = 0, best = 0;
-            if (battle)
+            double nowS = Clock.Elapsed.TotalSeconds;
+            if (!battle) _bestSpell = 0;
+            else if (nowS - _bestSpellAt > 1)               // уровни заклинаний меняются редко — раз в секунду достаточно
+            {
+                _bestSpellAt = nowS;
+                int best = 0; _bestSpell = 0;
                 foreach (var id in GhostSpells)
                 {
                     int lvl = _spells.Level(id);
-                    if (lvl > best) { best = lvl; spell = id; }
+                    if (lvl > best) { best = lvl; _bestSpell = id; }
                 }
+            }
+            int spell = _bestSpell;
 
             if (dead && !_wasDead) _ctx.Log("герой погиб");
             _wasDead = dead;
@@ -549,6 +564,7 @@ namespace MagicSurvivalCoop
                     _ctx.Mark("союзник: создание");
                     p.Ghost = _companions.Spawn(0, 0, p.Spell, color, 0.75, CompanionMode.Follow);
                     p.GhostSpell = p.Spell;
+                    p.GhostTr = null;
                     if (p.Ghost == null) continue;
                     p.Ghost.Speed = 200;   // библиотека сразу ставит союзника в нашу сглаженную точку, плавность — за нами
                     _ctx.Log($"союзник «{p.Name}» создан, слот {p.Ghost.Slot}, заклинание {p.Spell}");
@@ -581,16 +597,42 @@ namespace MagicSurvivalCoop
                 }
                 if (_inRun && _client.Connected) MaybeSend();
                 if (!_inRun || _partners.Count == 0 || _spells.Paused) return;
-                var hp = _enemies.HeroPos;
-                if (!hp.HasValue) return;
+                if (!HeroPosition(out var hx, out var hy, out var hz)) return;
                 _frameSeenSec = now;
                 foreach (var p in _partners.Values)
-                    if (p.Ghost != null && p.Ghost.Alive) PlaceGhost(p, dt, hp.Value.x, hp.Value.y, hp.Value.z, _directWrite);
+                    if (p.Ghost != null && p.Ghost.Alive) PlaceGhost(p, dt, hx, hy, hz, _directWrite);
             }
             catch (Exception e)
             {
                 if (++_writeFails == 1 || _writeFails % 500 == 0) _ctx.Log("кадр: " + e.Message);
             }
+        }
+
+        /// <summary>Позиция героя: объект героя берётся один раз за бой, дальше — одно чтение position без лишних объектов.</summary>
+        private bool HeroPosition(out double x, out double y, out double z)
+        {
+            x = y = z = 0;
+            double nowS = Clock.Elapsed.TotalSeconds;
+            if (_heroTr == null && (!_heroTrTried || nowS >= _heroTrRetryAt))
+            {
+                _heroTrTried = true;
+                _heroTrRetryAt = nowS + 1;                 // не нашли — следующая попытка не раньше чем через секунду
+                try
+                {
+                    var hero = typeof(BattleState).GetProperty("Hero", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+                    _heroTr = hero?.GetType().GetProperty("Transform_ObjUnit", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(hero) as Transform;
+                }
+                catch { _heroTr = null; }
+            }
+            if (_heroTr != null)
+            {
+                try { var v = _heroTr.position; x = v.x; y = v.y; z = v.z; return true; }
+                catch { _heroTr = null; }
+            }
+            var hp = _enemies.HeroPos;                     // запасной путь через библиотеку
+            if (!hp.HasValue) return false;
+            x = hp.Value.x; y = hp.Value.y; z = hp.Value.z;
+            return true;
         }
 
         /// <summary>
@@ -627,7 +669,7 @@ namespace MagicSurvivalCoop
                 if (len < 1e-3) { ox = 0.8; oy = 0; } else { ox = ox / len * 0.8; oy = oy / len * 0.8; }
             }
             p.Ghost.Offset = new Vector2((float)ox, (float)oy);
-            if (writeTransform) WriteGhostTransform(p.Ghost, heroX + ox, heroY + oy, heroZ);
+            if (writeTransform) WriteGhostTransform(p, heroX + ox, heroY + oy, heroZ);
         }
 
         /// <summary>
@@ -671,21 +713,20 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>Ставит объект союзника сразу (библиотека сама двигает его только 20 раз в секунду).</summary>
-        private void WriteGhostTransform(ICompanion ghost, double x, double y, double z)
+        private void WriteGhostTransform(Partner p, double x, double y, double z)
         {
             try
             {
-                var t = ghost.GetType();
-                if (t != _compType)
+                if (p.GhostTr == null)
                 {
-                    _compType = t;
-                    _compTr = t.GetField("Tr", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    _compPos = t.GetProperty("Pos", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    var t = p.Ghost.GetType();
+                    if (t != _compType) { _compType = t; _compTr = t.GetField("Tr", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
+                    if (_compTr == null) return;
+                    p.GhostTr = _compTr.GetValue(p.Ghost) as Transform;
+                    if (p.GhostTr == null) return;
                 }
-                if (_compTr == null) return;
-                if (_compTr.GetValue(ghost) is not Transform tr) return;
-                tr.position = new Vector3((float)x, (float)y, (float)z);
-                if (_compPos != null && _compPos.CanWrite) _compPos.SetValue(ghost, new Vector2((float)x, (float)y));
+                // библиотека сама подтягивает внутреннюю точку к герой+Offset (скорость 200), поэтому пишем только объект
+                p.GhostTr.position = new Vector3((float)x, (float)y, (float)z);
             }
             catch (Exception e)
             {

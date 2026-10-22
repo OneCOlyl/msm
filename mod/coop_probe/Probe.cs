@@ -6,16 +6,18 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using ModKit;
+using UnityEngine;
 
 namespace MagicSurvivalCoop.Probe
 {
     /// <summary>
-    /// Разведчик для синхронизации врагов. Сам по себе ничего не даёт игроку: записывает, как игра создаёт и двигает врагов,
-    /// и проводит три коротких опыта в первом бою после включения:
-    ///   1. 0–60 с   — наблюдение: каждый новый враг (тип, параметры, место), вызовы спавна менеджера боя, счётчики;
-    ///   2. 60–90 с  — выключение спавна игры (Create_UnitEnemy_Stop) на 15 с и попытка включить его обратно;
-    ///   3. 90–110 с — «марионетки»: заморозка/оглушение врагов и ручной сдвиг — остаются ли они там, куда их поставили.
-    /// Итог — UserData/ModKit/coop_probe.txt (подробно) и строки [coop_probe] в modkit.log (кратко).
+    /// Разведка 2 для синхронизации врагов. Проверяет механизмы, которые понадобятся «миру хоста»:
+    ///   A (15–25 с) — создать врага самим: Create_UnitEnemyBoss и копия шаблона AObj_UnitEnemy + Start_Unit;
+    ///   B (30–36 с) — марионетки: остановка корутин врага и кинематическое тело; держится ли враг там, куда его ставят каждый кадр;
+    ///   C (40 с)    — сколько стоит двигать всех врагов каждый кадр;
+    ///   D (45–55 с) — убирать врагов игры сразу после появления (Unit_Destroy_Simple) — без засчитанных убийств?
+    ///   E (58–68 с) — погасить спавн обнулением числа врагов в пачке.
+    /// Время — игровое (на паузе стоит). Отчёт — UserData/ModKit/coop_probe.txt, перед каждым рискованным шагом он сохраняется.
     /// </summary>
     public class ProbeMod : IKitMod
     {
@@ -23,8 +25,8 @@ namespace MagicSurvivalCoop.Probe
         {
             Id = "coop_probe",
             Name = "Кооператив: разведка врагов",
-            Version = "0.1.0",
-            Description = "Диагностика для синхронизации врагов: записывает, как игра создаёт и двигает врагов (один бой ~2 минуты). Потом выключите.",
+            Version = "0.2.0",
+            Description = "Диагностика для синхронизации врагов, этап 2: создание врагов, марионетки, нагрузка (один бой ~70 с игрового времени). Потом выключите.",
             Depends = { ["modkit_combat"] = ">=1.0" },
             OnEnable = ctx => _p = new Probe(ctx),
             OnDisable = ctx => { _p?.Finish("мод выключен"); _p = null; },
@@ -34,395 +36,413 @@ namespace MagicSurvivalCoop.Probe
 
     internal sealed class Probe
     {
-        private const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
         private const BindingFlags Inst = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        private const BindingFlags Any = Inst | BindingFlags.Static;
+
+        /// <summary>Только для тестов на ПК (через рефлексию).</summary>
+        private static string DirOverride;
 
         private readonly ModContext _ctx;
         private readonly IEnemies _enemies;
-        private readonly ICombat _combat;
         private readonly StringBuilder _out = new StringBuilder();
         private readonly string _path;
-        private readonly Stopwatch _sw = Stopwatch.StartNew();
 
         private object _mgr;
-        private Type _mgrType, _enemyType;
-        private bool _inBattle, _done, _dumped;
-        private double _battleT0 = -1;
-        private int _frames, _spawnsTotal, _spawnsDetailed, _deaths, _stage;
-        private readonly Dictionary<int, int> _spawnsByType = new Dictionary<int, int>();
-        private readonly Dictionary<string, int> _mgrCalls = new Dictionary<string, int>();
-        private int _spawnsInWindow;
-        private double _nextSummary;
-        private object _sampleEnemy;
-        private double _sampleAt = -1;
+        private Type _enemyType;
+        private bool _inBattle, _done;
+        private double _t0 = -1;
+        private int _stage, _spawns, _deaths, _frames;
 
-        // опыт 3
-        private readonly List<(IEnemy e, string how, double x0, double y0, double tx, double ty)> _puppets = new List<(IEnemy, string, double, double, double, double)>();
+        // создание своих врагов
+        private bool _ourCall;
+        private readonly List<object> _ourEnemies = new List<object>();
+        private readonly List<(double t, int unitId, bool ours, string where)> _recentSpawns = new List<(double, int, bool, string)>();
+        private Dictionary<string, string> _snap;
+
+        // марионетки
+        private readonly List<Puppet> _puppets = new List<Puppet>();
+        private sealed class Puppet { public object E; public string Group; public double Phase, Tx, Ty, MaxErr; public bool Driven, HasTarget; }
+        private double _driveUntil;
+
+        // подавление
+        private bool _suppress;
+        private readonly Queue<object> _toDestroy = new Queue<object>();
+        private int _destroyed, _deathsAtSuppress, _spawnsAtStage;
+        private readonly Dictionary<string, object> _savedFields = new Dictionary<string, object>();
 
         public Probe(ModContext ctx)
         {
             _ctx = ctx;
             _enemies = ctx.Use<IEnemies>("modkit_combat");
-            _combat = ctx.Use<ICombat>("modkit_combat");
             string dir = DirOverride;
             if (dir == null) { try { dir = Paths.Dir; } catch { dir = "/sdcard/MelonLoader/com.vkslrzm.Zombix/UserData/ModKit"; } }
             _path = Path.Combine(dir, "coop_probe.txt");
-            W($"=== coop_probe 0.1.0, {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
-            ctx.Log("разведка включена: начните бой и играйте ~2 минуты; отчёт — " + _path);
+            W($"=== coop_probe 0.2.0, {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+            ctx.Log("разведка 2 включена: начните бой; опыты идут ~70 с игрового времени");
+            try { _enemyType = Hooks.FindType("C_Battle_EnemyUnit"); }
+            catch (Exception e) { W("типы: " + e.Message); }
 
-            ctx.Guard("типы", FindTypes);
-            ctx.Guard("хуки", InstallHooks);
+            ctx.Before("C_Battle_Manager", "Update", 0, (s, a) => { _mgr = s; _frames++; Frame(); });
+            ctx.After("C_Battle_EnemyUnit", "Start_Unit", 3, (s, a) => OnSpawn(s, a));
             ctx.Events.On("battleStart", _ => ctx.Guard("начало боя", OnBattleStart));
-            ctx.Events.On("battleEnd", _ => { if (_inBattle) Finish("бой закончился раньше"); _inBattle = false; });
+            ctx.Events.On("battleEnd", _ => { if (_inBattle && !_done) Finish("бой закончился раньше"); _inBattle = false; });
             ctx.Events.On("enemyDeath", _ => _deaths++);
             ctx.Every(100, () => ctx.Guard("шаг", Step));
-            ctx.OnCleanup(Flush);
+            ctx.OnCleanup(() => { Restore(); Flush(); });
         }
 
-        // ------------------------------------------------------------ вывод
+        // ------------------------------------------------------------ вывод и время
 
-        private void W(string line) { _out.AppendLine(line); }
-
+        private void W(string line) => _out.AppendLine(line);
         private void Flush()
         {
             try { File.WriteAllText(_path, _out.ToString(), new UTF8Encoding(false)); }
             catch (Exception e) { _ctx.Log("не удалось записать отчёт: " + e.Message); }
         }
+        private double GameT => _t0 < 0 ? 0 : _ctx.Timer.Now - _t0;
+        private string T => $"[{GameT,6:0.00}]";
 
-        /// <summary>Ускорение времени — только для тестов на ПК (через рефлексию).</summary>
-        private static double TimeScale = 1;
-        /// <summary>Папка отчёта — только для тестов на ПК.</summary>
-        private static string DirOverride;
-        private double Now => _sw.Elapsed.TotalSeconds * TimeScale;
-        private double BattleT => _battleT0 < 0 ? 0 : Now - _battleT0;
+        // ------------------------------------------------------------ рефлексия
 
-        // ------------------------------------------------------------ типы и дамп
-
-        private void FindTypes()
+        private static object Get(object o, string name)
         {
-            _mgrType = Hooks.FindType("C_Battle_Manager");
-            _enemyType = Hooks.FindType("C_Battle_EnemyUnit");
-            W($"C_Battle_Manager: {_mgrType?.FullName ?? "НЕ НАЙДЕН"}; C_Battle_EnemyUnit: {_enemyType?.FullName ?? "НЕ НАЙДЕН"}");
-            _ctx.Log($"типы: менеджер {(_mgrType != null ? "есть" : "НЕТ")}, враг {(_enemyType != null ? "есть" : "НЕТ")}");
+            if (o == null) return null;
+            var p = o.GetType().GetProperty(name, Any);
+            if (p != null) return p.GetValue(p.GetGetMethod(true)?.IsStatic == true ? null : o);
+            var f = o.GetType().GetField(name, Any);
+            return f?.GetValue(f.IsStatic ? null : o);
+        }
+        private static bool Set(object o, string name, object v)
+        {
+            var p = o?.GetType().GetProperty(name, Any);
+            if (p == null || !p.CanWrite) return false;
+            var val = v == null || p.PropertyType.IsInstanceOfType(v) ? v : Convert.ChangeType(v, p.PropertyType);
+            p.SetValue(p.GetSetMethod(true)?.IsStatic == true ? null : o, val);
+            return true;
+        }
+        private static object Call(object o, string name, params object[] args)
+        {
+            var m = o.GetType().GetMethods(Inst).FirstOrDefault(x => x.Name == name && x.GetParameters().Length == args.Length)
+                    ?? throw new MissingMethodException(o.GetType().Name + "." + name + "/" + args.Length);
+            var ps = m.GetParameters();
+            var conv = args.Select((a, i) => a == null || ps[i].ParameterType.IsInstanceOfType(a) ? a : Convert.ChangeType(a, ps[i].ParameterType)).ToArray();
+            return m.Invoke(o, conv);
+        }
+        private static string Err(Exception e)
+        {
+            var x = e is TargetInvocationException t && t.InnerException != null ? t.InnerException : e;
+            return x.GetType().Name + ": " + x.Message;
         }
 
-        private static bool Junk(string n) =>
-            n.StartsWith("NativeMethodInfoPtr") || n.StartsWith("NativeFieldInfoPtr") || n.StartsWith("Il2Cpp") || n.StartsWith("<") || n == "NativeClassPtr";
+        private static Transform Tr(object enemy) => Get(enemy, "Transform_ObjUnit") as Transform;
 
-        private static string TypeName(Type t)
+        private static (double x, double y)? Pos(object enemy)
         {
-            if (t == null) return "?";
-            if (!t.IsGenericType) return t.Name;
-            return t.Name.Split('`')[0] + "<" + string.Join(",", t.GetGenericArguments().Select(TypeName)) + ">";
-        }
-
-        private void DumpType(Type t, string title)
-        {
-            if (t == null) return;
-            W("");
-            W($"##### {title}: {t.FullName} : {t.BaseType?.FullName}");
-            var props = t.GetProperties(All).Where(p => !Junk(p.Name)).OrderBy(p => p.Name).ToList();
-            W($"--- поля/свойства ({props.Count})");
-            foreach (var p in props) W($"  {TypeName(p.PropertyType)} {p.Name}{(p.GetGetMethod(true)?.IsStatic == true ? " [static]" : "")}");
-            var methods = t.GetMethods(All).Where(m => !m.IsSpecialName && !Junk(m.Name)).OrderBy(m => m.Name).ToList();
-            W($"--- методы ({methods.Count})");
-            foreach (var m in methods)
-                W($"  {TypeName(m.ReturnType)} {m.Name}({string.Join(", ", m.GetParameters().Select(a => TypeName(a.ParameterType) + " " + a.Name))}){(m.IsStatic ? " [static]" : "")}");
-        }
-
-        private void DumpOthers()
-        {
-            // остальные типы игры, связанные с врагами и пулами: только имена — чтобы знать, что искать дальше
-            try
-            {
-                var asm = _enemyType?.Assembly;
-                if (asm == null) return;
-                var names = asm.GetTypes().Select(t => t.Name)
-                    .Where(n => n.IndexOf("Enemy", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("Pool", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("Spawn", StringComparison.OrdinalIgnoreCase) >= 0)
-                    .Where(n => !n.StartsWith("<")).Distinct().OrderBy(n => n).ToList();
-                W("");
-                W($"##### типы с Enemy/Pool/Spawn в имени ({names.Count}): {string.Join(", ", names)}");
-            }
-            catch (Exception e) { W("типы сборки: " + e.Message); }
-        }
-
-        // ------------------------------------------------------------ хуки
-
-        private void InstallHooks()
-        {
-            _ctx.Before("C_Battle_Manager", "Update", 0, (s, a) => { _mgr = s; _frames++; });
-
-            _ctx.After("C_Battle_EnemyUnit", "Start_Unit", 3, (s, a) => _ctx.Guard("Start_Unit", () => OnSpawn(s, a)));
-
-            // все методы менеджера, создающие или останавливающие врагов (менеджер один — хуки дешёвые)
-            if (_mgrType != null)
-            {
-                var targets = _mgrType.GetMethods(Inst | BindingFlags.DeclaredOnly)
-                    .Where(m => !m.IsSpecialName && !Junk(m.Name))
-                    .Where(m => m.Name.StartsWith("Create_Unit") || m.Name.Contains("EnemyLevelUp") || m.Name.Contains("EnenmyClear") || m.Name.Contains("EnemyClear"))
-                    .GroupBy(m => (m.Name, m.GetParameters().Length)).Select(g => g.First()).ToList();
-                foreach (var m in targets)
-                {
-                    string key = $"{m.Name}/{m.GetParameters().Length}";
-                    try
-                    {
-                        _ctx.Before("C_Battle_Manager", m.Name, m.GetParameters().Length, (s, a) =>
-                        {
-                            _mgrCalls[key] = _mgrCalls.TryGetValue(key, out var n) ? n + 1 : 1;
-                            if (_mgrCalls[key] <= 5) W($"[{BattleT,6:0.00}] менеджер.{m.Name}({Args(a)})");
-                        });
-                        W($"хук: C_Battle_Manager.{key}");
-                    }
-                    catch (Exception e) { W($"хук не поставлен: {key}: {e.Message}"); }
-                }
-            }
-        }
-
-        private static string Args(object[] a)
-        {
-            if (a == null) return "";
-            return string.Join(", ", a.Select(x => x == null ? "null" : x is float f ? f.ToString("0.###") : x is double d ? d.ToString("0.###") : x.ToString()));
-        }
-
-        private void OnSpawn(object enemy, object[] a)
-        {
-            if (!_inBattle) return;
-            _spawnsTotal++; _spawnsInWindow++;
-            int unitId = a != null && a.Length > 0 ? Convert.ToInt32(a[0]) : -1;
-            _spawnsByType[unitId] = _spawnsByType.TryGetValue(unitId, out var n) ? n + 1 : 1;
-            if (_spawnsDetailed < 40)
-            {
-                _spawnsDetailed++;
-                var pos = Pos(enemy);
-                var hero = _enemies.HeroPos;
-                string rel = pos.HasValue && hero.HasValue ? $"от героя ({pos.Value.x - hero.Value.x:0.0}, {pos.Value.y - hero.Value.y:0.0})" : "место ?";
-                W($"[{BattleT,6:0.00}] враг: тип {unitId}, varA {Args(new[] { a.ElementAtOrDefault(1) })}, varB {Args(new[] { a.ElementAtOrDefault(2) })}, {rel}, объект «{Name(enemy)}» #{Hash(enemy)}");
-            }
-            if (_sampleEnemy == null) { _sampleEnemy = enemy; _sampleAt = Now; W(""); W("--- значения полей первого врага сразу после Start_Unit:"); DumpValues(enemy); }
-        }
-
-        /// <summary>Адрес объекта игры (у Il2Cpp-обёрток — Pointer): по нему видно, переиспользуется ли объект врага из пула.</summary>
-        private static string Hash(object o)
-        {
-            try { var p = o.GetType().GetProperty("Pointer", Inst)?.GetValue(o); return p is IntPtr ip ? ip.ToString("x") : o.GetHashCode().ToString("x"); }
-            catch { return "?"; }
-        }
-
-        private string Name(object unityObj)
-        {
-            try { return unityObj.GetType().GetProperty("name", Inst)?.GetValue(unityObj) as string ?? "?"; } catch { return "?"; }
-        }
-
-        private (double x, double y)? Pos(object enemy)
-        {
-            try
-            {
-                var tr = enemy.GetType().GetProperty("Transform_ObjUnit", Inst)?.GetValue(enemy);
-                if (tr == null) return null;
-                var p = tr.GetType().GetProperty("position", Inst)?.GetValue(tr);
-                if (p == null) return null;
-                double x = Convert.ToDouble(p.GetType().GetField("x").GetValue(p)), y = Convert.ToDouble(p.GetType().GetField("y").GetValue(p));
-                return (x, y);
-            }
+            try { var tr = Tr(enemy); if (tr == null) return null; var p = tr.position; return (p.x, p.y); }
             catch { return null; }
         }
-
-        /// <summary>Значения простых полей объекта (числа, флаги, строки) — чтобы понять состояние врага.</summary>
-        private void DumpValues(object o)
+        private static void SetPos(object enemy, double x, double y)
         {
-            if (o == null) return;
-            foreach (var p in o.GetType().GetProperties(Inst).Where(p => !Junk(p.Name)).OrderBy(p => p.Name))
+            var tr = Tr(enemy) ?? throw new InvalidOperationException("нет Transform_ObjUnit");
+            var z = tr.position.z;
+            tr.position = new Vector3((float)x, (float)y, z);
+        }
+        private (double x, double y)? Hero() { var h = _enemies.HeroPos; return h.HasValue ? (h.Value.x, h.Value.y) : ((double, double)?)null; }
+
+        /// <summary>Снимок простых полей менеджера — чтобы увидеть побочные эффекты (счётчики убийств, волна боссов…).</summary>
+        private Dictionary<string, string> Snapshot()
+        {
+            var d = new Dictionary<string, string>();
+            if (_mgr == null) return d;
+            foreach (var p in _mgr.GetType().GetProperties(Any))
             {
                 var t = p.PropertyType;
-                if (!(t.IsPrimitive || t == typeof(string) || t.IsEnum || t.Name == "Vector3" || t.Name == "Vector2")) continue;
-                if (p.GetIndexParameters().Length > 0) continue;
-                try { W($"    {p.Name} = {Fmt(p.GetValue(o))}"); } catch { }
+                if (!(t.IsPrimitive || t == typeof(string)) || p.GetIndexParameters().Length > 0 || p.Name.StartsWith("Native")) continue;
+                try { d[p.Name] = Convert.ToString(p.GetValue(p.GetGetMethod(true).IsStatic ? null : _mgr), System.Globalization.CultureInfo.InvariantCulture); } catch { }
             }
+            return d;
         }
-
-        private static string Fmt(object v)
+        private void DiffSnapshot(string title)
         {
-            if (v == null) return "null";
-            var t = v.GetType();
-            if (t.Name == "Vector3" || t.Name == "Vector2")
-                return "(" + string.Join(", ", t.GetFields().Where(f => !f.IsStatic).Select(f => Convert.ToDouble(f.GetValue(v)).ToString("0.##"))) + ")";
-            if (v is float f1) return f1.ToString("0.###");
-            return v.ToString();
+            var now = Snapshot();
+            var changed = now.Where(kv => _snap != null && _snap.TryGetValue(kv.Key, out var old) && old != kv.Value)
+                             .Select(kv => $"{kv.Key}: {_snap[kv.Key]} → {kv.Value}").ToList();
+            W($"  изменения в менеджере ({title}): {(changed.Count == 0 ? "нет" : string.Join("; ", changed.Take(50)))}");
         }
 
-        /// <summary>Размеры коллекций менеджера (ищем пул врагов).</summary>
-        private void DumpCollections()
-        {
-            if (_mgr == null) { W("менеджер ещё не пойман"); return; }
-            W("");
-            W($"--- коллекции менеджера боя на {BattleT:0} с (имя: тип = размер):");
-            foreach (var p in _mgr.GetType().GetProperties(Inst).Where(p => !Junk(p.Name)).OrderBy(p => p.Name))
-            {
-                var tn = TypeName(p.PropertyType);
-                if (!(tn.Contains("List") || tn.Contains("Array") || tn.Contains("[]") || tn.Contains("Dictionary") || tn.Contains("Queue") || tn.Contains("Stack"))) continue;
-                try
-                {
-                    var v = p.GetValue(_mgr);
-                    if (v == null) { W($"    {p.Name}: {tn} = null"); continue; }
-                    var cnt = v.GetType().GetProperty("Count")?.GetValue(v) ?? v.GetType().GetProperty("Length")?.GetValue(v);
-                    W($"    {p.Name}: {tn} = {cnt ?? "?"}");
-                }
-                catch (Exception e) { W($"    {p.Name}: {tn} — {e.GetType().Name}"); }
-            }
-        }
-
-        // ------------------------------------------------------------ бой и опыты
+        // ------------------------------------------------------------ события
 
         private void OnBattleStart()
         {
             if (_done) return;
             _inBattle = true;
-            _battleT0 = Now;
-            _stage = 1;
-            _nextSummary = 10;
-            W("");
-            W($"===== бой начался =====");
-            _ctx.Toast("Разведка: играйте как обычно ~2 минуты", 3);
-            _ctx.Log("бой начался — этап 1: наблюдение 60 с");
+            _t0 = _ctx.Timer.Now;
+            _stage = 0;
+            W(""); W("===== бой начался =====");
+            _ctx.Toast("Разведка 2: играйте как обычно ~70 с", 3);
+            Flush();
         }
+
+        private void OnSpawn(object enemy, object[] a)
+        {
+            try
+            {
+                if (!_inBattle) return;
+                _spawns++;
+                int unitId = a != null && a.Length > 0 ? Convert.ToInt32(a[0]) : -1;
+                var pos = Pos(enemy); var h = Hero();
+                string where = pos.HasValue && h.HasValue ? $"от героя ({pos.Value.x - h.Value.x:0.0}, {pos.Value.y - h.Value.y:0.0})" : "?";
+                if (_ourCall) _ourEnemies.Add(enemy);
+                if (_recentSpawns.Count >= 400) _recentSpawns.RemoveAt(0);
+                _recentSpawns.Add((GameT, unitId, _ourCall, where));
+                if (_suppress && !_ourCall) _toDestroy.Enqueue(enemy);   // убрать на следующем кадре, не внутри Start_Unit
+            }
+            catch (Exception e) { W("OnSpawn: " + Err(e)); }
+        }
+
+        /// <summary>Каждый кадр боя: подавление, ведение марионеток.</summary>
+        private void Frame()
+        {
+            if (!_inBattle || _done) return;
+            try
+            {
+                while (_toDestroy.Count > 0)
+                {
+                    var e = _toDestroy.Dequeue();
+                    try { Call(e, "Unit_Destroy_Simple"); _destroyed++; }
+                    catch (Exception ex) { if (_destroyed == 0) W("Unit_Destroy_Simple: " + Err(ex)); }
+                }
+                if (GameT < _driveUntil && _ctx.Timer.Delta > 0)
+                {
+                    var h = Hero(); if (h == null) return;
+                    double ang = GameT * 1.5;
+                    foreach (var p in _puppets)
+                    {
+                        if (!p.Driven) continue;
+                        var before = Pos(p.E);                                // отклонение от точки, поставленной в прошлом кадре
+                        if (before.HasValue && p.HasTarget) p.MaxErr = Math.Max(p.MaxErr, Math.Sqrt(Math.Pow(before.Value.x - p.Tx, 2) + Math.Pow(before.Value.y - p.Ty, 2)));
+                        p.Tx = h.Value.x + Math.Cos(ang + p.Phase) * 4; p.Ty = h.Value.y + Math.Sin(ang + p.Phase) * 4; p.HasTarget = true;
+                        SetPos(p.E, p.Tx, p.Ty);
+                    }
+                }
+            }
+            catch (Exception e) { W($"{T} кадр: {Err(e)}"); }
+        }
+
+        // ------------------------------------------------------------ сценарий
 
         private void Step()
         {
             if (!_inBattle || _done) return;
-            double t = BattleT;
-
-            if (!_dumped && _mgr != null)
+            double t = GameT;
+            switch (_stage)
             {
-                _dumped = true;
-                DumpType(_mgrType, "МЕНЕДЖЕР БОЯ");
-                DumpType(_enemyType, "ВРАГ");
-                DumpOthers();
-                Flush();
-                _ctx.Log("структура типов записана");
+                case 0 when t >= 15: _stage = 1; _ctx.Guard("A1", ExpBoss); break;
+                case 1 when t >= 17: _stage = 2; _ctx.Guard("A1 итог", ExpBossResult); break;
+                case 2 when t >= 20: _stage = 3; _ctx.Guard("A2", ExpInstantiate); break;
+                case 3 when t >= 22: _stage = 4; _ctx.Guard("A2 итог", ExpInstantiateResult); break;
+                case 4 when t >= 30: _stage = 5; _ctx.Guard("B", PuppetsStart); break;
+                case 5 when t >= 31: _stage = 6; _ctx.Guard("B", () => PuppetsCheck("через 1 с")); break;
+                case 6 when t >= 33: _stage = 7; _ctx.Guard("B", () => PuppetsCheck("через 3 с")); break;
+                case 7 when t >= 36: _stage = 8; _ctx.Guard("B", () => PuppetsCheck("через 6 с (ведение закончилось)")); break;
+                case 8 when t >= 40: _stage = 9; _ctx.Guard("C", CostTest); break;
+                case 9 when t >= 45: _stage = 10; _ctx.Guard("D", SuppressStart); break;
+                case 10 when t >= 55: _stage = 11; _ctx.Guard("D итог", SuppressEnd); break;
+                case 11 when t >= 58: _stage = 12; _ctx.Guard("E", ZeroSpawnStart); break;
+                case 12 when t >= 68: _stage = 13; _ctx.Guard("E итог", ZeroSpawnEnd); break;
+                case 13 when t >= 70: Finish("все опыты проведены"); break;
             }
-
-            if (_sampleEnemy != null && _sampleAt > 0 && Now - _sampleAt > 2)
-            {
-                _sampleAt = -1;
-                W(""); W("--- тот же враг через 2 с:"); DumpValues(_sampleEnemy);
-            }
-
-            if (t >= _nextSummary)
-            {
-                _nextSummary += 10;
-                int alive = 0; try { alive = _enemies.Alive.Count; } catch { }
-                W($"[{t,6:0.00}] сводка: живых {alive}, создано за 10 с {_spawnsInWindow} (всего {_spawnsTotal}), смертей {_deaths}, кадров/с {_frames / 10.0:0}");
-                _ctx.Log($"{t:0} с: живых {alive}, новых за 10 с {_spawnsInWindow}, кадров/с {_frames / 10.0:0}");
-                _spawnsInWindow = 0; _frames = 0;
-                if (Math.Abs(t - 30) < 6) DumpCollections();
-                Flush();
-            }
-
-            if (_stage == 1 && t >= 60) { _stage = 2; _ctx.Guard("опыт 2", StopSpawn); }
-            if (_stage == 2 && t >= 75) { _stage = 3; _ctx.Guard("опыт 2б", RestartSpawn); }
-            if (_stage == 3 && t >= 90) { _stage = 4; _ctx.Guard("опыт 3", PuppetsStart); }
-            if (_stage == 4 && t >= 91) { _stage = 5; _ctx.Guard("опыт 3", PuppetsMove); }
-            if (_stage == 5 && t >= 92) { _stage = 6; _ctx.Guard("опыт 3", () => PuppetsCheck("через 1 с")); }
-            if (_stage == 6 && t >= 95) { _stage = 7; _ctx.Guard("опыт 3", () => PuppetsCheck("через 4 с")); }
-            if (_stage == 7 && t >= 104) { _stage = 8; _ctx.Guard("опыт 3", () => PuppetsCheck("через 13 с (заморозка 10 с кончилась)")); }
-            if (_stage == 8 && t >= 110) Finish("все опыты проведены");
         }
 
-        private int _spawnsAtStop;
-
-        private void StopSpawn()
+        // ---- A1: Create_UnitEnemyBoss
+        private void ExpBoss()
         {
-            W(""); W($"===== опыт 2: выключаю спавн игры на 15 с =====");
-            _ctx.Toast("Разведка: спавн врагов выключен на 15 с", 3);
-            _spawnsAtStop = _spawnsTotal;
-            CallMgr("Create_UnitEnemy_Stop");
+            W(""); W("===== A1: Create_UnitEnemyBoss(1, 1) — создаётся ли обычный враг по команде =====");
+            if (_mgr == null) { W("менеджер не пойман"); return; }
+            _snap = Snapshot(); _recentSpawns.Clear();
+            Flush(); _ctx.Mark("A1 Create_UnitEnemyBoss");
+            _ourCall = true;
+            try { Call(_mgr, "Create_UnitEnemyBoss", 1, 1); W($"{T} вызов прошёл"); }
+            catch (Exception e) { W($"{T} ошибка: {Err(e)}"); }
+            finally { _ourCall = false; }
+            W($"  создано прямо во время вызова: {_ourEnemies.Count}" + (_ourEnemies.Count > 0 ? $" ({string.Join("; ", _recentSpawns.Where(s => s.ours).Select(s => $"тип {s.unitId}, {s.where}"))})" : ""));
+            _ctx.Toast("Разведка 2: опыт A — создание врага", 2);
+            Flush();
+        }
+        private void ExpBossResult()
+        {
+            W($"  за 2 с после вызова появилось: {string.Join("; ", _recentSpawns.Select(s => $"{s.t:0.0}с тип {s.unitId}{(s.ours ? " (наш)" : "")} {s.where}"))}");
+            DiffSnapshot("за 2 с после A1");
+            foreach (var e in _ourEnemies.ToList())
+                W($"  наш враг: UnitID {Get(e, "UnitID")}, жив {Get(e, "Unit_IsLive")}, HP {Get(e, "Unit_Hp")}/{Get(e, "UnitApply_HpMax")}, размер {Get(e, "UnitApply_UnitSize")}, имя «{Get(e, "name")}»");
+            Flush();
         }
 
-        private void RestartSpawn()
+        // ---- A2: копия шаблона
+        private object _clone;
+        private (double x, double y) _clonePos;
+        private void ExpInstantiate()
         {
-            int during = _spawnsTotal - _spawnsAtStop;
-            W($"[{BattleT,6:0.00}] за 15 с без спавна создано врагов: {during} {(during == 0 ? "— спавн выключается ✔" : "— спавн НЕ выключился")}");
-            _ctx.Log($"опыт 2: за 15 с выключенного спавна создано {during}");
-            W("включаю спавн обратно: StartCoroutine(\"Create_UnitEnemy\")");
-            bool ok = false;
+            W(""); W("===== A2: копия шаблона AObj_UnitEnemy + Start_Unit(6, 0, 0) =====");
+            var prefab = Get(_mgr, "AObj_UnitEnemy");
+            if (prefab == null) { W("  AObj_UnitEnemy = null"); return; }
+            W($"  шаблон: «{Get(prefab, "name")}», активен {Get(prefab, "activeSelf")}");
+            Flush(); _ctx.Mark("A2 Instantiate");
+            object go;
             try
             {
-                var m = _mgr?.GetType().GetMethods(Inst).FirstOrDefault(x => x.Name == "StartCoroutine" && x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == typeof(string));
-                if (m != null) { m.Invoke(_mgr, new object[] { "Create_UnitEnemy" }); ok = true; }
-                else W("нет StartCoroutine(string)");
+                var objType = typeof(Transform).BaseType?.BaseType;          // UnityEngine.Object
+                var inst = objType?.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault(m => m.Name == "Instantiate" && !m.IsGenericMethod && m.GetParameters().Length == 1);
+                if (inst == null) { W($"  нет Object.Instantiate(Object) у {objType?.FullName}"); return; }
+                go = inst.Invoke(null, new[] { prefab });
+                W($"  копия создана: «{Get(go, "name")}»");
             }
-            catch (Exception e) { W("StartCoroutine: " + (e.InnerException ?? e).Message); }
-            _spawnsAtStop = _spawnsTotal;
-            W(ok ? "вызвано; результат — в следующих сводках (создано за 10 с)" : "не удалось");
-            _ctx.Toast("Разведка: спавн включён обратно", 2);
+            catch (Exception e) { W("  Instantiate: " + Err(e)); Flush(); return; }
+            Flush(); _ctx.Mark("A2 GetComponent");
+            try
+            {
+                var gc = go.GetType().GetMethods(Inst).FirstOrDefault(m => m.Name == "GetComponent" && m.IsGenericMethod && m.GetParameters().Length == 0);
+                _clone = gc?.MakeGenericMethod(_enemyType).Invoke(go, null);
+                W($"  компонент врага: {(_clone != null ? "есть" : "НЕТ")}");
+                if (_clone == null) return;
+                Call(go, "SetActive", true);
+                var h = Hero();
+                Flush(); _ctx.Mark("A2 Start_Unit");
+                _ourCall = true;
+                try { Call(_clone, "Start_Unit", 6, 0f, 0f); } finally { _ourCall = false; }
+                W($"  Start_Unit прошёл; жив {Get(_clone, "Unit_IsLive")}, HP {Get(_clone, "Unit_Hp")}");
+                if (h.HasValue) { SetPos(_clone, h.Value.x + 4, h.Value.y); _clonePos = (h.Value.x + 4, h.Value.y); W("  поставлен в 4 ед справа от героя"); }
+            }
+            catch (Exception e) { W("  " + Err(e)); }
+            Flush();
         }
-
-        private void CallMgr(string name)
+        private void ExpInstantiateResult()
         {
-            if (_mgr == null) { W($"{name}: менеджер не пойман"); return; }
-            var m = _mgr.GetType().GetMethods(Inst).FirstOrDefault(x => x.Name == name && x.GetParameters().Length == 0);
-            if (m == null) { W($"{name}: метода без параметров нет"); return; }
-            _ctx.Mark("вызов " + name);
-            try { m.Invoke(_mgr, null); W($"{name}() вызван"); }
-            catch (Exception e) { W($"{name}: {(e.InnerException ?? e).Message}"); }
+            if (_clone == null) return;
+            var p = Pos(_clone); var h = Hero();
+            W($"  через 2 с: жив {Get(_clone, "Unit_IsLive")}, HP {Get(_clone, "Unit_Hp")}, " +
+              (p.HasValue ? $"сдвинулся на {Math.Sqrt(Math.Pow(p.Value.x - _clonePos.x, 2) + Math.Pow(p.Value.y - _clonePos.y, 2)):0.00}" : "позиция ?") +
+              (p.HasValue && h.HasValue ? $", до героя {Math.Sqrt(Math.Pow(p.Value.x - h.Value.x, 2) + Math.Pow(p.Value.y - h.Value.y, 2)):0.0}" : "") +
+              " (если подходит к герою — ИИ работает, враг полноценный)");
+            Flush();
         }
 
+        // ---- B: марионетки
         private void PuppetsStart()
         {
-            W(""); W("===== опыт 3: марионетки — заморозка/оглушение и ручной сдвиг =====");
-            _ctx.Toast("Разведка: опыт с заморозкой врагов", 3);
-            var hero = _enemies.HeroPos;
-            if (!hero.HasValue) { W("нет героя"); return; }
-            var near = _enemies.Near(hero.Value.x, hero.Value.y, 12).Take(9).ToList();
+            W(""); W("===== B: марионетки =====");
+            W("  «стоп+кин» — StopAllCoroutines + isKinematic, ведём каждый кадр по кругу; «стоп» — только StopAllCoroutines; «кин» — только isKinematic (оба ставим один раз)");
+            var h = Hero(); if (h == null) { W("  нет героя"); return; }
+            var near = _enemies.Near(h.Value.x, h.Value.y, 14).Where(e => !_ourEnemies.Contains(e.Raw)).Take(6).ToList();
+            string[] groups = { "стоп+кин", "стоп+кин", "стоп", "стоп", "кин", "кин" };
             for (int i = 0; i < near.Count; i++)
             {
-                var e = near[i];
-                string how = i % 3 == 0 ? "заморозка" : i % 3 == 1 ? "оглушение" : "без статуса";
-                if (how == "заморозка") _combat.Freeze(e, 10);
-                else if (how == "оглушение") _combat.Stun(e, 10);
-                _puppets.Add((e, how, e.Pos.x, e.Pos.y, 0, 0));
+                var e = near[i].Raw; var g = groups[i];
+                var p = new Puppet { E = e, Group = g, Phase = i * 1.05, Driven = g == "стоп+кин" };
+                try
+                {
+                    if (g.Contains("стоп")) Call(e, "StopAllCoroutines");
+                    if (g.Contains("кин")) { var rb = Get(e, "Rigidbody_ObjUnit"); W($"    тело: {(rb == null ? "нет" : Set(rb, "isKinematic", true) ? "кинематическое" : "нельзя изменить")}"); }
+                    if (!p.Driven) { p.Tx = h.Value.x + Math.Cos(i) * 5; p.Ty = h.Value.y + Math.Sin(i) * 5; p.HasTarget = true; SetPos(e, p.Tx, p.Ty); }
+                    W($"  {g}: подготовлен, HP {Get(e, "Unit_Hp")}");
+                }
+                catch (Exception ex) { W($"  {g}: {Err(ex)}"); }
+                _puppets.Add(p);
             }
-            W($"выбрано врагов: {_puppets.Count}");
+            _driveUntil = GameT + 6;
+            _ctx.Toast("Разведка 2: опыт B — марионетки", 2);
+            Flush();
         }
-
-        private void PuppetsMove()
-        {
-            // сдвигаем каждого на 3 ед от героя (как будто ставим в точку, присланную хостом)
-            var hero = _enemies.HeroPos;
-            for (int i = 0; i < _puppets.Count; i++)
-            {
-                var p = _puppets[i];
-                if (!p.e.Alive || !hero.HasValue) continue;
-                double bx = p.e.Pos.x, by = p.e.Pos.y;
-                double drift = Math.Sqrt((bx - p.x0) * (bx - p.x0) + (by - p.y0) * (by - p.y0));
-                _combat.Pull(p.e, hero.Value.x, hero.Value.y, -3);
-                double tx = p.e.Pos.x, ty = p.e.Pos.y;
-                _puppets[i] = (p.e, p.how, bx, by, tx, ty);
-                W($"  {p.how}: за 1 с до сдвига сам прошёл {drift:0.00}; сдвинут на {Math.Sqrt((tx - bx) * (tx - bx) + (ty - by) * (ty - by)):0.00}");
-            }
-        }
-
         private void PuppetsCheck(string when)
         {
-            W($"--- {when}: насколько враг ушёл от точки, куда его поставили");
-            foreach (var g in _puppets.GroupBy(p => p.how))
+            W($"  --- {when}:");
+            foreach (var p in _puppets)
             {
-                var d = g.Where(p => p.e.Alive).Select(p => Math.Sqrt((p.e.Pos.x - p.tx) * (p.e.Pos.x - p.tx) + (p.e.Pos.y - p.ty) * (p.e.Pos.y - p.ty))).ToList();
-                W($"  {g.Key}: {(d.Count == 0 ? "все погибли" : string.Join(", ", d.Select(x => x.ToString("0.00"))))}");
+                string alive = Convert.ToString(Get(p.E, "Unit_IsLive"));
+                if (p.Driven) W($"    {p.Group}: наибольший уход от поставленной точки за кадр {p.MaxErr:0.000}, жив {alive}, HP {Get(p.E, "Unit_Hp")}");
+                else
+                {
+                    var pos = Pos(p.E);
+                    W($"    {p.Group}: ушёл от точки на {(pos.HasValue ? Math.Sqrt(Math.Pow(pos.Value.x - p.Tx, 2) + Math.Pow(pos.Value.y - p.Ty, 2)).ToString("0.00") : "?")}, жив {alive}, HP {Get(p.E, "Unit_Hp")}");
+                }
             }
+            Flush();
+        }
+
+        // ---- C: нагрузка
+        private void CostTest()
+        {
+            W(""); W("===== C: сколько стоит переставить всех врагов за один кадр =====");
+            var list = _enemies.Alive.Select(e => e.Raw).ToList();
+            var sw = Stopwatch.StartNew();
+            int ok = 0;
+            foreach (var e in list) { var p = Pos(e); if (p.HasValue) { SetPos(e, p.Value.x, p.Value.y); ok++; } }
+            double naive = sw.Elapsed.TotalMilliseconds;
+            var trs = list.Select(Tr).Where(x => x != null).ToList();
+            sw.Restart();
+            foreach (var tr in trs) { var v = tr.position; tr.position = v; }
+            double cached = sw.Elapsed.TotalMilliseconds;
+            W($"  врагов {list.Count}: с поиском объекта {naive:0.00} мс ({ok} шт.), с готовыми ссылками {cached:0.00} мс");
+            W($"  оценка на 200 врагов с готовыми ссылками: {(trs.Count > 0 ? cached / trs.Count * 200 : 0):0.00} мс за кадр");
+            Flush();
+        }
+
+        // ---- D: подавление
+        private void SuppressStart()
+        {
+            W(""); W("===== D: убираю врагов игры сразу после появления (Unit_Destroy_Simple), 10 с =====");
+            _snap = Snapshot(); _deathsAtSuppress = _deaths; _destroyed = 0; _spawnsAtStage = _spawns;
+            _suppress = true;
+            _ctx.Toast("Разведка 2: опыт D — новые враги исчезают", 2);
+            Flush();
+        }
+        private void SuppressEnd()
+        {
+            _suppress = false;
+            W($"  появилось {_spawns - _spawnsAtStage}, убрано {_destroyed}, событий смерти за это время {_deaths - _deathsAtSuppress} (сюда входят и убийства героем)");
+            DiffSnapshot("за 10 с подавления");
+            Flush();
+        }
+
+        // ---- E: обнуление спавна
+        private void ZeroSpawnStart()
+        {
+            W(""); W("===== E: EnemyCreateNum/_Min/_Max = 0 на 10 с =====");
+            _spawnsAtStage = _spawns;
+            foreach (var f in new[] { "EnemyCreateNum", "EnemyCreateNum_Min", "EnemyCreateNum_Max" })
+            {
+                try { _savedFields[f] = Get(_mgr, f); W($"  {f} было {_savedFields[f]}, ставлю 0: {(Set(_mgr, f, 0) ? "ок" : "нельзя")}"); }
+                catch (Exception e) { W($"  {f}: {Err(e)}"); }
+            }
+            Flush();
+        }
+        private void ZeroSpawnEnd()
+        {
+            double t = GameT;
+            W($"  за 10 с создано врагов: {_spawns - _spawnsAtStage} (типы: {string.Join(",", _recentSpawns.Where(s => s.t >= t - 10).Select(s => s.unitId).Distinct())})");
+            Restore();
+            Flush();
+        }
+        private void Restore()
+        {
+            foreach (var kv in _savedFields.ToList())
+            {
+                try { Set(_mgr, kv.Key, kv.Value); W($"  {kv.Key} возвращено {kv.Value}"); } catch { }
+            }
+            _savedFields.Clear();
+            _suppress = false;
         }
 
         public void Finish(string why)
         {
             if (_done) return;
             _done = true;
-            W(""); W($"===== разведка завершена: {why} =====");
-            W("Создано по типам: " + string.Join(", ", _spawnsByType.OrderBy(k => k.Key).Select(k => $"{k.Key}×{k.Value}")));
-            W("Вызовы менеджера: " + string.Join(", ", _mgrCalls.Select(k => $"{k.Key}×{k.Value}")));
-            if (!_dumped) { DumpType(_mgrType, "МЕНЕДЖЕР БОЯ"); DumpType(_enemyType, "ВРАГ"); DumpOthers(); }
+            Restore();
+            W(""); W($"===== разведка 2 завершена: {why}; всего врагов создано {_spawns}, смертей {_deaths}, кадров {_frames} =====");
             Flush();
-            _ctx.Log($"РАЗВЕДКА ЗАВЕРШЕНА ({why}). Пришлите файлы coop_probe.txt и modkit.log из папки UserData/ModKit");
-            try { _ctx.Toast("Разведка завершена — пришлите coop_probe.txt и modkit.log", 5); } catch { }
+            _ctx.Log($"РАЗВЕДКА 2 ЗАВЕРШЕНА ({why}). Пришлите coop_probe.txt и modkit.log из UserData/ModKit");
+            try { _ctx.Toast("Разведка 2 завершена — пришлите coop_probe.txt и modkit.log", 5); } catch { }
         }
     }
 }

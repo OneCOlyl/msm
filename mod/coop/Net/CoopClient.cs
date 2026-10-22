@@ -42,7 +42,7 @@ namespace MagicSurvivalCoop.Net
         /// <summary>Сколько секунд ждать перед повторным подключением.</summary>
         public double RetrySec = 3;
         /// <summary>Нет данных столько секунд — соединение считается оборванным.</summary>
-        public double DeadSec = 10;
+        public double DeadSec = 20;   // загрузка боя у хоста или ретранслятор VPN могут молчать дольше 10 с
 
         /// <summary>
         /// Подключиться и войти в комнату. roomCode пустой — «любая комната на сервере» (режим «по IP»). create — создать новую комнату.
