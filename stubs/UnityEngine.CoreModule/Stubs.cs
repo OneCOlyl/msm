@@ -7,7 +7,7 @@ namespace UnityEngine
     public struct Color { public float r, g, b, a; public Color(float r, float g, float b, float a) { this.r = r; this.g = g; this.b = b; this.a = a; } }
     public class Object { }
     public class Component : Object { }
-    public class Transform : Component { }
+    public class Transform : Component { public Vector3 position { get; set; } }
     public class RectTransform : Transform { }
     public class GameObject : Object { }
     public class Behaviour : Component { }

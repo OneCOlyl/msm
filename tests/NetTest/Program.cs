@@ -143,6 +143,35 @@ if (server != null)
     Check(after.HasValue && Protocol.Num(Protocol.Obj(after.Value, "state"), "x") == 42, "после переподключения состояние снова ходит");
 }
 
+if (server != null)
+{
+    Console.WriteLine("10. хост занял соседний порт — клиент находит его сам");
+    var alt = new CoopServer(); alt.Start(0); int altPort = alt.Port;
+    var f = new CoopClient(); var boxF = new List<JsonElement>();
+    f.Start(host, altPort - 2, "Ищущий", portSpan: 4);
+    var jf = WaitFor(f, Protocol.RoomJoined, boxF, 8000);
+    Check(jf.HasValue && f.Port == altPort, $"клиент подключился к порту {altPort}, начав с {altPort - 2} (сейчас {f.Port})");
+    Check(!boxF.Any(m => Protocol.TypeOf(m) == "DISCONNECTED"), "неудачные попытки не выдают «связь потеряна»");
+    f.Stop(); alt.Stop();
+
+    Console.WriteLine("11. на порту чужая программа (как тестовый сервер в Termux) — клиент идёт дальше");
+    var foreign = new TcpListener(System.Net.IPAddress.Loopback, 0); foreign.Start(); int fPort = ((System.Net.IPEndPoint)foreign.LocalEndpoint).Port;
+    var fth = new Thread(() => { try { while (true) { var cl = foreign.AcceptTcpClient(); var w = Encoding.UTF8.GetBytes("COOP_TCP_READY\n"); cl.GetStream().Write(w, 0, w.Length); } } catch { } }) { IsBackground = true };
+    fth.Start();
+    var real = new CoopServer(); bool started = false;
+    try { real.Start(fPort + 1); started = true; } catch { }
+    if (started)
+    {
+        var g2 = new CoopClient(); var boxG = new List<JsonElement>();
+        g2.Start(host, fPort, "Гость", portSpan: 4);
+        var jg = WaitFor(g2, Protocol.RoomJoined, boxG, 9000);
+        Check(jg.HasValue && g2.Port == fPort + 1, $"клиент распознал чужой сервер на {fPort} и подключился к {fPort + 1}");
+        g2.Stop(); real.Stop();
+    }
+    else Check(true, "соседний порт занят системой — проверка пропущена");
+    foreign.Stop();
+}
+
 foreach (var cl in new[] { a, b, c3, d, e5 }) cl.Stop();
 server?.Stop();
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");

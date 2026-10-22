@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text.Json;
 using MagicSurvivalCoop.Net;
 using ModKit;
@@ -25,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.0.0";
+        public const string ModVersion = "1.1.0";
 
         public ModDef Define() => new ModDef
         {
@@ -85,6 +87,8 @@ namespace MagicSurvivalCoop
         private string _myId, _roomCode, _myName;
         private int _mySlot;
         private bool _hosting;
+        private int _hostPort;
+        private string _lastError, _notice;        // показываются в окне «Кооп»: подписи-тосты в главном меню не видны
 
         // свой бой
         private bool _inRun;
@@ -96,6 +100,16 @@ namespace MagicSurvivalCoop
 
         // таймеры главного потока (мс реального времени)
         private double _clockMs, _nextSend, _nextHud, _nextWin;
+
+        // плавное движение союзников: каждый кадр через хук C_Battle_Manager.Update
+        private static readonly Stopwatch Clock = Stopwatch.StartNew();
+        private double _lastFrameSec = -1, _frameSeenSec = -100;
+        private bool _directWrite = true;
+        private int _writeFails;
+        private Type _compType;
+        private FieldInfo _compTr;
+        private PropertyInfo _compPos;
+        private const int PortSpan = 4;            // если основной порт занят, хост берёт следующий (до +4), клиенты ищут его сами
 
         // интерфейс
         private UiKit.HudButton _menuBtn, _healBtn;
@@ -110,6 +124,9 @@ namespace MagicSurvivalCoop
             public double X, Y, Sx, Sy, Hp, HpMax, Kills;
             public int Spell;
             public double StateAt;           // _clockMs последнего состояния
+            // сглаживание: последняя точка (смещение от старта друга), оценка скорости и то, что рисуется сейчас
+            public double RelX, RelY, VelX, VelY, SampleSec = -1, DispX, DispY;
+            public bool HasDisp;
             public ICompanion Ghost;
             public int GhostSpell = -1;
             public double NextSpawn;
@@ -139,6 +156,8 @@ namespace MagicSurvivalCoop
             ctx.Events.On("enemyDeath", _ => { if (_inRun) _kills++; });
 
             ctx.Every(50, Tick);
+            try { ctx.Before("C_Battle_Manager", "Update", 0, (self, args) => FrameStep()); }
+            catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
             ctx.OnCleanup(Shutdown);
             ctx.Log($"кооператив {CoopMod.ModVersion} включён, имя «{_myName}»");
             ctx.Guard("кнопка в меню", ShowMenuButton);   // если мод включили прямо в главном меню
@@ -165,29 +184,44 @@ namespace MagicSurvivalCoop
         private void Host()
         {
             Disconnect();
-            try
+            _lastError = null; _notice = null;
+            string firstError = null;
+            for (int port = Port; port <= Math.Min(65535, Port + PortSpan); port++)
             {
-                _server = new CoopServer { Log = s => _bgLog.Enqueue("сервер: " + s) };
-                _server.Start(Port);
+                var srv = new CoopServer { Log = s => _bgLog.Enqueue("сервер: " + s) };
+                try { srv.Start(port); }
+                catch (Exception e)
+                {
+                    firstError ??= e.Message;
+                    _ctx.Log($"порт {port} недоступен: {e.Message}");
+                    continue;
+                }
+                _server = srv;
+                _hostPort = port;
+                break;
             }
-            catch (Exception e)
+            if (_server == null)
             {
-                _server = null;
-                _ctx.Warn("не удалось открыть порт " + Port + ": " + e.Message);
-                _ctx.Toast("Не удалось создать игру: порт " + Port + " занят", 4);
+                _lastError = $"Не удалось создать игру: порты {Port}–{Port + PortSpan} заняты другой программой на этом телефоне " +
+                             $"(например, сервером в Termux). Закройте её или укажите другой порт.\n({firstError})";
+                _ctx.Warn(_lastError);
                 return;
             }
             _hosting = true;
-            _client.Start("127.0.0.1", Port, _myName);
-            _ctx.Log($"хост: сервер на порту {Port}");
-            _ctx.Toast("Игра создана. Скажите друзьям свой IP из Anywherelan", 4);
+            _client.Start("127.0.0.1", _hostPort, _myName);
+            _notice = _hostPort == Port
+                ? "Игра создана. Сообщите друзьям IP, отмеченный «← VPN»."
+                : $"Порт {Port} занят другой программой, игра создана на порту {_hostPort}. Друзья с портом {Port} найдут её сами.";
+            _ctx.Log($"хост: сервер на порту {_hostPort}");
+            _ctx.Toast(_notice, 4);
         }
 
         private void Join()
         {
             Disconnect();
+            _lastError = null; _notice = null;
             _hosting = false;
-            _client.Start(HostIp, Port, _myName);
+            _client.Start(HostIp, Port, _myName, portSpan: PortSpan);
             _ctx.Log($"подключение к {HostIp}:{Port}");
         }
 
@@ -342,6 +376,23 @@ namespace MagicSurvivalCoop
             p.Spell = (int)Protocol.Num(s, "spell");
             p.HasState = true;
             p.StateAt = _clockMs;
+
+            // точка для сглаживания: смещение друга от его старта; скорость — по двум последним точкам
+            double now = Clock.Elapsed.TotalSeconds;
+            double rx = p.X - p.Sx, ry = p.Y - p.Sy;
+            double dt = now - p.SampleSec;
+            bool newRun = !p.Battle || Math.Abs(rx - p.RelX) > 8 || Math.Abs(ry - p.RelY) > 8;   // новый бой или скачок
+            if (p.SampleSec < 0 || newRun) { p.VelX = p.VelY = 0; if (newRun) p.HasDisp = false; }
+            else if (dt > 0.02 && dt < 0.6)
+            {
+                double vx = (rx - p.RelX) / dt, vy = (ry - p.RelY) / dt;
+                double sp = Math.Sqrt(vx * vx + vy * vy);
+                if (sp > 15) { vx = vx / sp * 15; vy = vy / sp * 15; }
+                p.VelX = p.VelX * 0.4 + vx * 0.6;
+                p.VelY = p.VelY * 0.4 + vy * 0.6;
+            }
+            else if (dt >= 0.6) { p.VelX = p.VelY = 0; }
+            p.RelX = rx; p.RelY = ry; p.SampleSec = now;
             if (p.Dead && !wasDead && p.Run) _ctx.Toast($"{p.Name} погиб!", 3);
             if (p.Battle && !wasBattle && !p.Dead && !_inRun) _ctx.Toast($"{p.Name} начал бой — заходите!", 3);
         }
@@ -448,7 +499,6 @@ namespace MagicSurvivalCoop
         private void UpdateGhosts()
         {
             bool battle = _spells.InBattle;
-            double maxDist = _ctx.Setting("ghostDist");
             foreach (var p in _partners.Values)
             {
                 bool fresh = p.HasState && _clockMs - p.StateAt < 3000;
@@ -468,18 +518,92 @@ namespace MagicSurvivalCoop
                     p.Ghost = _companions.Spawn(0, 0, p.Spell, color, 0.75, CompanionMode.Follow);
                     p.GhostSpell = p.Spell;
                     if (p.Ghost == null) continue;
-                    p.Ghost.Speed = 14;
+                    p.Ghost.Speed = 200;   // библиотека сразу ставит союзника в нашу сглаженную точку, плавность — за нами
                     _ctx.Log($"союзник «{p.Name}» создан, слот {p.Ghost.Slot}, заклинание {p.Spell}");
                 }
 
-                // где друг относительно своей точки старта, там и призрак относительно нашей
-                double rx = (p.X - p.Sx) - (_lastX - (_startX ?? _lastX));
-                double ry = (p.Y - p.Sy) - (_lastY - (_startY ?? _lastY));
-                double len = Math.Sqrt(rx * rx + ry * ry);
-                if (len > maxDist) { rx = rx / len * maxDist; ry = ry / len * maxDist; }
-                else if (len < 0.8) { rx = 0.8; ry = 0.4; }   // не прятаться под героем
-                p.Ghost.Offset = new Vector2((float)rx, (float)ry);
                 if (p.GhostSpell != p.Spell) { p.Ghost.Spell = p.Spell; p.GhostSpell = p.Spell; }
+
+                // нет покадрового хука (или пауза кадров) — двигаем здесь, 20 раз в секунду
+                if (Clock.Elapsed.TotalSeconds - _frameSeenSec > 0.25)
+                {
+                    var hp = _enemies.HeroPos;
+                    if (hp.HasValue) PlaceGhost(p, 0.05, hp.Value.x, hp.Value.y, hp.Value.z, false);
+                }
+            }
+        }
+
+        /// <summary>Каждый кадр боя (хук C_Battle_Manager.Update): плавно ведём союзников.</summary>
+        private void FrameStep()
+        {
+            try
+            {
+                double now = Clock.Elapsed.TotalSeconds;
+                double dt = _lastFrameSec < 0 ? 0.016 : Math.Min(0.1, Math.Max(0, now - _lastFrameSec));
+                _lastFrameSec = now;
+                if (!_inRun || _partners.Count == 0 || _spells.Paused) return;
+                var hp = _enemies.HeroPos;
+                if (!hp.HasValue) return;
+                _frameSeenSec = now;
+                foreach (var p in _partners.Values)
+                    if (p.Ghost != null && p.Ghost.Alive) PlaceGhost(p, dt, hp.Value.x, hp.Value.y, hp.Value.z, _directWrite);
+            }
+            catch (Exception e)
+            {
+                if (++_writeFails == 1 || _writeFails % 500 == 0) _ctx.Log("кадр: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Сглаженная точка союзника: последняя точка друга + скорость × время с неё (не больше 0,25 с), к ней — плавно.
+        /// Мир друга совмещён с нашим по точкам старта: где друг относительно своего старта, там союзник относительно нашего.
+        /// </summary>
+        private void PlaceGhost(Partner p, double dt, double heroX, double heroY, double heroZ, bool writeTransform)
+        {
+            double now = Clock.Elapsed.TotalSeconds;
+            double ahead = p.SampleSec < 0 ? 0 : Math.Min(0.25, Math.Max(0, now - p.SampleSec));
+            double tx = p.RelX + p.VelX * ahead, ty = p.RelY + p.VelY * ahead;
+            if (!p.HasDisp) { p.DispX = tx; p.DispY = ty; p.HasDisp = true; }
+            else
+            {
+                double k = 1 - Math.Exp(-dt * 12);
+                p.DispX += (tx - p.DispX) * k;
+                p.DispY += (ty - p.DispY) * k;
+            }
+
+            double maxDist = _ctx.Setting("ghostDist");
+            double ox = (_startX ?? heroX) + p.DispX - heroX;
+            double oy = (_startY ?? heroY) + p.DispY - heroY;
+            double len = Math.Sqrt(ox * ox + oy * oy);
+            if (len > maxDist) { ox = ox / len * maxDist; oy = oy / len * maxDist; }
+            else if (len < 0.8)                                // не прятаться под героем: отодвигаем по тому же направлению
+            {
+                if (len < 1e-3) { ox = 0.8; oy = 0; } else { ox = ox / len * 0.8; oy = oy / len * 0.8; }
+            }
+            p.Ghost.Offset = new Vector2((float)ox, (float)oy);
+            if (writeTransform) WriteGhostTransform(p.Ghost, heroX + ox, heroY + oy, heroZ);
+        }
+
+        /// <summary>Ставит объект союзника сразу (библиотека сама двигает его только 20 раз в секунду).</summary>
+        private void WriteGhostTransform(ICompanion ghost, double x, double y, double z)
+        {
+            try
+            {
+                var t = ghost.GetType();
+                if (t != _compType)
+                {
+                    _compType = t;
+                    _compTr = t.GetField("Tr", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    _compPos = t.GetProperty("Pos", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                }
+                if (_compTr == null) return;
+                if (_compTr.GetValue(ghost) is not Transform tr) return;
+                tr.position = new Vector3((float)x, (float)y, (float)z);
+                if (_compPos != null && _compPos.CanWrite) _compPos.SetValue(ghost, new Vector2((float)x, (float)y));
+            }
+            catch (Exception e)
+            {
+                if (++_writeFails > 20) { _directWrite = false; _ctx.Log("прямое размещение союзника выключено: " + e.Message); }
             }
         }
 
@@ -573,15 +697,15 @@ namespace MagicSurvivalCoop
             var root = win.rt;
             double y = win.top + 10;
 
-            _winStatus = UiKit.Label(root, StatusText(), 30, y, 660, 70, 26, 0);
-            y += 80;
+            _winStatus = UiKit.Label(root, StatusText(), 30, y, 660, 110, 24, 0);
+            y += 120;
 
             UiKit.Label(root, "Ваш IP (скажите его друзьям, если вы хост):", 30, y, 660, 34, 22, 3);
             y += 36;
             UiKit.Label(root, LocalAddresses(), 30, y, 660, 70, 24, 0);
             y += 80;
 
-            UiKit.AddButton(root, "Создать игру (я хост)", 30, y, 660, 76, 28, BtnGreen, () => _ctx.Guard("хост", () => { Host(); OpenWindow(); }));
+            UiKit.AddButton(root, "Создать игру (я хост)", 30, y, 660, 76, 28, BtnGreen, () => SafeAction("Создать игру", Host));
             y += 100;
 
             UiKit.Label(root, "Подключиться к хосту — IP и порт:", 30, y, 660, 34, 22, 3);
@@ -599,9 +723,9 @@ namespace MagicSurvivalCoop
                 s => _ctx.Guard("ввод порта", () => { if (int.TryParse(s, out var v) && v >= 1024 && v <= 65535) _ctx.SetSetting("port", v); }));
             y += 84;
 
-            UiKit.AddButton(root, "Подключиться", 30, y, 420, 76, 28, BtnBlue, () => _ctx.Guard("подключение", () => { Join(); OpenWindow(); }));
+            UiKit.AddButton(root, "Подключиться", 30, y, 420, 76, 28, BtnBlue, () => SafeAction("Подключиться", Join));
             UiKit.AddButton(root, "Отключиться", 470, y, 220, 76, 26, _client.State == CoopClient.Status.Off ? BtnGray : BtnRed,
-                () => _ctx.Guard("отключение", () => { Disconnect(); OpenWindow(); }));
+                () => SafeAction("Отключиться", () => { Disconnect(); _lastError = null; _notice = null; }));
             y += 100;
 
             UiKit.Label(root, "Игроки:", 30, y, 660, 34, 24, 3);
@@ -611,6 +735,18 @@ namespace MagicSurvivalCoop
 
             UiKit.Label(root, "У каждого свой мир игры: друзья приходят к вам союзниками и стреляют своим лучшим заклинанием. " +
                               "Кнопка «Лечить» в бою появляется, когда другу плохо.", 30, y, 660, 110, 20, 0);
+        }
+
+        /// <summary>Кнопка окна: ошибка не теряется молча, а показывается в окне и пишется в журнал; окно перерисовывается всегда.</summary>
+        private void SafeAction(string what, Action fn)
+        {
+            try { fn(); }
+            catch (Exception e)
+            {
+                _lastError = $"{what}: ошибка — {e.Message}";
+                _ctx.Log($"ОШИБКА {what}: {e}");
+            }
+            try { OpenWindow(); } catch (Exception e) { _ctx.Log("окно: " + e.Message); }
         }
 
         private void UpdateWindow()
@@ -625,6 +761,7 @@ namespace MagicSurvivalCoop
 
         private string StatusText()
         {
+            if (_lastError != null) return _lastError;
             string role = _hosting ? $"Вы хост (порт {_server?.Port ?? Port})" : _client.State == CoopClient.Status.Off ? "Не подключено" : $"Хост {_client.Host}:{_client.Port}";
             string st = _client.State switch
             {
@@ -633,7 +770,8 @@ namespace MagicSurvivalCoop
                 CoopClient.Status.Waiting => "нет связи, повтор через пару секунд" + (_client.LastError != null ? $"\n{_client.LastError}" : ""),
                 _ => "",
             };
-            return st.Length == 0 ? role : $"{role}: {st}";
+            var text = st.Length == 0 ? role : $"{role}: {st}";
+            return _notice != null && _client.State != CoopClient.Status.Off ? text + "\n" + _notice : text;
         }
 
         private string PlayersText()

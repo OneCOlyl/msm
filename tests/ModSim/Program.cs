@@ -14,12 +14,23 @@ void Check(bool ok, string what) { if (ok) { passes++; Console.WriteLine("  PASS
 var A = new Player("Хост"); var B = new Player("Друг");
 void TickAll(int ms) { for (int t = 0; t < ms / 50; t++) { A.Tick(); B.Tick(); Thread.Sleep(50); } }
 
-Console.WriteLine("1. хост создаёт игру, друг подключается по IP");
-A.Call("Host"); TickAll(500); B.Call("Join");
-TickAll(1500);
+Console.WriteLine("1. порт 28766 занят другой программой: хост берёт соседний, друг находит его сам");
+var blocker = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Any, 28766); blocker.Start();
+A.Call("Host"); TickAll(500);
+Check(A.Get("_hostPort") is int hp && hp == 28767, $"хост создал игру на порту 28767 (вышло {A.Get("_hostPort")})");
+Check(((string)A.Get("_notice") ?? "").Contains("28767"), "в окне хоста написано, что порт сменён");
+B.Call("Join");
+TickAll(6500);   // на 28766 ответила чужая программа: клиент ждёт до 4 с, понимает это и идёт на 28767
 Check(A.Partners().Count == 1 && B.Partners().Count == 1, "каждый видит одного друга");
 Check(A.Toasts.Any(t => t.Contains("присоединился")), "хосту показано «Друг присоединился»");
 Check(B.Toasts.Any(t => t.StartsWith("Подключено")), "другу показано «Подключено»");
+blocker.Stop();
+var C = new Player("Третий"); C.Ctx.Set["port"] = 28900;
+var blk = new List<System.Net.Sockets.TcpListener>();
+for (int pp = 28900; pp <= 28904; pp++) { var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Any, pp); l.Start(); blk.Add(l); }
+C.Call("SafeActionHostNoWindow");
+Check(((string)C.Get("_lastError") ?? "").Contains("заняты"), $"все порты заняты — причина показана в окне: «{C.Get("_lastError")}»");
+blk.ForEach(l => l.Stop()); C.Disable();
 
 Console.WriteLine("2. бой: друг появляется союзником и повторяет движение");
 A.Spells.InBattle = B.Spells.InBattle = true;
@@ -31,12 +42,36 @@ B.Combat.Pos = new Vector3(103, 104, 0);
 TickAll(800);
 var g = A.Comp.Spawned.LastOrDefault(c => c.Alive);
 Check(g != null, "у хоста создан союзник-друг");
-Check(g != null && Math.Abs(g.Offset.x - 3) < 0.01 && Math.Abs(g.Offset.y - 4) < 0.01, $"смещение союзника = движению друга от старта (3, 4): ({g?.Offset.x}, {g?.Offset.y})");
+Check(g != null && Math.Abs(g.Offset.x - 3) < 0.05 && Math.Abs(g.Offset.y - 4) < 0.05, $"смещение союзника = движению друга от старта (3, 4): ({g?.Offset.x}, {g?.Offset.y})");
 Check(g != null && g.Spell == 7, $"союзник стреляет лучшим заклинанием друга (7, Молния): {g?.Spell}");
-Check(g != null && g.Speed == 14, "скорость союзника 14");
+Check(g != null && g.Speed == 200, "библиотека ставит союзника сразу в сглаженную точку (скорость 200)");
 A.Combat.Pos = new Vector3(6, 5, 0);
 TickAll(400);
-Check(g != null && Math.Abs(g.Offset.x - 2) < 0.01 && Math.Abs(g.Offset.y - 4) < 0.01, $"хост сдвинулся — смещение пересчитано (2, 4): ({g?.Offset.x}, {g?.Offset.y})");
+Check(g != null && Math.Abs(g.Offset.x - 2) < 0.05 && Math.Abs(g.Offset.y - 4) < 0.05, $"хост сдвинулся — смещение пересчитано (2, 4): ({g?.Offset.x}, {g?.Offset.y})");
+Console.WriteLine("2б. плавность: друг идёт ровно 4 ед/с, точки приходят 10 раз в секунду");
+var trace = new List<double>();
+for (int step = 0; step < 40; step++)          // 2 с: друг идёт вправо, хост стоит
+{
+    B.Combat.Pos = new Vector3(103 + step * 0.2f, 104, 0);   // 0,2 ед за 50 мс = 4 ед/с
+    A.Tick(); B.Tick(); Thread.Sleep(50);
+    trace.Add(g.Offset.x);
+}
+var deltas = trace.Skip(10).Zip(trace.Skip(11), (p0, p1) => p1 - p0).ToList();
+double maxJump = deltas.Max(), stalls = deltas.Count(x => x < 0.02);
+Console.WriteLine($"    шаги смещения за тик (после разгона): мин {deltas.Min():0.00}, макс {maxJump:0.00}, остановок {stalls}");
+Check(maxJump < 0.5, $"нет рывков: самый большой шаг за 50 мс {maxJump:0.00} (без сглаживания был бы скачок до цели)");
+Check(stalls <= 2, $"нет остановок между пакетами: {stalls} тиков без движения");
+Check(Math.Abs(trace.Last() - Math.Min(6, Math.Sqrt(Math.Pow(2 + 7.8, 2) + 16)) * (2 + 7.8) / Math.Sqrt(Math.Pow(2 + 7.8, 2) + 16)) < 0.8 || trace.Last() > 4, $"союзник догнал друга: x = {trace.Last():0.00}");
+
+Console.WriteLine("2в. покадровое движение (хук C_Battle_Manager.Update)");
+var before = g.Offset.x;
+B.Combat.Pos = new Vector3(107, 104, 0);             // обычный шаг назад на ~4 ед (не телепорт)
+B.Tick(); Thread.Sleep(150); A.Call("Pump");          // точка дошла до хоста, дальше двигают только кадры
+var frames = new List<double>();
+for (int fr = 0; fr < 30; fr++) { A.Call("FrameStep"); frames.Add(g.Offset.x); Thread.Sleep(16); }
+var fd = frames.Zip(frames.Skip(1), (p0, p1) => Math.Abs(p1 - p0)).ToList();
+Check(fd.Max() < 0.6 && fd.Count(x => x > 1e-4) > 5, $"по кадрам союзник двигается мелкими шагами (макс {fd.Max():0.00} за кадр)");
+
 B.Combat.Pos = new Vector3(150, 100, 0);
 TickAll(400);
 Check(g != null && Math.Abs(Math.Sqrt(g.Offset.x * g.Offset.x + g.Offset.y * g.Offset.y) - 6) < 0.01, "друг убежал далеко — союзник держится на дальности 6");
@@ -98,7 +133,12 @@ class Player
     }
     public void Tick() { Ctx.GameTime += 0.05; foreach (var f in Ctx.Ticks.ToArray()) Ctx.Guard("tick", f); }
     public void Emit(string ev) { if (Ctx.Handlers.TryGetValue(ev, out var l)) foreach (var h in l) h(null); }
-    public void Call(string method) => _session.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance).Invoke(_session, null);
+    public void Call(string method)
+    {
+        if (method == "SafeActionHostNoWindow") { Call("Host"); return; }
+        _session.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance).Invoke(_session, null);
+    }
+    public object Get(string field) => _session.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_session);
     public System.Collections.IDictionary Partners() => (System.Collections.IDictionary)_session.GetType().GetField("_partners", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_session);
     public void Disable() { _def.OnDisable(Ctx); foreach (var c in Ctx.Cleanups) c(); }
 }

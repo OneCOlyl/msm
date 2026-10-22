@@ -26,7 +26,7 @@ namespace MagicSurvivalCoop.Net
         private Thread _thread;
         private TcpClient _tcp;
         private string _host, _roomCode, _name;
-        private int _port;
+        private int _port, _portSpan, _portIdx, _refusedInRow;
         private bool _create;
 
         /// <summary>Сообщения сервера (разобранные JSON), читать на главном потоке.</summary>
@@ -37,17 +37,22 @@ namespace MagicSurvivalCoop.Net
         public volatile string LastError;
         public volatile int PingMs = -1;
         public string Host => _host;
-        public int Port => _port;
+        /// <summary>Порт, к которому клиент подключается сейчас (с учётом перебора соседних портов).</summary>
+        public int Port => _port + _portIdx;
         /// <summary>Сколько секунд ждать перед повторным подключением.</summary>
         public double RetrySec = 3;
         /// <summary>Нет данных столько секунд — соединение считается оборванным.</summary>
         public double DeadSec = 10;
 
-        /// <summary>Подключиться и войти в комнату. roomCode пустой — «любая комната на сервере» (режим «по IP»). create — создать новую комнату.</summary>
-        public void Start(string host, int port, string name, string roomCode = "", bool create = false)
+        /// <summary>
+        /// Подключиться и войти в комнату. roomCode пустой — «любая комната на сервере» (режим «по IP»). create — создать новую комнату.
+        /// portSpan > 0 — если порт закрыт, пробовать следующие (port+1 … port+portSpan): хост мог занять соседний, когда основной был занят.
+        /// </summary>
+        public void Start(string host, int port, string name, string roomCode = "", bool create = false, int portSpan = 0)
         {
             Stop();
-            _host = host; _port = port; _name = Protocol.CleanName(name); _roomCode = roomCode ?? ""; _create = create;
+            _host = host; _port = port; _portSpan = Math.Max(0, portSpan); _portIdx = 0; _refusedInRow = 0;
+            _name = Protocol.CleanName(name); _roomCode = roomCode ?? ""; _create = create;
             _running = true;
             State = Status.Connecting;
             LastError = null;
@@ -95,13 +100,32 @@ namespace MagicSurvivalCoop.Net
             while (_running)
             {
                 State = Status.Connecting;
+                double retry = RetrySec;
                 try { Session(); }
-                catch (Exception e) { if (_running) { LastError = Friendly(e); Log("соединение: " + LastError); } }
+                catch (Exception e)
+                {
+                    if (_running)
+                    {
+                        var be = e is AggregateException ae ? ae.GetBaseException() : e;
+                        bool refused = be is SocketException se && se.SocketErrorCode == SocketError.ConnectionRefused;
+                        if ((refused || be is WrongServerException) && _portSpan > 0)
+                        {
+                            // порт закрыт — пробуем соседний; полный круг без ответа — обычная пауза
+                            _refusedInRow++;
+                            _portIdx = (_portIdx + 1) % (_portSpan + 1);
+                            if (_refusedInRow <= _portSpan) retry = 0.2;
+                            else _refusedInRow = 0;
+                        }
+                        LastError = Friendly(e);
+                        Log($"соединение ({_host}:{Port}): {LastError}");
+                    }
+                }
                 finally { try { _tcp?.Close(); } catch { } _tcp = null; }
                 if (!_running) break;
+                bool hadRoom = State == Status.Connected;
                 State = Status.Waiting;
-                Incoming.Enqueue(Local("DISCONNECTED"));
-                var until = Clock.Elapsed.TotalSeconds + RetrySec;
+                if (hadRoom) Incoming.Enqueue(Local("DISCONNECTED"));   // сообщаем только об обрыве живой связи, не о каждой неудачной попытке
+                var until = Clock.Elapsed.TotalSeconds + retry;
                 while (_running && Clock.Elapsed.TotalSeconds < until) _wake.WaitOne(200);
             }
             State = Status.Off;
@@ -111,11 +135,15 @@ namespace MagicSurvivalCoop.Net
         {
             var tcp = new TcpClient { NoDelay = true };
             _tcp = tcp;
-            var connect = tcp.ConnectAsync(_host, _port);
+            var connect = tcp.ConnectAsync(_host, Port);
             if (!connect.Wait(TimeSpan.FromSeconds(8))) throw new TimeoutException("сервер не ответил за 8 с");
             if (connect.IsFaulted) throw connect.Exception.GetBaseException();
             var stream = tcp.GetStream();
+            _refusedInRow = 0;
+            LastError = null;
             double lastRx = Clock.Elapsed.TotalSeconds;
+            double connectedAt = lastRx;
+            bool ours = false;            // ответил именно сервер кооператива (WELCOME / вход в комнату)
 
             // чтение — отдельный поток, запись и пинги — этот
             var reader = new Thread(() =>
@@ -133,6 +161,7 @@ namespace MagicSurvivalCoop.Net
                         try { using var doc = JsonDocument.Parse(line); el = doc.RootElement.Clone(); }
                         catch (JsonException) { continue; }
                         var type = Protocol.TypeOf(el);
+                        if (type == Protocol.Welcome || type == Protocol.RoomJoined || type == Protocol.RoomCreated) ours = true;
                         if (type == Protocol.Pong)
                         {
                             var sent = Protocol.Num(el, "t", -1);
@@ -167,6 +196,8 @@ namespace MagicSurvivalCoop.Net
             {
                 double now = Clock.Elapsed.TotalSeconds;
                 if (now - Volatile.Read(ref lastRx) > DeadSec) throw new TimeoutException($"нет ответа {DeadSec:0} с");
+                if (!Volatile.Read(ref ours) && now - connectedAt > 4)
+                    throw new WrongServerException($"на порту {Port} отвечает не сервер кооператива (другая программа)");
                 if (now >= nextPing)
                 {
                     nextPing = now + 2;
@@ -183,6 +214,8 @@ namespace MagicSurvivalCoop.Net
 
         /// <summary>Запомнить код комнаты, в которую мы вошли, чтобы вернуться в неё после обрыва.</summary>
         public void RememberRoom(string code) { if (!string.IsNullOrEmpty(code)) _roomCode = code; }
+
+        private sealed class WrongServerException : Exception { public WrongServerException(string m) : base(m) { } }
 
         private static void Write(NetworkStream s, string line)
         {
