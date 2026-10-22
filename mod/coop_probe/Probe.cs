@@ -1,33 +1,33 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using ModKit;
 using UnityEngine;
 
 namespace MagicSurvivalCoop.Probe
 {
     /// <summary>
-    /// Разведка 3 для общих врагов — то же, что разведка 2, но наглядно: табло вверху экрана говорит, какой опыт идёт и какого
-    /// цвета его враги; опытные враги крупнее и окрашены. Опыты (игровое время, на паузе стоит):
-    ///   A (15–25 с) — враг по команде (Create_UnitEnemyBoss): ЗОЛОТОЙ, появляется справа от героя и стоит;
-    ///   B (30–40 с) — марионетки: СИНИЕ кружат вокруг героя (ведёт мод), ЗЕЛЁНЫЕ стоят (корутины остановлены), КРАСНЫЕ — только без физики;
-    ///   C (42 с)    — нагрузка: сколько стоит переставить всех врагов;
-    ///   D (45–55 с) — новые враги исчезают сразу (Unit_Destroy_Simple);
-    ///   E (58–68 с) — спавн погашен (EnemyCreateNum = 0).
-    /// Отчёт — UserData/ModKit/coop_probe.txt.
+    /// Разведка 4 — герой: как устроены заклинания, которые не стреляют снарядами (Щит, Спутники, Духи, двойники…), —
+    /// чтобы показать их у союзника-друга. Ничего не меняет в игре, только записывает:
+    ///   • структуру героя (поля и методы с Shield/Spirit/Satellite/Doppel/… в имени);
+    ///   • снимки этих полей раз в 15 с: объекты (активен ли, где относительно героя, сколько детей), массивы и списки, числа;
+    ///   • из каких объектов вылетают снаряды героя (Bullet_Create) — по именам источников.
+    /// Табло вверху экрана подсказывает, что делать. Отчёт — UserData/ModKit/coop_probe.txt (результаты разведок врагов — в docs/ENEMY_SYNC.md).
     /// </summary>
     public class ProbeMod : IKitMod
     {
         public ModDef Define() => new ModDef
         {
             Id = "coop_probe",
-            Name = "Кооператив: разведка врагов",
-            Version = "0.3.0",
-            Description = "Наглядная проверка механизмов общих врагов: табло вверху экрана и цветные враги (один бой ~70 с игрового времени). Потом выключите.",
-            Depends = { ["modkit_combat"] = ">=1.0" },
+            Name = "Кооператив: разведка",
+            Version = "0.4.0",
+            Description = "Разведка героя: как устроены Щит, Спутники, Духи — чтобы показать их у союзника-друга. Ничего не меняет, только записывает. Потом выключите.",
+            Depends = { ["modkit_combat"] = ">=1.0", ["modkit_spells"] = ">=1.0" },
             OnEnable = ctx => _p = new Probe(ctx),
             OnDisable = ctx => { _p?.Finish("мод выключен"); _p = null; },
         };
@@ -38,68 +38,46 @@ namespace MagicSurvivalCoop.Probe
     {
         private const BindingFlags Inst = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
         private const BindingFlags Any = Inst | BindingFlags.Static;
+        private static readonly Regex Interesting = new Regex("Shield|Spirit|Satellite|Doppel|Barrier|Orbit|Aura|Guard|Sword|Blade|Circle|Field|Zone", RegexOptions.IgnoreCase);
 
         /// <summary>Только для тестов на ПК (через рефлексию).</summary>
         private static string DirOverride;
-
-        private static readonly Color Gold = new Color(1f, 0.82f, 0.1f, 1f);
-        private static readonly Color Blue = new Color(0.25f, 0.55f, 1f, 1f);
-        private static readonly Color Green = new Color(0.2f, 1f, 0.3f, 1f);
-        private static readonly Color Red = new Color(1f, 0.25f, 0.25f, 1f);
+        private static Func<object> HeroOverride;
 
         private readonly ModContext _ctx;
         private readonly IEnemies _enemies;
+        private readonly ISpells _spells;
         private readonly StringBuilder _out = new StringBuilder();
         private readonly string _path;
 
-        private object _mgr;
-        private bool _inBattle, _done;
-        private double _t0 = -1;
-        private int _stage, _spawns, _deaths, _frames;
-
-        // табло и окраска
+        private bool _inBattle, _done, _dumped;
+        private double _t0 = -1, _nextSnap;
+        private int _snaps;
         private UiKit.HudBar _board;
         private string _boardText = "";
-        private readonly Dictionary<object, (Color c, float scale)> _marked = new Dictionary<object, (Color, float)>();
-        private int _markFails;
-
-        // A
-        private bool _ourCall;
-        private readonly List<object> _ourEnemies = new List<object>();
-        private readonly List<(double t, int unitId, bool ours)> _recentSpawns = new List<(double, int, bool)>();
-        private Dictionary<string, string> _snap;
-
-        // B
-        private readonly List<Puppet> _puppets = new List<Puppet>();
-        private sealed class Puppet { public object E; public string Group; public double Phase, Tx, Ty, MaxErr; public bool Driven, HasTarget; }
-        private double _driveUntil;
-
-        // D, E
-        private bool _suppress;
-        private readonly Queue<object> _toDestroy = new Queue<object>();
-        private int _destroyed, _deathsAtStage, _spawnsAtStage;
-        private readonly Dictionary<string, object> _savedFields = new Dictionary<string, object>();
+        private int _uiFails;
+        private readonly Dictionary<object, (string name, int n, Dictionary<int, int> ids)> _sources = new Dictionary<object, (string, int, Dictionary<int, int>)>();
+        private object _heroTrKey;
 
         public Probe(ModContext ctx)
         {
             _ctx = ctx;
             _enemies = ctx.Use<IEnemies>("modkit_combat");
+            _spells = ctx.Use<ISpells>("modkit_spells");
             string dir = DirOverride;
             if (dir == null) { try { dir = Paths.Dir; } catch { dir = "/sdcard/MelonLoader/com.vkslrzm.Zombix/UserData/ModKit"; } }
             _path = Path.Combine(dir, "coop_probe.txt");
-            W($"=== coop_probe 0.3.0, {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
-            ctx.Log("разведка 3 включена: начните бой; опыты идут ~70 с игрового времени, смотрите на табло вверху");
+            W($"=== coop_probe 0.4.0 (разведка героя), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+            ctx.Log("разведка героя включена: начните бой, берите Щит, Спутник, Духа, если выпадут");
 
-            ctx.Before("C_Battle_Manager", "Update", 0, (s, a) => { _mgr = s; _frames++; Frame(); });
-            ctx.After("C_Battle_EnemyUnit", "Start_Unit", 3, (s, a) => OnSpawn(s, a));
+            ctx.Before("C_Battle_AllyUnit", "Bullet_Create", 13, (s, a) => OnBullet(a));
             ctx.Events.On("battleStart", _ => ctx.Guard("начало боя", OnBattleStart));
-            ctx.Events.On("battleEnd", _ => { if (_inBattle && !_done) Finish("бой закончился раньше"); _inBattle = false; DestroyBoard(); });
-            ctx.Events.On("enemyDeath", _ => _deaths++);
-            ctx.Every(100, () => ctx.Guard("шаг", Step));
-            ctx.OnCleanup(() => { Restore(); DestroyBoard(); Flush(); });
+            ctx.Events.On("battleEnd", _ => { if (_inBattle && !_done) Finish("бой закончился"); _inBattle = false; DestroyBoard(); });
+            ctx.Every(250, () => ctx.Guard("шаг", Step));
+            ctx.OnCleanup(() => { DestroyBoard(); Flush(); });
         }
 
-        // ------------------------------------------------------------ вывод, время, табло
+        // ------------------------------------------------------------ вывод
 
         private void W(string line) => _out.AppendLine(line);
         private void Flush()
@@ -108,9 +86,6 @@ namespace MagicSurvivalCoop.Probe
             catch (Exception e) { _ctx.Log("не удалось записать отчёт: " + e.Message); }
         }
         private double GameT => _t0 < 0 ? 0 : _ctx.Timer.Now - _t0;
-        private string T => $"[{GameT,6:0.00}]";
-
-        private void Board(string text) { _boardText = text; }
 
         private void ShowBoard()
         {
@@ -119,334 +94,184 @@ namespace MagicSurvivalCoop.Probe
                 if (_board == null || !_board.Alive) _board = UiKit.AddHudBar("coop_probe_board", 10, 70, 700, 56, new[] { 0.08, 0.08, 0.22, 0.85 });
                 _board.Set(1, _boardText);
             }
-            catch (Exception e) { if (_markFails++ < 3) W("табло: " + e.Message); _board = null; }
+            catch (Exception e) { if (_uiFails++ < 3) W("табло: " + e.Message); _board = null; }
         }
         private void DestroyBoard() { try { _board?.Destroy(); } catch { } _board = null; }
 
-        /// <summary>Окрасить и увеличить врага; повторяется каждый кадр (игра перекрашивает при попадании).</summary>
-        private void Mark(object enemy, Color c, float scale) { if (enemy != null) _marked[enemy] = (c, scale); ApplyMark(enemy, c, scale); }
-        private void ApplyMark(object enemy, Color c, float scale)
-        {
-            try
-            {
-                if (Get(enemy, "Motion_Unit") is SpriteRenderer sr) sr.color = c;
-                if (Get(enemy, "Transform_ObjUnitSprite") is Transform st) st.localScale = new Vector3(scale, scale, 1);
-            }
-            catch (Exception e) { if (_markFails++ < 3) W("окраска: " + Err(e)); }
-        }
-
         // ------------------------------------------------------------ рефлексия
+
+        private object Hero() => HeroOverride != null ? HeroOverride() : typeof(BattleState).GetProperty("Hero", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
 
         private static object Get(object o, string name)
         {
             if (o == null) return null;
             var p = o.GetType().GetProperty(name, Any);
-            if (p != null) return p.GetValue(p.GetGetMethod(true)?.IsStatic == true ? null : o);
+            if (p != null && p.GetIndexParameters().Length == 0) return p.GetValue(p.GetGetMethod(true)?.IsStatic == true ? null : o);
             var f = o.GetType().GetField(name, Any);
             return f?.GetValue(f.IsStatic ? null : o);
         }
-        private static bool Set(object o, string name, object v)
-        {
-            var p = o?.GetType().GetProperty(name, Any);
-            if (p == null || !p.CanWrite) return false;
-            var val = v == null || p.PropertyType.IsInstanceOfType(v) ? v : Convert.ChangeType(v, p.PropertyType);
-            p.SetValue(p.GetSetMethod(true)?.IsStatic == true ? null : o, val);
-            return true;
-        }
-        private static object Call(object o, string name, params object[] args)
-        {
-            var m = o.GetType().GetMethods(Inst).FirstOrDefault(x => x.Name == name && x.GetParameters().Length == args.Length)
-                    ?? throw new MissingMethodException(o.GetType().Name + "." + name + "/" + args.Length);
-            var ps = m.GetParameters();
-            var conv = args.Select((a, i) => a == null || ps[i].ParameterType.IsInstanceOfType(a) ? a : Convert.ChangeType(a, ps[i].ParameterType)).ToArray();
-            return m.Invoke(o, conv);
-        }
-        private static string Err(Exception e)
-        {
-            var x = e is TargetInvocationException t && t.InnerException != null ? t.InnerException : e;
-            return x.GetType().Name + ": " + x.Message;
-        }
-        private static Transform Tr(object enemy) => Get(enemy, "Transform_ObjUnit") as Transform;
-        private static (double x, double y)? Pos(object enemy)
-        {
-            try { var tr = Tr(enemy); if (tr == null) return null; var p = tr.position; return (p.x, p.y); }
-            catch { return null; }
-        }
-        private static void SetPos(object enemy, double x, double y)
-        {
-            var tr = Tr(enemy) ?? throw new InvalidOperationException("нет Transform_ObjUnit");
-            var z = tr.position.z;
-            tr.position = new Vector3((float)x, (float)y, z);
-        }
-        private static bool Alive(object e) { try { return Convert.ToBoolean(Get(e, "Unit_IsLive")); } catch { return false; } }
-        private (double x, double y)? Hero() { var h = _enemies.HeroPos; return h.HasValue ? (h.Value.x, h.Value.y) : ((double, double)?)null; }
-
-        private Dictionary<string, string> Snapshot()
-        {
-            var d = new Dictionary<string, string>();
-            if (_mgr == null) return d;
-            foreach (var p in _mgr.GetType().GetProperties(Any))
-            {
-                var t = p.PropertyType;
-                if (!(t.IsPrimitive || t == typeof(string)) || p.GetIndexParameters().Length > 0 || p.Name.StartsWith("Native")) continue;
-                try { d[p.Name] = Convert.ToString(p.GetValue(p.GetGetMethod(true).IsStatic ? null : _mgr), System.Globalization.CultureInfo.InvariantCulture); } catch { }
-            }
-            return d;
-        }
-        private void DiffSnapshot(string title)
-        {
-            var now = Snapshot();
-            var changed = now.Where(kv => _snap != null && _snap.TryGetValue(kv.Key, out var old) && old != kv.Value)
-                             .Where(kv => !kv.Key.StartsWith("SoundEffectLimit") && kv.Key != "Time_Sec" && kv.Key != "EnemyLevelNum")
-                             .Select(kv => $"{kv.Key}: {_snap[kv.Key]} → {kv.Value}").ToList();
-            W($"  изменения в менеджере ({title}): {(changed.Count == 0 ? "нет" : string.Join("; ", changed.Take(50)))}");
-        }
+        private static object Ptr(object o) { try { var p = o?.GetType().GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance)?.GetValue(o); return p is IntPtr ip && ip != IntPtr.Zero ? (object)ip : o; } catch { return o; } }
+        private static string TypeName(Type t) => t == null ? "?" : !t.IsGenericType ? t.Name : t.Name.Split('`')[0] + "<" + string.Join(",", t.GetGenericArguments().Select(TypeName)) + ">";
+        private static bool Junk(string n) => n.StartsWith("NativeMethodInfoPtr") || n.StartsWith("NativeFieldInfoPtr") || n.StartsWith("Il2Cpp") || n.StartsWith("<") || n == "NativeClassPtr";
 
         // ------------------------------------------------------------ события
 
         private void OnBattleStart()
         {
             if (_done) return;
-            _inBattle = true;
-            _t0 = _ctx.Timer.Now;
-            _stage = 0;
+            _inBattle = true; _t0 = _ctx.Timer.Now; _nextSnap = 5;
             W(""); W("===== бой начался =====");
             Flush();
         }
 
-        private void OnSpawn(object enemy, object[] a)
+        private void OnBullet(object[] a)
         {
+            if (!_inBattle || _done || a == null || a.Length < 2) return;
             try
             {
-                if (!_inBattle) return;
-                _spawns++;
-                int unitId = a != null && a.Length > 0 ? Convert.ToInt32(a[0]) : -1;
-                if (_ourCall) _ourEnemies.Add(enemy);
-                if (_recentSpawns.Count >= 400) _recentSpawns.RemoveAt(0);
-                _recentSpawns.Add((GameT, unitId, _ourCall));
-                if (_suppress && !_ourCall) _toDestroy.Enqueue(enemy);   // убрать на следующем кадре, не внутри Start_Unit
-            }
-            catch (Exception e) { W("OnSpawn: " + Err(e)); }
-        }
-
-        private void Frame()
-        {
-            if (!_inBattle || _done) return;
-            try
-            {
-                while (_toDestroy.Count > 0)
+                var src = a[0]; var key = Ptr(src);
+                if (key == null) return;
+                int id = Convert.ToInt32(a[1]);
+                if (!_sources.TryGetValue(key, out var v))
                 {
-                    var e = _toDestroy.Dequeue();
-                    try { Call(e, "Unit_Destroy_Simple"); _destroyed++; }
-                    catch (Exception ex) { if (_destroyed == 0) W("Unit_Destroy_Simple: " + Err(ex)); }
-                }
-                if (GameT < _driveUntil && _ctx.Timer.Delta > 0)
-                {
-                    var h = Hero();
-                    if (h != null)
+                    if (_sources.Count > 80) return;
+                    string name = "?";
+                    try { name = Get(src, "name") as string ?? "?"; } catch { }
+                    try
                     {
-                        double ang = GameT * 1.5;
-                        foreach (var p in _puppets)
-                        {
-                            if (!p.Driven || !Alive(p.E)) continue;
-                            var before = Pos(p.E);
-                            if (before.HasValue && p.HasTarget) p.MaxErr = Math.Max(p.MaxErr, Math.Sqrt(Math.Pow(before.Value.x - p.Tx, 2) + Math.Pow(before.Value.y - p.Ty, 2)));
-                            p.Tx = h.Value.x + Math.Cos(ang + p.Phase) * 4; p.Ty = h.Value.y + Math.Sin(ang + p.Phase) * 4; p.HasTarget = true;
-                            SetPos(p.E, p.Tx, p.Ty);
-                        }
+                        if (_heroTrKey == null) _heroTrKey = Ptr(Get(Hero(), "Transform_ObjUnit"));
+                        if (Equals(_heroTrKey, key)) name = "ГЕРОЙ (" + name + ")";
                     }
+                    catch { }
+                    v = (name, 0, new Dictionary<int, int>());
                 }
-                foreach (var kv in _marked.ToList())
-                {
-                    if (!Alive(kv.Key)) { _marked.Remove(kv.Key); continue; }
-                    ApplyMark(kv.Key, kv.Value.c, kv.Value.scale);
-                }
+                v.ids[id] = v.ids.TryGetValue(id, out var n) ? n + 1 : 1;
+                _sources[key] = (v.name, v.n + 1, v.ids);
             }
-            catch (Exception e) { W($"{T} кадр: {Err(e)}"); }
+            catch { }
         }
-
-        // ------------------------------------------------------------ сценарий
 
         private void Step()
         {
             if (!_inBattle || _done) return;
             double t = GameT;
-            switch (_stage)
-            {
-                case 0: Board($"Разведка: опыт A через {Math.Max(0, 15 - t):0} с — играйте как обычно"); if (t >= 15) { _stage = 1; _ctx.Guard("A", ExpSpawn); } break;
-                case 1: Board($"Опыт A: ЗОЛОТОЙ большой враг справа от героя — создан модом по команде ({Math.Max(0, 25 - t):0} с)"); if (t >= 17) { _stage = 2; _ctx.Guard("A итог", ExpSpawnResult); } break;
-                case 2: Board($"Опыт A: ЗОЛОТОЙ враг стоит, его можно убить ({Math.Max(0, 25 - t):0} с)"); if (t >= 25) { _stage = 3; _ctx.Guard("A конец", ExpSpawnEnd); } break;
-                case 3: Board($"Опыт B через {Math.Max(0, 30 - t):0} с"); if (t >= 30) { _stage = 4; _ctx.Guard("B", PuppetsStart); } break;
-                case 4: Board($"Опыт B: СИНИЕ кружат (ведёт мод), ЗЕЛЁНЫЕ стоят, КРАСНЫЕ уходят ({Math.Max(0, 40 - t):0} с)"); if (t >= 31) { _stage = 5; _ctx.Guard("B", () => PuppetsCheck("через 1 с")); } break;
-                case 5: Board($"Опыт B: СИНИЕ кружат (ведёт мод), ЗЕЛЁНЫЕ стоят, КРАСНЫЕ уходят ({Math.Max(0, 40 - t):0} с)"); if (t >= 34) { _stage = 6; _ctx.Guard("B", () => PuppetsCheck("через 4 с")); } break;
-                case 6: Board($"Опыт B: СИНИЕ кружат (ведёт мод), ЗЕЛЁНЫЕ стоят, КРАСНЫЕ уходят ({Math.Max(0, 40 - t):0} с)"); if (t >= 40) { _stage = 7; _ctx.Guard("B", () => PuppetsCheck("через 10 с (конец)")); } break;
-                case 7: Board("Опыт C: замер нагрузки"); if (t >= 42) { _stage = 8; _ctx.Guard("C", CostTest); } break;
-                case 8: Board($"Опыт D через {Math.Max(0, 45 - t):0} с"); if (t >= 45) { _stage = 9; _ctx.Guard("D", SuppressStart); } break;
-                case 9: Board($"Опыт D: новые враги исчезают сразу — убрано {_destroyed} ({Math.Max(0, 55 - t):0} с)"); if (t >= 55) { _stage = 10; _ctx.Guard("D итог", SuppressEnd); } break;
-                case 10: Board($"Опыт E через {Math.Max(0, 58 - t):0} с"); if (t >= 58) { _stage = 11; _ctx.Guard("E", ZeroSpawnStart); } break;
-                case 11: Board($"Опыт E: спавн погашен — новых врагов {_spawns - _spawnsAtStage} ({Math.Max(0, 68 - t):0} с)"); if (t >= 68) { _stage = 12; _ctx.Guard("E итог", ZeroSpawnEnd); } break;
-                case 12: if (t >= 70) Finish("все опыты проведены"); break;
-            }
+            if (!_dumped && t >= 2) { _dumped = true; _ctx.Guard("структура героя", DumpStructure); }
+            if (t >= _nextSnap) { _nextSnap = t + 15; _ctx.Guard("снимок героя", Snapshot); }
+            if (t - _spellsAt >= 2 || _spellsText == null) { _spellsAt = t; _spellsText = SpellsText(); }
+            _boardText = $"Разведка героя: берите Щит, Спутник, Духа. Снимков {_snaps}, следующий через {Math.Max(0, _nextSnap - t):0} с. Заклинания: {_spellsText}";
             ShowBoard();
         }
 
-        // ---- A: враг по команде
-        private int _bossNumBefore;
-        private void ExpSpawn()
+        private int SafeLevel(int id) { try { return _spells.Level(id); } catch { return 0; } }
+        private double _spellsAt;
+        private string _spellsText;
+        private string SpellsText() => string.Join(" ", Enumerable.Range(1, 21).Select(id => (id, l: SafeLevel(id))).Where(x => x.l > 0).Select(x => $"{x.id}:{x.l}"));
+
+        // ------------------------------------------------------------ структура и снимки
+
+        private void DumpStructure()
         {
-            W(""); W("===== A: Create_UnitEnemyBoss(1, 1) — враг по команде (золотой) =====");
-            if (_mgr == null) { W("менеджер не пойман"); return; }
-            _snap = Snapshot(); _recentSpawns.Clear();
-            try { _bossNumBefore = Convert.ToInt32(Get(_mgr, "ApplyBossNum")); } catch { }
-            Flush(); _ctx.Mark("A Create_UnitEnemyBoss");
-            _ourCall = true;
-            try { Call(_mgr, "Create_UnitEnemyBoss", 1, 1); W($"{T} вызов прошёл"); }
-            catch (Exception e) { W($"{T} ошибка: {Err(e)}"); }
-            finally { _ourCall = false; }
-            // счётчик боссов вернуть как было — враг обычный
-            try { Set(_mgr, "ApplyBossNum", _bossNumBefore); W($"  ApplyBossNum возвращён в {_bossNumBefore}"); } catch (Exception e) { W("  ApplyBossNum: " + Err(e)); }
-            var h = Hero();
-            foreach (var e in _ourEnemies)
+            var hero = Hero();
+            if (hero == null) { W("героя нет"); return; }
+            var t = hero.GetType();
+            W(""); W($"##### ГЕРОЙ: {t.FullName} : {t.BaseType?.FullName}");
+            var props = t.GetProperties(Any).Where(p => !Junk(p.Name) && p.GetIndexParameters().Length == 0).OrderBy(p => p.Name).ToList();
+            W($"--- всего полей {props.Count}; ниже — с Shield/Spirit/Satellite/Doppel/… в имени и все объекты (GameObject/Transform/массивы объектов)");
+            foreach (var p in props)
             {
-                try
+                var tn = TypeName(p.PropertyType);
+                bool obj = tn.Contains("GameObject") || tn.Contains("Transform") || tn.Contains("SpriteRenderer") || tn.Contains("Collider");
+                if (Interesting.IsMatch(p.Name) || obj) W($"  {tn} {p.Name}{(p.GetGetMethod(true)?.IsStatic == true ? " [static]" : "")}");
+            }
+            var methods = t.GetMethods(Any | BindingFlags.DeclaredOnly).Where(m => !m.IsSpecialName && !Junk(m.Name) && Interesting.IsMatch(m.Name)).OrderBy(m => m.Name).ToList();
+            W($"--- методы с Shield/Spirit/Satellite/Doppel/… ({methods.Count})");
+            foreach (var m in methods) W($"  {TypeName(m.ReturnType)} {m.Name}({string.Join(", ", m.GetParameters().Select(a => TypeName(a.ParameterType) + " " + a.Name))})");
+            Flush();
+        }
+
+        private void Snapshot()
+        {
+            var hero = Hero();
+            if (hero == null) return;
+            _snaps++;
+            var hp = _enemies.HeroPos;
+            W(""); W($"===== снимок {_snaps} на {GameT:0} с; заклинания (ID:уровень): {SpellsText()} =====");
+            foreach (var p in hero.GetType().GetProperties(Any).Where(p => !Junk(p.Name) && p.GetIndexParameters().Length == 0 && Interesting.IsMatch(p.Name)).OrderBy(p => p.Name))
+            {
+                object v;
+                try { v = p.GetValue(p.GetGetMethod(true)?.IsStatic == true ? null : hero); } catch (Exception e) { W($"  {p.Name}: {e.GetType().Name}"); continue; }
+                string d = Describe(v, hp, 0);
+                if (d != null) W($"  {p.Name} = {d}");
+            }
+            W("--- источники снарядов героя (имя объекта: всего, по типам снаряда):");
+            foreach (var s in _sources.Values.OrderByDescending(x => x.n)) W($"  {s.name}: {s.n} ({string.Join(", ", s.ids.OrderBy(k => k.Key).Select(k => $"{k.Key}×{k.Value}"))})");
+            Flush();
+        }
+
+        /// <summary>Короткое описание значения: числа, флаги, объекты (активен, где относительно героя), коллекции (размер и элементы).</summary>
+        private string Describe(object v, Vector3? hero, int depth)
+        {
+            if (v == null) return "null";
+            var t = v.GetType();
+            if (t.IsPrimitive || v is string || t.IsEnum) return v is float f ? f.ToString("0.###") : v.ToString();
+            if (t.Name == "Vector3" || t.Name == "Vector2" || t.Name == "Color")
+                return "(" + string.Join(", ", t.GetFields().Where(x => !x.IsStatic).Select(x => Convert.ToDouble(x.GetValue(v)).ToString("0.##"))) + ")";
+            if (t.Name == "GameObject")
+            {
+                var tr = Get(v, "transform");
+                return $"объект «{Get(v, "name")}» активен {Get(v, "activeSelf")}{Where(tr, hero)}{Children(tr)}";
+            }
+            if (t.Name == "Transform" || t.Name == "RectTransform")
+            {
+                var go = Get(v, "gameObject");
+                return $"transform «{Get(v, "name")}»{(go != null ? $" активен {Get(go, "activeSelf")}" : "")}{Where(v, hero)}{Children(v)}";
+            }
+            if (t.Name == "SpriteRenderer") return $"картинка, включена {Get(v, "enabled")}, спрайт «{Get(Get(v, "sprite"), "name")}»";
+            if (depth > 0) return t.Name;
+            // коллекции: массивы Il2Cpp (Length + индексатор) и списки (Count + get_Item)
+            var count = Get(v, "Length") ?? Get(v, "Count");
+            if (count != null)
+            {
+                int n = Convert.ToInt32(count);
+                var item = t.GetMethod("get_Item", new[] { typeof(int) });
+                if (item == null && v is IList il)
+                    return $"{TypeName(t)} [{n}]: " + string.Join("; ", Enumerable.Range(0, Math.Min(n, 12)).Select(i => Describe(il[i], hero, 1)));
+                if (item == null) return $"{TypeName(t)} [{n}]";
+                var parts = new List<string>();
+                for (int i = 0; i < Math.Min(n, 12); i++)
                 {
-                    if (h.HasValue) SetPos(e, h.Value.x + 3.5, h.Value.y);
-                    Call(e, "StopAllCoroutines");                     // стоит на месте, чтобы его было видно
-                    Mark(e, Gold, 1.8f);
+                    try { parts.Add(Describe(item.Invoke(v, new object[] { i }), hero, 1)); } catch (Exception e) { parts.Add(e.GetType().Name); }
                 }
-                catch (Exception ex) { W("  подготовка: " + Err(ex)); }
+                return $"{TypeName(t)} [{n}]: " + string.Join("; ", parts);
             }
-            W($"  создано во время вызова: {_ourEnemies.Count}; поставлен в 3,5 ед справа от героя, окрашен золотым, корутины остановлены");
-            Flush();
-        }
-        private void ExpSpawnResult()
-        {
-            W($"  за 2 с появилось: {string.Join("; ", _recentSpawns.Select(s => $"{s.t:0.0}с тип {s.unitId}{(s.ours ? " (наш)" : "")}"))}");
-            DiffSnapshot("за 2 с после A");
-            foreach (var e in _ourEnemies)
-            {
-                var p = Pos(e); var h = Hero();
-                W($"  наш враг: тип {Get(e, "UnitID")}, жив {Get(e, "Unit_IsLive")}, HP {Get(e, "Unit_Hp")}/{Get(e, "UnitApply_HpMax")}" +
-                  (p.HasValue && h.HasValue ? $", до героя {Math.Sqrt(Math.Pow(p.Value.x - h.Value.x, 2) + Math.Pow(p.Value.y - h.Value.y, 2)):0.0}" : ""));
-            }
-            Flush();
-        }
-        private void ExpSpawnEnd()
-        {
-            foreach (var e in _ourEnemies) W($"  к концу опыта A: жив {Get(e, "Unit_IsLive")}, HP {Get(e, "Unit_Hp")}");
-            Flush();
+            return null;   // прочие ссылки (компоненты, корутины) — пропускаем
         }
 
-        // ---- B: марионетки
-        private void PuppetsStart()
+        private static string Where(object tr, Vector3? hero)
         {
-            W(""); W("===== B: марионетки — СИНИЕ «стоп+кин» ведёт мод по кругу, ЗЕЛЁНЫЕ «стоп» стоят, КРАСНЫЕ «кин» без физики =====");
-            var h = Hero(); if (h == null) { W("  нет героя"); return; }
-            var near = _enemies.Near(h.Value.x, h.Value.y, 14).Where(e => !_ourEnemies.Contains(e.Raw)).Take(9).ToList();
-            for (int i = 0; i < near.Count; i++)
+            try
             {
-                var e = near[i].Raw;
-                string g = i % 3 == 0 ? "стоп+кин" : i % 3 == 1 ? "стоп" : "кин";
-                var p = new Puppet { E = e, Group = g, Phase = i * (Math.PI * 2 / 9), Driven = g == "стоп+кин" };
-                try
-                {
-                    if (g.Contains("стоп")) Call(e, "StopAllCoroutines");
-                    if (g.Contains("кин")) Set(Get(e, "Rigidbody_ObjUnit"), "isKinematic", true);
-                    if (!p.Driven) { p.Tx = h.Value.x + Math.Cos(p.Phase) * 5.5; p.Ty = h.Value.y + Math.Sin(p.Phase) * 5.5; p.HasTarget = true; SetPos(e, p.Tx, p.Ty); }
-                    Mark(e, g == "стоп+кин" ? Blue : g == "стоп" ? Green : Red, 1.5f);
-                }
-                catch (Exception ex) { W($"  {g}: {Err(ex)}"); }
-                _puppets.Add(p);
+                if (!(tr is Transform t) || !hero.HasValue) return "";
+                var p = t.position;
+                return $", от героя ({p.x - hero.Value.x:0.00}, {p.y - hero.Value.y:0.00})";
             }
-            W($"  выбрано {near.Count}");
-            _driveUntil = GameT + 10;
-            Flush();
+            catch { return ""; }
         }
-        private void PuppetsCheck(string when)
+        private static string Children(object tr)
         {
-            W($"  --- {when}:");
-            foreach (var g in _puppets.GroupBy(p => p.Group))
-            {
-                var parts = g.Select(p =>
-                {
-                    string st = Alive(p.E) ? "" : " (погиб)";
-                    if (p.Driven) return $"{p.MaxErr:0.000}{st}";
-                    var pos = Pos(p.E);
-                    return (pos.HasValue ? Math.Sqrt(Math.Pow(pos.Value.x - p.Tx, 2) + Math.Pow(pos.Value.y - p.Ty, 2)).ToString("0.00") : "?") + st;
-                });
-                W($"    {g.Key}: {(g.Key == "стоп+кин" ? "наибольший уход за кадр" : "ушёл от точки")} {string.Join(", ", parts)}");
-            }
-            Flush();
-        }
-
-        // ---- C: нагрузка
-        private void CostTest()
-        {
-            W(""); W("===== C: сколько стоит переставить всех врагов за один кадр =====");
-            var list = _enemies.Alive.Select(e => e.Raw).ToList();
-            var trs = list.Select(Tr).Where(x => x != null).ToList();
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            foreach (var tr in trs) { var v = tr.position; tr.position = v; }
-            double cached = sw.Elapsed.TotalMilliseconds;
-            W($"  врагов {trs.Count}: {cached:0.00} мс; на 200 врагов ≈ {(trs.Count > 0 ? cached / trs.Count * 200 : 0):0.00} мс за кадр");
-            Flush();
-        }
-
-        // ---- D: подавление
-        private void SuppressStart()
-        {
-            W(""); W("===== D: новые враги исчезают сразу (Unit_Destroy_Simple), 10 с =====");
-            _snap = Snapshot(); _deathsAtStage = _deaths; _destroyed = 0; _spawnsAtStage = _spawns;
-            _suppress = true;
-            Flush();
-        }
-        private void SuppressEnd()
-        {
-            _suppress = false;
-            W($"  появилось {_spawns - _spawnsAtStage}, убрано {_destroyed}, событий смерти {_deaths - _deathsAtStage} (это убийства героем)");
-            DiffSnapshot("за 10 с подавления");
-            Flush();
-        }
-
-        // ---- E: обнуление спавна
-        private void ZeroSpawnStart()
-        {
-            W(""); W("===== E: EnemyCreateNum/_Min/_Max = 0 на 10 с =====");
-            _spawnsAtStage = _spawns;
-            foreach (var f in new[] { "EnemyCreateNum", "EnemyCreateNum_Min", "EnemyCreateNum_Max" })
-            {
-                try { _savedFields[f] = Get(_mgr, f); W($"  {f} было {_savedFields[f]}, ставлю 0: {(Set(_mgr, f, 0) ? "ок" : "нельзя")}"); }
-                catch (Exception e) { W($"  {f}: {Err(e)}"); }
-            }
-            Flush();
-        }
-        private void ZeroSpawnEnd()
-        {
-            W($"  за 10 с создано врагов: {_spawns - _spawnsAtStage}");
-            Restore();
-            Flush();
-        }
-        private void Restore()
-        {
-            foreach (var kv in _savedFields.ToList())
-            {
-                try { Set(_mgr, kv.Key, kv.Value); W($"  {kv.Key} возвращено {kv.Value}"); } catch { }
-            }
-            _savedFields.Clear();
-            _suppress = false;
+            try { var c = Get(tr, "childCount"); return c != null && Convert.ToInt32(c) > 0 ? $", детей {c}" : ""; } catch { return ""; }
         }
 
         public void Finish(string why)
         {
             if (_done) return;
             _done = true;
-            Restore();
-            W(""); W($"===== разведка 3 завершена: {why}; всего врагов создано {_spawns}, смертей {_deaths}, кадров {_frames} =====");
+            try { if (_inBattle) Snapshot(); } catch { }
+            W(""); W($"===== разведка героя завершена: {why}; снимков {_snaps} =====");
             Flush();
             _boardText = "Разведка завершена — пришлите coop_probe.txt и modkit.log";
             ShowBoard();
-            _ctx.Log($"РАЗВЕДКА 3 ЗАВЕРШЕНА ({why}). Пришлите coop_probe.txt и modkit.log из UserData/ModKit");
-            try { _ctx.Toast("Разведка завершена — пришлите coop_probe.txt и modkit.log", 5); } catch { }
+            _ctx.Log($"РАЗВЕДКА ГЕРОЯ ЗАВЕРШЕНА ({why}). Пришлите coop_probe.txt и modkit.log из UserData/ModKit");
             try { _ctx.Timer.After(8, DestroyBoard); } catch { }
         }
     }

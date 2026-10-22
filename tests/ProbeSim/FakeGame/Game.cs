@@ -58,3 +58,35 @@ namespace Il2Cpp
         public void Unit_Death() { Unit_IsLive = false; FakeWorld.All.Remove(this); FakeWorld.Gone.Add(this); FakeWorld.KillCount++; }
     }
 }
+namespace Il2Cpp
+{
+    using System.Collections.Generic;
+    using UnityEngine;
+    /// <summary>Фальшивый герой: Щит (объект с детьми), Спутники (массив объектов), Духи (список объектов).</summary>
+    public class C_Battle_AllyUnit : MonoBehaviour
+    {
+        public Transform Transform_ObjUnit { get; set; } = new Transform { name = "1000" };
+        public GameObject Obj_UnitShield { get; set; }
+        public GameObject[] Array_Obj_UnitSatellitesA { get; set; }
+        public List<GameObject> List_ObjSpirit { get; set; } = new List<GameObject>();
+        public float UnitApply_ShieldMaxNum { get; set; } = 3;
+        public bool IsShield_P { get; set; } = true;
+        public int UnitApply_SpiritNum { get; set; } = 2;
+        public C_Battle_AllyUnit()
+        {
+            Obj_UnitShield = Make("Obj_UnitShield", 0, 0, true, 3);
+            Array_Obj_UnitSatellitesA = new[] { Make("SatA01", 2, 0, true, 0), Make("SatA02", -2, 0, true, 0), Make("SatA03", 0, 2, false, 0) };
+            List_ObjSpirit.Add(Make("Spirit01", 1, 1, true, 1));
+        }
+        static GameObject Make(string n, float x, float y, bool on, int kids)
+        {
+            var go = new GameObject { name = n, activeSelf = on };
+            go.transform = new Transform { name = n, position = new Vector3(x, y, 0), childCount = kids, gameObject = go };
+            return go;
+        }
+        public void Play_Shield() { }
+        public void Start_Satellite() { }
+        public void Spirit_Attack() { }
+        public void Bullet_Create(Transform t, int id, float x, float y, float z, float a, float p1, float p2, float s1, float s2, float s3, float s4, float dr) { }
+    }
+}

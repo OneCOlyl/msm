@@ -68,6 +68,20 @@ namespace MagicSurvivalCoop
         private bool _magicHooked;
         private int _castFails;
         private readonly Dictionary<int, int> _sentById = new Dictionary<int, int>();
+        private readonly Dictionary<object, (string name, int n)> _sources = new Dictionary<object, (string, int)>();
+
+        /// <summary>Учёт, из каких объектов вылетают снаряды героя (для итога в журнал: видно, какие заклинания стреляют не из героя).</summary>
+        private void CountSource(object src, IntPtr sp)
+        {
+            object key = sp != IntPtr.Zero ? (object)sp : src;
+            if (key == null) return;
+            if (_sources.TryGetValue(key, out var v)) { _sources[key] = (v.name, v.n + 1); return; }
+            if (_sources.Count > 60) return;
+            string name = "?";
+            try { name = src?.GetType().GetProperty("name", BindingFlags.Public | BindingFlags.Instance)?.GetValue(src) as string ?? "?"; } catch { }
+            if (ReferenceEquals(src, _heroTr) || (sp != IntPtr.Zero && sp == Ptr(_heroTr))) name = "герой";
+            _sources[key] = (name, 1);
+        }
         private int _castsDone, _castsDropped;
 
         /// <summary>Только для тестов на ПК: герой по контексту мода вместо BattleState.Hero (в тесте два «телефона» в одном процессе).</summary>
@@ -89,7 +103,7 @@ namespace MagicSurvivalCoop
         {
             _outCasts.Clear();
             _heroObj = null; _bulletCreate = null; _heroTrPtr = IntPtr.Zero;
-            _sentById.Clear(); _castsDone = 0; _castsDropped = 0; _levels.Clear();
+            _sentById.Clear(); _castsDone = 0; _castsDropped = 0; _levels.Clear(); _sources.Clear();
             foreach (var p in _partners.Values) p.Casts.Clear();
         }
 
@@ -129,11 +143,14 @@ namespace MagicSurvivalCoop
                 var heroTr = _heroTr;
                 if (heroTr == null) { HeroPosition(out _, out _, out _); heroTr = _heroTr; }
                 if (heroTr == null) return;
-                bool fromHero;
+                // пересылаем все снаряды героя (из него самого, из Духов, двойников игры…), кроме выстрелов наших союзников-друзей
                 var sp = Ptr(src);
-                if (sp != IntPtr.Zero) { if (_heroTrPtr == IntPtr.Zero) _heroTrPtr = Ptr(heroTr); fromHero = sp == _heroTrPtr; }
-                else fromHero = ReferenceEquals(src, heroTr);
-                if (!fromHero) return;
+                foreach (var pp in _partners.Values)
+                {
+                    if (pp.GhostTr == null) continue;
+                    if (sp != IntPtr.Zero ? sp == Ptr(pp.GhostTr) : ReferenceEquals(src, pp.GhostTr)) return;
+                }
+                CountSource(src, sp);
                 if (_outCasts.Count >= MaxCastsPerSend) { _castsDropped++; return; }
                 var hp = heroTr.position;
                 var c = new Cast
@@ -240,7 +257,8 @@ namespace MagicSurvivalCoop
             if (!_magicHooked) return;
             var lv = _levels.OrderBy(k => k.Key).Select(k => $"{k.Key}:{k.Value}");
             _ctx.Log($"магия за бой: отправлено {string.Join(", ", _sentById.OrderBy(k => k.Key).Select(k => $"снаряд {k.Key}×{k.Value}"))}; " +
-                     $"повторено касов друзей {_castsDone}, пропущено {_castsDropped}; свои заклинания (ID:уровень) {string.Join(" ", lv)}");
+                     $"повторено касов друзей {_castsDone}, пропущено {_castsDropped}; свои заклинания (ID:уровень) {string.Join(" ", lv)}; " +
+                     $"источники снарядов: {string.Join(", ", _sources.Values.GroupBy(v => v.name).Select(g => $"{g.Key}×{g.Sum(x => x.n)}"))}");
         }
     }
 }

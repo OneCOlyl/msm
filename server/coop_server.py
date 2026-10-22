@@ -30,6 +30,7 @@ class Conn:
         self.id = cid
         self.writer = writer
         self.name = "Игрок"
+        self.client_id = ""
         self.slot = 0
         self.room = None
         self.last_seen = time.monotonic()
@@ -78,9 +79,9 @@ class Server:
             "players": [{"playerId": p.id, "name": p.name, "slot": p.slot} for p in room.players],
         }
 
-    def add_to_room(self, c, room):
+    def add_to_room(self, c, room, prefer=0):
         used = {p.slot for p in room.players}
-        slot = 1
+        slot = prefer if prefer and prefer not in used else 1
         while slot in used:
             slot += 1
         c.slot, c.room = slot, room
@@ -132,11 +133,19 @@ class Server:
                     return self.error(c, "room_not_found", "Комната не найдена.")
             if c in room.players:
                 return c.send(self.room_msg("ROOM_JOINED", room, c))
+            cid = str(m.get("clientId") or "")
+            prefer = 0
+            stale = next((p for p in room.players if p is not c and cid and p.client_id == cid), None)
+            if stale is not None:  # тот же игрок переподключился раньше, чем сервер заметил обрыв
+                prefer = stale.slot
+                self.leave_room(stale)
+                stale.close()
             if len(room.players) >= MAX_PLAYERS:
                 return self.error(c, "room_full", "Комната заполнена (максимум 4 игрока).")
             self.leave_room(c)
             c.name = clean_name(m.get("name"))
-            self.add_to_room(c, room)
+            c.client_id = cid
+            self.add_to_room(c, room, prefer)
             c.send(self.room_msg("ROOM_JOINED", room, c))
             for p in room.players:
                 if p is not c:

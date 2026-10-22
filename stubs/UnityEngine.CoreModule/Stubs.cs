@@ -15,13 +15,14 @@ namespace UnityEngine
     /// <summary>Только для тестов: как копировать фальшивые объекты.</summary>
     public interface ICloneTarget { Object CloneForTest(); }
     public class Component : Object { }
-    public class Transform : Component { public Vector3 position { get; set; } public Vector3 localScale { get; set; } }
+    public class Transform : Component { public Vector3 position { get; set; } public Vector3 localScale { get; set; } public int childCount { get; set; } public GameObject gameObject { get; set; } }
     public class Renderer : Component { }
-    public class SpriteRenderer : Renderer { public Color color { get; set; } }
+    public class SpriteRenderer : Renderer { public Color color { get; set; } public bool enabled { get; set; } = true; public Object sprite { get; set; } }
     public class RectTransform : Transform { }
     public class GameObject : Object
     {
         public bool activeSelf { get; set; }
+        public Transform transform { get; set; } = new Transform();
         public Component TestComponent;
         public void SetActive(bool v) => activeSelf = v;
         public T GetComponent<T>() where T : class => TestComponent as T;

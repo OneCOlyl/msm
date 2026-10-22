@@ -73,6 +73,7 @@ namespace MagicSurvivalCoop.Net
         {
             public string Id;
             public string Name = "Игрок";
+            public string ClientId = "";
             public int Slot;
             public Room Room;
             public TcpClient Tcp;
@@ -216,10 +217,16 @@ namespace MagicSurvivalCoop.Net
                         else if (!_rooms.TryGetValue(code, out room)) { SendError(c, "room_not_found", "Комната не найдена."); break; }
 
                         if (room.Players.Contains(c)) { c.Send(RoomMessage(Protocol.RoomJoined, room, c)); break; }
+                        // тот же игрок переподключился раньше, чем сервер заметил обрыв: старое соединение закрываем, слот отдаём ему
+                        var cid = Protocol.Str(m, "clientId") ?? "";
+                        int preferSlot = 0;
+                        var stale = cid.Length > 0 ? room.Players.FirstOrDefault(p => p != c && p.ClientId == cid) : null;
+                        if (stale != null) { preferSlot = stale.Slot; LeaveRoomLocked(stale); stale.Close(); Log($"{stale.Id}: тот же игрок вошёл заново — старое соединение закрыто"); }
                         if (room.Players.Count >= Protocol.MaxPlayers) { SendError(c, "room_full", "Комната заполнена (максимум 4 игрока)."); break; }
                         LeaveRoomLocked(c);
                         c.Name = Protocol.CleanName(Protocol.Str(m, "name"));
-                        AddToRoomLocked(c, room);
+                        c.ClientId = cid;
+                        AddToRoomLocked(c, room, preferSlot);
                         c.Send(RoomMessage(Protocol.RoomJoined, room, c));
                         var joined = Protocol.Build(w =>
                         {
@@ -287,9 +294,9 @@ namespace MagicSurvivalCoop.Net
             throw new InvalidOperationException("не удалось выдать код комнаты");
         }
 
-        private static void AddToRoomLocked(Conn c, Room room)
+        private static void AddToRoomLocked(Conn c, Room room, int preferSlot = 0)
         {
-            int slot = 1;
+            int slot = preferSlot > 0 && !room.Players.Any(p => p.Slot == preferSlot) ? preferSlot : 1;
             while (room.Players.Any(p => p.Slot == slot)) slot++;
             c.Slot = slot;
             c.Room = room;

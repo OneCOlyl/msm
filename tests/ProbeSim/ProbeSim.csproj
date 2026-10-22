@@ -6,6 +6,7 @@
     <Reference Include="coop_probe"><HintPath>../../mod/coop_probe/bin/Release/net8.0/coop_probe.dll</HintPath></Reference>
     <Reference Include="ModKit"><HintPath>../../libs/ModKit.dll</HintPath></Reference>
     <Reference Include="modkit_combat"><HintPath>../../libs/modkit_combat.dll</HintPath></Reference>
+    <Reference Include="modkit_spells"><HintPath>../../libs/modkit_spells.dll</HintPath></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>../../stubs/out/UnityEngine.CoreModule.dll</HintPath></Reference>
   </ItemGroup>
 </Project>

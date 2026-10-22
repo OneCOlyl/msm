@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.3.1";
+        public const string ModVersion = "1.3.2";
 
         public ModDef Define() => new ModDef
         {
@@ -85,7 +85,7 @@ namespace MagicSurvivalCoop
         private readonly ConcurrentQueue<string> _bgLog = new ConcurrentQueue<string>();
 
         private readonly Dictionary<string, Partner> _partners = new Dictionary<string, Partner>();
-        private string _myId, _roomCode, _myName;
+        private string _myId, _roomCode, _myName, _clientId;
         private int _mySlot;
         private bool _hosting;
         private int _hostPort;
@@ -164,6 +164,8 @@ namespace MagicSurvivalCoop
                 ctx.Store.Set("name", _myName);
             }
 
+            _clientId = ctx.Store.Get("clientId", "");
+            if (string.IsNullOrEmpty(_clientId)) { _clientId = Guid.NewGuid().ToString("N"); ctx.Store.Set("clientId", _clientId); }
             _client.Log = s => _bgLog.Enqueue("клиент: " + s);
 
             ctx.Events.On("mainMenu", _ => ctx.Guard("кнопка в меню", ShowMenuButton));
@@ -227,7 +229,7 @@ namespace MagicSurvivalCoop
                 return;
             }
             _hosting = true;
-            _client.Start("127.0.0.1", _hostPort, _myName);
+            _client.Start("127.0.0.1", _hostPort, _myName, clientId: _clientId);
             _notice = _hostPort == Port
                 ? "Игра создана. Сообщите друзьям IP, отмеченный «← VPN»."
                 : $"Порт {Port} занят другой программой, игра создана на порту {_hostPort}. Друзья с портом {Port} найдут её сами.";
@@ -240,7 +242,7 @@ namespace MagicSurvivalCoop
             Disconnect();
             _lastError = null; _notice = null;
             _hosting = false;
-            _client.Start(HostIp, Port, _myName, portSpan: PortSpan);
+            _client.Start(HostIp, Port, _myName, portSpan: PortSpan, clientId: _clientId);
             _ctx.Log($"подключение к {HostIp}:{Port}");
         }
 

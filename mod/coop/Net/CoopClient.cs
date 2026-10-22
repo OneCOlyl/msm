@@ -25,7 +25,7 @@ namespace MagicSurvivalCoop.Net
         private volatile bool _running;
         private Thread _thread;
         private TcpClient _tcp;
-        private string _host, _roomCode, _name;
+        private string _host, _roomCode, _name, _clientId = "";
         private int _port, _portSpan, _portIdx, _refusedInRow;
         private bool _create;
 
@@ -48,8 +48,9 @@ namespace MagicSurvivalCoop.Net
         /// Подключиться и войти в комнату. roomCode пустой — «любая комната на сервере» (режим «по IP»). create — создать новую комнату.
         /// portSpan > 0 — если порт закрыт, пробовать следующие (port+1 … port+portSpan): хост мог занять соседний, когда основной был занят.
         /// </summary>
-        public void Start(string host, int port, string name, string roomCode = "", bool create = false, int portSpan = 0)
+        public void Start(string host, int port, string name, string roomCode = "", bool create = false, int portSpan = 0, string clientId = "")
         {
+            _clientId = clientId ?? "";
             Stop();
             _host = host; _port = port; _portSpan = Math.Max(0, portSpan); _portIdx = 0; _refusedInRow = 0;
             _name = Protocol.CleanName(name); _roomCode = roomCode ?? ""; _create = create;
@@ -173,7 +174,7 @@ namespace MagicSurvivalCoop.Net
                         if (type == Protocol.Error && Protocol.Str(el, "code") == "room_not_found" && _roomCode.Length > 0 && State != Status.Connected)
                         {
                             _roomCode = "";
-                            _out.Enqueue(Protocol.Build(w => { w.WriteString("type", Protocol.JoinRoom); w.WriteString("roomCode", ""); w.WriteString("name", _name); w.WriteNumber("protocol", Protocol.Version); }));
+                            _out.Enqueue(Protocol.Build(w => { w.WriteString("type", Protocol.JoinRoom); w.WriteString("roomCode", ""); w.WriteString("name", _name); w.WriteString("clientId", _clientId); w.WriteNumber("protocol", Protocol.Version); }));
                             _wake.Set();
                             continue;
                         }
@@ -187,8 +188,8 @@ namespace MagicSurvivalCoop.Net
 
             // вход в комнату
             Write(stream, _create
-                ? Protocol.Build(w => { w.WriteString("type", Protocol.CreateRoom); w.WriteString("name", _name); w.WriteNumber("protocol", Protocol.Version); })
-                : Protocol.Build(w => { w.WriteString("type", Protocol.JoinRoom); w.WriteString("roomCode", _roomCode); w.WriteString("name", _name); w.WriteNumber("protocol", Protocol.Version); }));
+                ? Protocol.Build(w => { w.WriteString("type", Protocol.CreateRoom); w.WriteString("name", _name); w.WriteString("clientId", _clientId); w.WriteNumber("protocol", Protocol.Version); })
+                : Protocol.Build(w => { w.WriteString("type", Protocol.JoinRoom); w.WriteString("roomCode", _roomCode); w.WriteString("name", _name); w.WriteString("clientId", _clientId); w.WriteNumber("protocol", Protocol.Version); }));
             _create = false;   // после переподключения входим в ту же комнату, а не создаём новую
 
             double nextPing = 0;

@@ -126,6 +126,15 @@ Console.WriteLine("2д. магия друга: каждый снаряд гер�
     int echo = B.Game.Calls.Count(c => c.id == 6 && !ReferenceEquals(c.src, B.Combat.HeroTr));
     Check(echo == 0, "повтор у хоста не вернулся другу эхом");
 
+    // Дух друга (свой объект, не герой) стреляет — тоже должно дойти до хоста
+    int cs = A.Game.Calls.Count;
+    var spirit = new Transform { position = new Vector3(B.Combat.HeroTr.position.x + 1, B.Combat.HeroTr.position.y, 0) };
+    bh = B.Combat.HeroTr.position;
+    B.Game.Bullet_Create(spirit, 16, bh.x - 3, bh.y, 0, 0, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
+    for (int fr = 0; fr < 40; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var sp = A.Game.Calls.Skip(cs).ToList();
+    Check(sp.Count == 1 && sp[0].id == 16, $"выстрел Духа друга (не из героя) повторён у хоста: {string.Join(",", sp.Select(x => x.id))}");
+
     // рядом с точкой цели у хоста стоит враг — снаряд должен полететь в него
     var gp3 = g.Tr.position;
     A.Combat.Enemies.Add(new StillEnemy { P = new Vector3(gp3.x + 2.8f, gp3.y + 1.6f, 0) });

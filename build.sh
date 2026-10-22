@@ -32,7 +32,7 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
     z.write("mod.json", "mod.json")
     z.write("bin/Release/net8.0/coop_probe.dll", "coop_probe.dll")
     z.write("icon.png", "icon.png")
-print("dist/coop_probe.zip готов (разведка врагов)")
+print("dist/coop_probe.zip готов (разведка)")
 EOF
 )
 

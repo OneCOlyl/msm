@@ -172,6 +172,29 @@ if (server != null)
     foreign.Stop();
 }
 
+Console.WriteLine("12. тот же игрок переподключился раньше, чем сервер заметил обрыв — получает свой прежний номер");
+{
+    if (server == null) { foreach (var cl in new[] { a, b, c3, d, e5 }) cl.Stop(); Thread.Sleep(1500); }   // внешний сервер: освободить комнату
+    var r1 = new CoopClient(); var br1 = new List<JsonElement>();
+    // свободная комната на своём сервере, чтобы номера были предсказуемы
+    CoopServer own = null; string h2 = host; int p2 = port;
+    if (server != null) { own = new CoopServer(); own.Start(0); h2 = "127.0.0.1"; p2 = own.Port; }
+    var hostC = new CoopClient(); var bh = new List<JsonElement>();
+    hostC.Start(h2, p2, "Хост2", clientId: "host-1");
+    WaitFor(hostC, Protocol.RoomJoined, bh);
+    r1.Start(h2, p2, "Друг2", clientId: "friend-1");
+    var j1 = WaitFor(r1, Protocol.RoomJoined, br1);
+    int slot1 = j1.HasValue ? (int)Protocol.Num(j1.Value, "slot") : -1;
+    // второй клиент с тем же clientId (как после обрыва, пока старое соединение ещё «живо» на сервере)
+    var r2 = new CoopClient(); var br2 = new List<JsonElement>();
+    r2.Start(h2, p2, "Друг2", clientId: "friend-1");
+    var j2 = WaitFor(r2, Protocol.RoomJoined, br2);
+    int slot2 = j2.HasValue ? (int)Protocol.Num(j2.Value, "slot") : -1;
+    int players = j2.HasValue ? j2.Value.GetProperty("players").GetArrayLength() : -1;
+    Check(slot1 > 0 && slot2 == slot1 && players == 2, $"переподключённый игрок получил тот же номер {slot2} (был {slot1}), в комнате {players} игрока");
+    r1.Stop(); r2.Stop(); hostC.Stop(); own?.Stop();
+}
+
 foreach (var cl in new[] { a, b, c3, d, e5 }) cl.Stop();
 server?.Stop();
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");
