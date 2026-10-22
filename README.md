@@ -103,4 +103,4 @@ REF=/путь/к/ref bash build.sh
 
 **Протокол v2:** JSON-строки поверх TCP. Клиент отправляет `CREATE_ROOM`, `JOIN_ROOM`, `PLAYER_STATE`, `EVENT`, `PING`, `LEAVE_ROOM`. Сервер отвечает `WELCOME`, `ROOM_CREATED`, `ROOM_JOINED`, `PLAYER_JOINED`, `PLAYER_LEFT`, `REMOTE_PLAYER_STATE`, `REMOTE_EVENT`, `PONG`, `ERROR`. `JOIN_ROOM` с пустым кодом заходит в комнату на сервере или создаёт её.
 
-**Новая версия:** поднимите `version` в `mod/coop/mod.json` и `ModVersion` в `mod/coop/CoopMod.cs`, затем отправьте метку `git tag v1.0.1 && git push origin v1.0.1`. GitHub Actions соберёт мод, прогонит тесты и опубликует релиз с `coop.zip`.
+**Новая версия:** поднимите `version` в `mod/coop/mod.json` и `ModVersion` в `mod/coop/CoopMod.cs`, затем на GitHub откройте Actions → release → Run workflow. GitHub соберёт мод, прогонит тесты и опубликует релиз `v<версия>` с `coop.zip`.

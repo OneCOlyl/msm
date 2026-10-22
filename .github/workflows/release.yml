@@ -1,8 +1,10 @@
-# Релиз по метке версии: git tag v1.0.1 && git push origin v1.0.1
-# GitHub собирает мод, прогоняет тесты и публикует релиз с coop.zip.
+# Публикация релиза: GitHub → Actions → release → Run workflow.
+# Версия берётся из mod/coop/mod.json; GitHub собирает мод, прогоняет тесты,
+# создаёт метку v<версия> и релиз с coop.zip.
 name: release
 
 on:
+  workflow_dispatch:
   push:
     tags: ["v*"]
 
@@ -19,11 +21,15 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Проверка версии
+      - name: Версия
+        id: ver
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
           VER=$(python3 -c "import json;print(json.load(open('mod/coop/mod.json',encoding='utf-8'))['version'])")
-          if [ "$TAG" != "$VER" ]; then echo "::error::метка $GITHUB_REF_NAME, а в mod.json версия $VER"; exit 1; fi
+          echo "tag=v$VER" >> "$GITHUB_OUTPUT"
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$VER" ]; then
+            echo "::error::метка $GITHUB_REF_NAME, а в mod.json версия $VER"; exit 1
+          fi
 
       - name: Сборка и тесты
         run: |
@@ -35,6 +41,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/coop.zip \
-            --title "Кооператив ${GITHUB_REF_NAME#v}" \
+          if gh release view "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "::error::релиз ${{ steps.ver.outputs.tag }} уже есть — поднимите версию в mod/coop/mod.json"; exit 1
+          fi
+          gh release create "${{ steps.ver.outputs.tag }}" dist/coop.zip \
+            --target "$GITHUB_SHA" \
+            --title "Кооператив ${{ steps.ver.outputs.ver }}" \
             --notes-file .github/release_notes.md
