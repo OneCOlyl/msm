@@ -180,6 +180,28 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     Check(Resources.TestScans == 1, $"поиск по картинкам игры — один раз: {Resources.TestScans}");
     Check(!CloneGo.Made.Any(c => c.Kind == "satB"), "круга B нет — копий B не создано");
 
+    {   // спутники друга вращаются 2 рад/с — у хоста копии крутятся ровно, без рывков на каждом сообщении
+        var sat0 = CloneGo.Made.First(c => c.Kind == "satA");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        double Ang(Vector3 q, Vector3 c) => Math.Atan2(q.y - c.y, q.x - c.x);
+        var steps = new List<(double da, double dt)>();
+        double prevA = double.NaN, prevT = 0;
+        for (int fr = 0; fr < 90; fr++)
+        {
+            double t = sw.Elapsed.TotalSeconds, a = ang0 + 2 * t;
+            var hp0 = B.Combat.HeroTr.position;
+            bg.Array_Transform_ObjSatellitesA[0].position = new Vector3((float)(hp0.x + Math.Cos(a) * 2.25), (float)(hp0.y + Math.Sin(a) * 2.25), 0);
+            B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep");
+            double now = sw.Elapsed.TotalSeconds, cur = Ang(sat0.transform.position, g.Tr.position);
+            if (fr > 30 && !double.IsNaN(prevA)) { double d = cur - prevA; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; steps.Add((d, now - prevT)); }
+            prevA = cur; prevT = now;
+            Thread.Sleep(16);
+        }
+        double worst = steps.Max(x => Math.Abs(x.da / Math.Max(1e-3, x.dt) - 2));
+        double mean = steps.Sum(x => x.da) / steps.Sum(x => x.dt);
+        Check(Math.Abs(mean - 2) < 0.3, $"копии Спутников крутятся со скоростью друга: {mean:0.00} рад/с");
+        Check(worst < 1.2, $"вращение ровное, без рывков (наибольшее отклонение скорости за кадр {worst:0.00} рад/с)");
+    }
     for (int i = 0; i < 3; i++) bg.Array_IsSatelliteA_P[i] = false;
     bg.Obj_Shield.activeSelf = false;
     for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }

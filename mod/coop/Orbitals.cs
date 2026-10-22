@@ -30,12 +30,18 @@ namespace MagicSurvivalCoop
             public bool Shield;
             public string ImgShield, ImgSatA, ImgSatB, ImgSpirit;   // имена картинок у друга
             public double AngA, AngB, AngAt = -1, SpeedA, SpeedB;     // угол первого спутника (рад), когда получен, скорость (рад/с)
+            public double SenderT = -1;                               // время снятия угла у друга (его часы)
+            public bool HasSpeed;
+            public double DispA, DispB, LastFrame = -1;               // что рисуем: угол плавно догоняет предсказанный
+            public bool HasDisp;
+            public int ShownSatA, ShownSatB;
         }
 
         internal sealed class OrbClone
         {
             public object Go; public Transform Tr; public object Sr;
             public string Applied, Missed;
+            public double MissedAt;
             public bool? Active;
         }
 
@@ -58,11 +64,26 @@ namespace MagicSurvivalCoop
         private int _orbFails;
         private bool _myOrbLogged;
 
-        /// <summary>Своё состояние «орбит» — не чаще 4 раз в секунду (чтение массивов героя через рефлексию).</summary>
-        private void RefreshMyOrbits(double hx, double hy)
+        /// <summary>Своё состояние «орбит»: угол спутников — при каждой отправке (он вместе со временем «t» в том же сообщении),
+        /// остальное — не чаще 4 раз в секунду (чтение массивов героя через рефлексию).</summary>
+        private void RefreshMyOrbits()
         {
             double now = Clock.Elapsed.TotalSeconds;
-            if (now - _orbAt < 0.25) return;
+            if (now - _orbAt >= 0.25) RefreshOrbitCounts(now);
+            if (_myOrbSatA + _myOrbSatB > 0 && HeroPosition(out var hx, out var hy, out _))
+            {
+                var hero0 = HeroObject();
+                try
+                {
+                    if (_myOrbSatA > 0) _myOrbAngA = FirstAngle(GetMember(hero0, "Array_Transform_ObjSatellitesA"), hx, hy);
+                    if (_myOrbSatB > 0) _myOrbAngB = FirstAngle(GetMember(hero0, "Array_Transform_ObjSatellitesB"), hx, hy);
+                }
+                catch { }
+            }
+        }
+
+        private void RefreshOrbitCounts(double now)
+        {
             _orbAt = now;
             var hero = HeroObject();
             if (hero == null) { _myOrbSatA = _myOrbSatB = _myOrbSpirits = 0; _myOrbShield = false; return; }
@@ -73,8 +94,6 @@ namespace MagicSurvivalCoop
                 _myOrbSpirits = CountTrue(GetMember(hero, "List_IsSpirit_P"), 1);
                 var sh = GetMember(hero, "Obj_Shield");
                 _myOrbShield = sh != null && Convert.ToBoolean(GetMember(sh, "activeSelf") ?? false);
-                _myOrbAngA = _myOrbSatA > 0 ? FirstAngle(GetMember(hero, "Array_Transform_ObjSatellitesA"), hx, hy) : 0;
-                _myOrbAngB = _myOrbSatB > 0 ? FirstAngle(GetMember(hero, "Array_Transform_ObjSatellitesB"), hx, hy) : 0;
                 _myImgShield = _myOrbShield ? ImageOf(sh) : null;
                 _myImgSatA = _myOrbSatA > 0 ? ImageOf(ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesA"), 0)) : null;
                 _myImgSatB = _myOrbSatB > 0 ? ImageOf(ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesB"), 0)) : null;
@@ -157,7 +176,8 @@ namespace MagicSurvivalCoop
         // Картинки — только по указателям: обёртка UnityEngine.Sprite из Il2CppInterop роняет игру под Mono (MS_KIT, MELONLOADER.md).
         // «Картинка» ниже — либо IntPtr (на телефоне), либо объект-заглушка Sprite (в тестах без Unity).
         private static readonly bool RawSprites = typeof(SpriteRenderer).GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance) != null;
-        private static IntPtr _getSprite, _setSprite, _getName, _findAll, _spriteClass;
+        private static IntPtr _getSprite, _setSprite, _getName, _spriteClass;
+        private static Type _il2;
 
         private static IntPtr PtrOf(object wrapper) => wrapper?.GetType().GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance)?.GetValue(wrapper) is IntPtr p ? p : IntPtr.Zero;
 
@@ -169,7 +189,6 @@ namespace MagicSurvivalCoop
             _setSprite = Raw.Method(sr, "set_sprite", 1);
             _getName = Raw.Method(Raw.Class(core, "UnityEngine", "Object"), "get_name", 0);
             _spriteClass = Raw.Class(core, "UnityEngine", "Sprite");
-            _findAll = Raw.Method(Raw.Class(core, "UnityEngine", "Resources"), "FindObjectsOfTypeAll", 1);
             _getSprite = Raw.Method(sr, "get_sprite", 0);
         }
 
@@ -228,31 +247,124 @@ namespace MagicSurvivalCoop
             var res = new List<object>();
             if (!RawSprites)
             {
-                var spriteType = typeof(SpriteRenderer).GetProperty("sprite")?.PropertyType;
+                var spType = typeof(SpriteRenderer).GetProperty("sprite")?.PropertyType;
                 var m = typeof(Transform).Assembly.GetType("UnityEngine.Resources")?.GetMethods(BindingFlags.Public | BindingFlags.Static)
                     .FirstOrDefault(x => x.Name == "FindObjectsOfTypeAll" && x.IsGenericMethodDefinition && x.GetParameters().Length == 0);
-                if (spriteType == null || m == null) return res;
-                foreach (var o in (IEnumerable)m.MakeGenericMethod(spriteType).Invoke(null, null)) res.Add(o);
+                if (spType == null || m == null) return res;
+                foreach (var o in (IEnumerable)m.MakeGenericMethod(spType).Invoke(null, null)) res.Add(o);
                 return res;
             }
             InitRaw();
-            // объект System.Type для Sprite: il2cpp_class_get_type + il2cpp_type_get_object (Il2CppInterop.Runtime.IL2CPP)
-            var il2 = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Il2CppInterop.Runtime.IL2CPP")).FirstOrDefault(t => t != null)
-                      ?? throw new Exception("нет Il2CppInterop.Runtime.IL2CPP");
-            var getType = il2.GetMethod("il2cpp_class_get_type", BindingFlags.Public | BindingFlags.Static);
-            var typeObj = il2.GetMethod("il2cpp_type_get_object", BindingFlags.Public | BindingFlags.Static);
-            var t2 = (IntPtr)getType.Invoke(null, new object[] { _spriteClass });
-            var tObj = (IntPtr)typeObj.Invoke(null, new object[] { t2 });
-            var arr = Raw.Invoke(_findAll, IntPtr.Zero, tObj);
-            if (arr == IntPtr.Zero) return res;
+            // 1) поля героя и Z_Database с картинками (Sprite, Sprite[], List<Sprite>) — читаем по указателям, без обёрток
+            var spriteType = typeof(SpriteRenderer).GetProperty("sprite")?.PropertyType;
+            int fromHero = 0, fromDb = 0, fromAll = 0;
+            var hero = HeroObject();
+            if (hero != null) fromHero = SpriteFields(hero.GetType(), PtrOf(hero), spriteType, res);
+            var db = Hooks.FindType("Z_Database");
+            if (db != null) fromDb = SpriteFields(db, IntPtr.Zero, spriteType, res);
+            // 2) все картинки игры (Resources.FindObjectsOfTypeAll) — если метод не вырезан из сборки
+            try { fromAll = FindAllSprites(res); } catch (Exception e) { _ctx.Log("орбиты: FindObjectsOfTypeAll: " + Inner(e).Message); }
+            _ctx.Log($"орбиты: картинки — из полей героя {fromHero}, из Z_Database {fromDb}, всех картинок игры {fromAll}");
+            return res;
+        }
+
+        private static MethodInfo Il2(string name)
+        {
+            _il2 ??= AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Il2CppInterop.Runtime.IL2CPP")).FirstOrDefault(t => t != null)
+                     ?? throw new Exception("нет Il2CppInterop.Runtime.IL2CPP");
+            return _il2.GetMethods(BindingFlags.Public | BindingFlags.Static).FirstOrDefault(m => m.Name == name) ?? throw new Exception("нет IL2CPP." + name);
+        }
+        private static IntPtr Field(IntPtr klass, string name) => (IntPtr)Il2("GetIl2CppField").Invoke(null, new object[] { klass, name });
+        private static IntPtr ClassOf(IntPtr obj) => (IntPtr)Il2("il2cpp_object_get_class").Invoke(null, new object[] { obj });
+        private static int OffsetOf(IntPtr field) => Convert.ToInt32(Il2("il2cpp_field_get_offset").Invoke(null, new object[] { field }));
+        private static unsafe IntPtr StaticValue(IntPtr field)
+        {
+            IntPtr v = IntPtr.Zero;
+            Il2("il2cpp_field_static_get_value").Invoke(null, new object[] { field, Pointer.Box(&v, typeof(void*)) });
+            return v;
+        }
+
+        /// <summary>Картинки из полей типа: obj — объект (IntPtr.Zero — статические поля). Возвращает число найденных.</summary>
+        private int SpriteFields(Type t, IntPtr obj, Type spriteType, List<object> res)
+        {
+            if (spriteType == null) return 0;
+            int found = 0;
+            IntPtr klass = IntPtr.Zero;
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | (obj == IntPtr.Zero ? BindingFlags.Static : BindingFlags.Instance);
+            foreach (var pr in t.GetProperties(flags))
+            {
+                var pt = pr.PropertyType;
+                int kind = pt == spriteType ? 0
+                    : pt.IsGenericType && pt.GetGenericArguments().Length == 1 && pt.GetGenericArguments()[0] == spriteType
+                        ? (pt.Name.StartsWith("List") ? 2 : pt.Name.Contains("Array") ? 1 : -1)
+                        : -1;
+                if (kind < 0) continue;
+                try
+                {
+                    if (klass == IntPtr.Zero) klass = obj != IntPtr.Zero ? ClassOf(obj) : Raw.Class("Assembly-CSharp.dll", "", t.Name);
+                    var f = Field(klass, pr.Name);
+                    if (f == IntPtr.Zero) continue;
+                    var v = obj != IntPtr.Zero ? System.Runtime.InteropServices.Marshal.ReadIntPtr(obj + OffsetOf(f)) : StaticValue(f);
+                    if (v == IntPtr.Zero) continue;
+                    if (kind == 0) { res.Add(v); found++; continue; }
+                    IntPtr arr = v; long n;
+                    if (kind == 2)
+                    {
+                        var lk = ClassOf(v);
+                        n = System.Runtime.InteropServices.Marshal.ReadInt32(v + OffsetOf(Field(lk, "_size")));
+                        arr = System.Runtime.InteropServices.Marshal.ReadIntPtr(v + OffsetOf(Field(lk, "_items")));
+                        if (arr == IntPtr.Zero) continue;
+                    }
+                    else n = System.Runtime.InteropServices.Marshal.ReadInt64(arr + 3 * IntPtr.Size);
+                    for (long i = 0; i < n && i < 5000; i++)
+                    {
+                        var e = System.Runtime.InteropServices.Marshal.ReadIntPtr(arr + 4 * IntPtr.Size + (int)(i * IntPtr.Size));
+                        if (e != IntPtr.Zero && !Raw.IsDestroyed(e)) { res.Add(e); found++; }
+                    }
+                }
+                catch (Exception e) { if (++_orbFails <= 6) _ctx.Log($"орбиты: поле {t.Name}.{pr.Name}: {Inner(e).Message}"); }
+            }
+            return found;
+        }
+
+        [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private delegate IntPtr FindAllFn(IntPtr type);
+
+        /// <summary>Resources.FindObjectsOfTypeAll(typeof(Sprite)): метод (если не вырезан) или сам icall Unity.</summary>
+        private int FindAllSprites(List<object> res)
+        {
+            var t2 = (IntPtr)Il2("il2cpp_class_get_type").Invoke(null, new object[] { _spriteClass });
+            var tObj = (IntPtr)Il2("il2cpp_type_get_object").Invoke(null, new object[] { t2 });
+            IntPtr arr = IntPtr.Zero;
+            const string core = "UnityEngine.CoreModule.dll";
+            foreach (var cls in new[] { "Resources", "ResourcesAPIInternal" })
+            {
+                IntPtr k;
+                try { k = Raw.Class(core, "UnityEngine", cls); } catch { continue; }
+                var m = (IntPtr)Il2("il2cpp_class_get_method_from_name").Invoke(null, new object[] { k, "FindObjectsOfTypeAll", 1 });
+                if (m == IntPtr.Zero) continue;
+                arr = Raw.Invoke(m, IntPtr.Zero, tObj);
+                break;
+            }
+            if (arr == IntPtr.Zero)
+                foreach (var ic in new[] { "UnityEngine.ResourcesAPIInternal::FindObjectsOfTypeAll(System.Type)", "UnityEngine.ResourcesAPIInternal::FindObjectsOfTypeAll",
+                                           "UnityEngine.Resources::FindObjectsOfTypeAll(System.Type)", "UnityEngine.Resources::FindObjectsOfTypeAll" })
+                {
+                    var fn = (IntPtr)Il2("il2cpp_resolve_icall").Invoke(null, new object[] { ic });
+                    if (fn == IntPtr.Zero) continue;
+                    arr = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<FindAllFn>(fn)(tObj);
+                    break;
+                }
+            if (arr == IntPtr.Zero) return 0;
             // массив IL2CPP: заголовок (2 указателя), bounds, max_length, затем элементы
             long n = System.Runtime.InteropServices.Marshal.ReadInt64(arr + 3 * IntPtr.Size);
+            int k2 = 0;
             for (long i = 0; i < n && i < 100000; i++)
             {
                 var e = System.Runtime.InteropServices.Marshal.ReadIntPtr(arr + 4 * IntPtr.Size + (int)(i * IntPtr.Size));
-                if (e != IntPtr.Zero) res.Add(e);
+                if (e != IntPtr.Zero) { res.Add(e); k2++; }
             }
-            return res;
+            return k2;
         }
 
         /// <summary>Картинка по имени: из своих объектов героя, иначе — один раз за бой поиск среди всех картинок игры.</summary>
@@ -307,12 +419,12 @@ namespace MagicSurvivalCoop
         /// <summary>Поставить копии картинку, как у друга (если надо).</summary>
         private void ApplyImage(OrbClone c, string want, double now, string what)
         {
-            if (want == null || want == c.Applied || want == c.Missed) return;
+            if (want == null || want == c.Applied || (want == c.Missed && now - c.MissedAt < 3)) return;
             c.Sr ??= RendererOf(c.Go);
-            if (c.Sr == null) { c.Missed = want; _ctx.Log($"орбиты: у копии ({what}) нет картинки-рендера"); return; }
+            if (c.Sr == null) { c.Missed = want; c.MissedAt = now + 1e9; _ctx.Log($"орбиты: у копии ({what}) нет картинки-рендера"); return; }
             if (NameOf(SpriteOf(c.Sr)) == want) { c.Applied = want; return; }
             var sp = FindSprite(want, now);
-            if (sp == null) { c.Missed = want; _ctx.Log($"орбиты: картинка «{want}» ({what}) не найдена"); return; }
+            if (sp == null) { if (c.Missed != want) _ctx.Log($"орбиты: картинка «{want}» ({what}) не найдена"); c.Missed = want; c.MissedAt = now; return; }
             SetSprite(c.Sr, sp);
             c.Applied = want;
         }
@@ -321,6 +433,7 @@ namespace MagicSurvivalCoop
 
         private static void ReadOrbits(Partner p, JsonElement s, double now)
         {
+            double senderT = Protocol.Num(s, "t", -1);
             var o = Protocol.Obj(s, "orb");
             var st = p.Orb ??= new OrbState();
             if (o.ValueKind != JsonValueKind.Object) { st.SatA = st.SatB = st.Spirits = 0; st.Shield = false; return; }
@@ -335,14 +448,21 @@ namespace MagicSurvivalCoop
             double aa = Protocol.Num(o, "aa"), ab = Protocol.Num(o, "ab");
             if (st.AngAt > 0)
             {
-                double dt = now - st.AngAt;
-                if (dt > 0.05 && dt < 2)
+                // скорость вращения — по времени друга (сеть доставляет неровно); без времени — по времени приёма
+                double dt = senderT > 0 && st.SenderT > 0 ? senderT - st.SenderT : now - st.AngAt;
+                if (dt > 0.02 && dt < 2)
                 {
-                    st.SpeedA = st.SpeedA * 0.5 + Wrap(aa - st.AngA) / dt * 0.5;
-                    st.SpeedB = st.SpeedB * 0.5 + Wrap(ab - st.AngB) / dt * 0.5;
+                    double da = Wrap(aa - st.AngA), db = Wrap(ab - st.AngB);
+                    // скачок угла (спутников стало больше, круг перестроился) — не вращение, скорость по нему не считаем
+                    if (Math.Abs(da) < 1.0 && Math.Abs(db) < 1.0)
+                    {
+                        double va = da / dt, vb = db / dt;
+                        if (!st.HasSpeed) { st.SpeedA = va; st.SpeedB = vb; st.HasSpeed = true; }
+                        else { st.SpeedA += (va - st.SpeedA) * 0.2; st.SpeedB += (vb - st.SpeedB) * 0.2; }
+                    }
                 }
             }
-            st.AngA = aa; st.AngB = ab; st.AngAt = now;
+            st.AngA = aa; st.AngB = ab; st.AngAt = now; st.SenderT = senderT;
         }
         private static int Clamp(int v, int a, int b) => v < a ? a : v > b ? b : v;
         private static double Wrap(double a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
@@ -445,11 +565,26 @@ namespace MagicSurvivalCoop
             catch (Exception e) { if (++_orbFails <= 3) _ctx.Log("орбиты, копии: " + Inner(e).Message); return; }
 
             var g = p.GhostTr.position;
+            // угол: каждый кадр поворачиваем с оценённой скоростью и мягко подтягиваем к предсказанному по последнему углу друга
             double age = st.AngAt > 0 ? Math.Min(1.0, now - st.AngAt) : 0;
-            Ring(v.SatA, st.SatA, g, SatRadius, st.AngA + st.SpeedA * age);
-            Ring(v.SatB, st.SatB, g, SatRadius, st.AngB + st.SpeedB * age);
+            double ta = st.AngA + st.SpeedA * age, tb = st.AngB + st.SpeedB * age;
+            double fdt = st.LastFrame < 0 ? 0 : Math.Max(0, Math.Min(0.1, now - st.LastFrame));
+            st.LastFrame = now;
+            // число спутников изменилось — круг у друга перестроен, ставим сразу
+            if (!st.HasDisp || st.ShownSatA != st.SatA || st.ShownSatB != st.SatB) { st.DispA = ta; st.DispB = tb; st.HasDisp = true; st.ShownSatA = st.SatA; st.ShownSatB = st.SatB; }
+            else { st.DispA = Follow(st.DispA, ta, st.SpeedA, fdt); st.DispB = Follow(st.DispB, tb, st.SpeedB, fdt); }
+            Ring(v.SatA, st.SatA, g, SatRadius, st.DispA);
+            Ring(v.SatB, st.SatB, g, SatRadius, st.DispB);
             Ring(v.Spirits, st.Spirits, g, SpiritRadius, now * 0.8);
             if (v.Shield != null && st.Shield) v.Shield.Tr.position = new Vector3(g.x, g.y + 0.03f, g.z);
+        }
+
+        private static double Follow(double disp, double target, double speed, double dt)
+        {
+            disp += speed * dt;
+            double err = Wrap(target - disp);
+            if (Math.Abs(err) > 0.8) return target;                   // большой разрыв (спутников стало больше и т.п.) — сразу
+            return disp + err * Math.Min(1, dt * 4);
         }
 
         private static void Ring(List<OrbClone> list, int n, Vector3 c, double r, double a0)

@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.4.2";
+        public const string ModVersion = "1.4.3";
 
         public ModDef Define() => new ModDef
         {
@@ -543,7 +543,7 @@ namespace MagicSurvivalCoop
                 _client.SendEvent(Protocol.Build(w => w.WriteString("kind", "sos")));
             }
 
-            if (_inRun) RefreshMyOrbits(_lastX, _lastY);
+            if (_inRun) RefreshMyOrbits();
             _client.SendState(Protocol.Build(w =>
             {
                 w.WriteString("name", _myName);
