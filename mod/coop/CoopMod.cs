@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.3.0";
+        public const string ModVersion = "1.3.1";
 
         public ModDef Define() => new ModDef
         {
@@ -616,6 +616,7 @@ namespace MagicSurvivalCoop
                 if (!_inRun || _partners.Count == 0 || _spells.Paused) return;
                 if (!HeroPosition(out var hx, out var hy, out var hz)) return;
                 _frameSeenSec = now;
+                BeginFrameCasts();
                 foreach (var p in _partners.Values)
                     if (p.Ghost != null && p.Ghost.Alive)
                     {

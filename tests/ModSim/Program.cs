@@ -112,7 +112,7 @@ Console.WriteLine("2д. магия друга: каждый снаряд гер�
     var gp = g.Tr.position;
     int callsBefore = A.Game.Calls.Count;
     // друг кастует: снаряд 6 из своего героя в точку на (2, 1) от себя
-    var bh = B.Combat.HeroTr.position;
+    Vector3 bh = B.Combat.HeroTr.position;
     B.Game.Bullet_Create(B.Combat.HeroTr, 6, bh.x + 2, bh.y + 1, 0, 0.25f, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
     // союзник хоста (у друга) стреляет сам — это НЕ должно уйти хосту
     B.Game.Bullet_Create(B.Comp.Spawned.Last().Tr, 7, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1);
@@ -125,6 +125,19 @@ Console.WriteLine("2д. магия друга: каждый снаряд гер�
     Check(mirrored.Count == 1 && Math.Abs(mirrored[0].dr - 1f) < 1e-3, "урон по настройке 100%");
     int echo = B.Game.Calls.Count(c => c.id == 6 && !ReferenceEquals(c.src, B.Combat.HeroTr));
     Check(echo == 0, "повтор у хоста не вернулся другу эхом");
+
+    // рядом с точкой цели у хоста стоит враг — снаряд должен полететь в него
+    var gp3 = g.Tr.position;
+    A.Combat.Enemies.Add(new StillEnemy { P = new Vector3(gp3.x + 2.8f, gp3.y + 1.6f, 0) });
+    Thread.Sleep(300);                                                  // кэш позиций врагов обновляется 4 раза в секунду
+    int cb = A.Game.Calls.Count;
+    bh = B.Combat.HeroTr.position;
+    B.Game.Bullet_Create(B.Combat.HeroTr, 6, bh.x + 2, bh.y + 1, 0, 0, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
+    for (int fr = 0; fr < 40; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var rt = A.Game.Calls.Skip(cb).ToList();
+    var gp4 = g.Tr.position;
+    Check(rt.Count == 1 && Math.Abs(rt[0].x - (gp3.x + 2.8f)) < 0.05 && Math.Abs(rt[0].y - (gp3.y + 1.6f)) < 0.05, $"снаряд друга наведён на врага рядом с целью: ({(rt.Count > 0 ? rt[0].x - gp3.x : 0):0.00}, {(rt.Count > 0 ? rt[0].y - gp3.y : 0):0.00})");
+    A.Combat.Enemies.Clear();
 }
 
 B.Combat.Pos = new Vector3(150, 100, 0);
@@ -278,11 +291,13 @@ class FakeCombat : IEnemies
 {
     public readonly Transform HeroTr = new Transform();                 // объект героя (как Transform_ObjUnit)
     public Vector3 Pos { get => HeroTr.position; set => HeroTr.position = value; }
-    public IReadOnlyList<IEnemy> Alive => new List<IEnemy>();
+    public readonly List<IEnemy> Enemies = new();
+    public IReadOnlyList<IEnemy> Alive => Enemies;
     public IReadOnlyList<IEnemy> Near(double x, double y, double r) => new List<IEnemy>();
     public IEnemy Nearest(double x, double y) => null;
     public Vector3? HeroPos => Pos;
 }
+class StillEnemy : IEnemy { public Vector3 P; public int Id => 1; public double Hp => 20; public Vector3 Pos => P; public bool Alive => true; public object Raw => this; }
 class FakeComp : ICompanion
 {
     public int Slot { get; set; } public Vector2 Offset { get; set; } public bool Alive { get; set; } = true; public int Spell { get; set; }

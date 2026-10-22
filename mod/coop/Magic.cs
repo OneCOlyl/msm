@@ -22,6 +22,35 @@ namespace MagicSurvivalCoop
         /// <summary>Заклинание союзника, которое ничего не стреляет сам: при пересылке магии стреляют только повторы касов друга.</summary>
         private const int NoOwnFire = 99;
         private const int MaxCastsPerSend = 40;
+        private const int MaxCastsPerFrame = 4;    // остальные — в следующих кадрах (повтор снаряда — работа самой игры, её надо дозировать)
+        private const double CastBudgetMs = 3;
+
+        private float[] _enemyX = new float[64], _enemyY = new float[64];
+        private int _enemyCount;
+        private double _enemyCacheAt = -1;
+        private readonly System.Diagnostics.Stopwatch _frameCastWatch = new System.Diagnostics.Stopwatch();
+
+        /// <summary>Начало кадра: обнулить бюджет повторов (вызывается из FrameStep).</summary>
+        private void BeginFrameCasts() => _frameCastWatch.Restart();
+
+        /// <summary>Позиции живых врагов — не чаще 4 раз в секунду и только когда есть что повторять.</summary>
+        private void RefreshEnemyCache(double now)
+        {
+            if (now - _enemyCacheAt < 0.25) return;
+            _enemyCacheAt = now;
+            _enemyCount = 0;
+            try
+            {
+                var list = _enemies.Alive;
+                if (list.Count > _enemyX.Length) { _enemyX = new float[list.Count * 2]; _enemyY = new float[list.Count * 2]; }
+                foreach (var e in list)
+                {
+                    var p = e.Pos;
+                    _enemyX[_enemyCount] = p.x; _enemyY[_enemyCount] = p.y; _enemyCount++;
+                }
+            }
+            catch { _enemyCount = 0; }
+        }
 
         private struct Cast
         {
@@ -168,8 +197,9 @@ namespace MagicSurvivalCoop
             if (p.Casts.Count == 0) return;
             if (p.Ghost == null || !p.Ghost.Alive || p.GhostTr == null || _spells.Paused) return;
             double renderT = p.HasClock ? now - p.ClockOff - RenderDelay(p) : double.MaxValue;
+            RefreshEnemyCache(now);
             int done = 0;
-            while (p.Casts.Count > 0 && p.Casts.Peek().T <= renderT && done < 12)
+            while (p.Casts.Count > 0 && p.Casts.Peek().T <= renderT && done < MaxCastsPerFrame && _frameCastWatch.Elapsed.TotalMilliseconds < CastBudgetMs)
             {
                 var c = p.Casts.Dequeue();
                 if (p.HasClock && renderT - c.T > 1.0) { _castsDropped++; continue; }      // слишком старый (был на паузе / лаг)
@@ -187,12 +217,12 @@ namespace MagicSurvivalCoop
                 var gp = p.GhostTr.position;
                 double tx = gp.x + c.Dx, ty = gp.y + c.Dy;
                 // цель друга была врагом в его мире; у нас бьём ближайшего врага рядом с той же точкой, если он есть
-                var near = _enemies.Nearest(tx, ty);
-                if (near != null)
+                // поиск по запомненным позициям врагов (обновляются 4 раза в секунду), а не перебором всех врагов на каждый снаряд
+                double best = 2.5 * 2.5;
+                for (int i = 0; i < _enemyCount; i++)
                 {
-                    var ep = near.Pos;
-                    double d = Math.Sqrt((ep.x - tx) * (ep.x - tx) + (ep.y - ty) * (ep.y - ty));
-                    if (d <= 2.5) { tx = ep.x; ty = ep.y; }
+                    double ddx = _enemyX[i] - tx, ddy = _enemyY[i] - ty, d2 = ddx * ddx + ddy * ddy;
+                    if (d2 <= best) { best = d2; tx = _enemyX[i]; ty = _enemyY[i]; }
                 }
                 float ratio = (float)(c.Dr * Math.Max(0, _ctx.Setting("mirrorDmg")) / 100.0);
                 _mirroring = true;
