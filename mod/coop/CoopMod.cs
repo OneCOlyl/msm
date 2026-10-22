@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.1.0";
+        public const string ModVersion = "1.2.0";
 
         public ModDef Define() => new ModDef
         {
@@ -41,7 +41,7 @@ namespace MagicSurvivalCoop
                 new ModOption { Key = "ghostDist", Label = "Дальность призрака друга", Default = 6, Min = 2, Max = 12, Step = 1 },
                 new ModOption { Key = "healPct", Label = "Лечение друга, % (0 — выкл.)", Default = 25, Min = 0, Max = 50, Step = 5 },
                 new ModOption { Key = "healCd", Label = "Перезарядка лечения, с", Default = 40, Min = 10, Max = 120, Step = 5 },
-                new ModOption { Key = "sendHz", Label = "Отправок в секунду", Default = 10, Min = 4, Max = 20, Step = 1 },
+                new ModOption { Key = "sendHz", Label = "Обновлений позиции в секунду (больше — плавнее, но больше трафика)", Default = 15, Min = 5, Max = 30, Step = 5 },
                 new ModOption { Key = "ip1", Label = "IP 1", Default = 10, Min = 0, Max = 255, Hidden = true },
                 new ModOption { Key = "ip2", Label = "IP 2", Default = 66, Min = 0, Max = 255, Hidden = true },
                 new ModOption { Key = "ip3", Label = "IP 3", Default = 0, Min = 0, Max = 255, Hidden = true },
@@ -103,7 +103,9 @@ namespace MagicSurvivalCoop
 
         // плавное движение союзников: каждый кадр через хук C_Battle_Manager.Update
         private static readonly Stopwatch Clock = Stopwatch.StartNew();
-        private double _lastFrameSec = -1, _frameSeenSec = -100;
+        private double _lastFrameSec = -1, _frameSeenSec = -100, _fpsSince = -1;
+        private int _fpsFrames;
+        private bool _fpsLogged;
         private bool _directWrite = true;
         private int _writeFails;
         private Type _compType;
@@ -127,6 +129,10 @@ namespace MagicSurvivalCoop
             // сглаживание: последняя точка (смещение от старта друга), оценка скорости и то, что рисуется сейчас
             public double RelX, RelY, VelX, VelY, SampleSec = -1, DispX, DispY;
             public bool HasDisp;
+            // интерполяция по времени отправителя: точки (время друга, x, y) и сдвиг его часов относительно наших
+            public readonly List<(double t, double x, double y)> Track = new List<(double, double, double)>();
+            public double ClockOff;
+            public bool HasClock;
             public ICompanion Ghost;
             public int GhostSpell = -1;
             public double NextSpawn;
@@ -245,16 +251,23 @@ namespace MagicSurvivalCoop
 
             _ctx.Guard("сеть", Pump);
 
-            if (_clockMs >= _nextSend)
-            {
-                _nextSend = _clockMs + 1000.0 / Math.Max(1, _ctx.Setting("sendHz"));
-                _ctx.Guard("отправка состояния", SendState);
-            }
+            MaybeSend();
 
             _ctx.Guard("союзники", UpdateGhosts);
 
             if (_clockMs >= _nextHud) { _nextHud = _clockMs + 250; UpdateHud(); }
             if (_windowOpen && _clockMs >= _nextWin) { _nextWin = _clockMs + 500; UpdateWindow(); }
+        }
+
+        /// <summary>Отправка по реальному времени: из таймера (меню) и из каждого кадра боя — так частота не ограничена шагом таймера 50 мс.</summary>
+        private void MaybeSend()
+        {
+            double now = Clock.Elapsed.TotalSeconds;
+            if (now < _nextSend) return;
+            double interval = 1.0 / Math.Max(1, _ctx.Setting("sendHz"));
+            _nextSend = Math.Max(now, _nextSend + interval);                // ровный шаг без накопления сдвига
+            if (_nextSend - now > interval) _nextSend = now + interval;
+            _ctx.Guard("отправка состояния", SendState);
         }
 
         private void Pump()
@@ -393,6 +406,23 @@ namespace MagicSurvivalCoop
             }
             else if (dt >= 0.6) { p.VelX = p.VelY = 0; }
             p.RelX = rx; p.RelY = ry; p.SampleSec = now;
+
+            // время отправителя (версия 1.2+): показываем друга с небольшой задержкой, интерполируя между его точками,
+            // поэтому неравномерная доставка пакетов (мобильная сеть, VPN) не видна
+            double st = Protocol.Num(s, "t", -1);
+            if (st >= 0)
+            {
+                if (newRun || (p.Track.Count > 0 && st <= p.Track[p.Track.Count - 1].t - 5)) { p.Track.Clear(); p.HasClock = false; }   // новый бой / перезапуск игры у друга
+                if (p.Track.Count == 0 || st > p.Track[p.Track.Count - 1].t)
+                {
+                    p.Track.Add((st, rx, ry));
+                    if (p.Track.Count > 40) p.Track.RemoveAt(0);
+                }
+                // сдвиг часов = наименьшая задержка доставки (её разброс — это и есть «рывки»), медленно подстраивается вверх
+                double off = now - st;
+                if (!p.HasClock || off < p.ClockOff) { p.ClockOff = off; p.HasClock = true; }
+                else p.ClockOff += (off - p.ClockOff) * 0.002;
+            }
             if (p.Dead && !wasDead && p.Run) _ctx.Toast($"{p.Name} погиб!", 3);
             if (p.Battle && !wasBattle && !p.Dead && !_inRun) _ctx.Toast($"{p.Name} начал бой — заходите!", 3);
         }
@@ -426,6 +456,7 @@ namespace MagicSurvivalCoop
             _startX = null; _startY = null;
             _wasDead = false;
             _healReadyAt = 0; _nextSos = 0;
+            _fpsSince = -1; _fpsFrames = 0; _fpsLogged = false;
             foreach (var p in _partners.Values) { p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; }
             DestroyBtn(ref _menuBtn);
             _nextSend = 0;
@@ -491,6 +522,7 @@ namespace MagicSurvivalCoop
                 w.WriteNumber("hpMax", Math.Round(hpMax));
                 w.WriteNumber("kills", _kills);
                 w.WriteNumber("spell", spell);
+                w.WriteNumber("t", Math.Round(Clock.Elapsed.TotalSeconds, 4));   // время снятия позиции — для интерполяции у друзей
             }));
         }
 
@@ -541,6 +573,13 @@ namespace MagicSurvivalCoop
                 double now = Clock.Elapsed.TotalSeconds;
                 double dt = _lastFrameSec < 0 ? 0.016 : Math.Min(0.1, Math.Max(0, now - _lastFrameSec));
                 _lastFrameSec = now;
+                if (_inRun && !_fpsLogged)                        // одна строка в журнал: работает ли покадровое движение на этом телефоне
+                {
+                    if (_fpsSince < 0) _fpsSince = now;
+                    _fpsFrames++;
+                    if (now - _fpsSince >= 5) { _fpsLogged = true; _ctx.Log($"покадровое движение работает: {_fpsFrames / (now - _fpsSince):0} кадров/с"); }
+                }
+                if (_inRun && _client.Connected) MaybeSend();
                 if (!_inRun || _partners.Count == 0 || _spells.Paused) return;
                 var hp = _enemies.HeroPos;
                 if (!hp.HasValue) return;
@@ -561,12 +600,19 @@ namespace MagicSurvivalCoop
         private void PlaceGhost(Partner p, double dt, double heroX, double heroY, double heroZ, bool writeTransform)
         {
             double now = Clock.Elapsed.TotalSeconds;
-            double ahead = p.SampleSec < 0 ? 0 : Math.Min(0.25, Math.Max(0, now - p.SampleSec));
-            double tx = p.RelX + p.VelX * ahead, ty = p.RelY + p.VelY * ahead;
+            double tx, ty, rate;
+            if (!Interpolate(p, now, out tx, out ty))
+            {
+                // друг на старой версии (нет времени отправителя) — предсказание по скорости
+                double ahead = p.SampleSec < 0 ? 0 : Math.Min(0.25, Math.Max(0, now - p.SampleSec));
+                tx = p.RelX + p.VelX * ahead; ty = p.RelY + p.VelY * ahead;
+                rate = 12;
+            }
+            else rate = 30;   // интерполяция уже ровная — лишь сглаживаем поправки
             if (!p.HasDisp) { p.DispX = tx; p.DispY = ty; p.HasDisp = true; }
             else
             {
-                double k = 1 - Math.Exp(-dt * 12);
+                double k = 1 - Math.Exp(-dt * rate);
                 p.DispX += (tx - p.DispX) * k;
                 p.DispY += (ty - p.DispY) * k;
             }
@@ -582,6 +628,46 @@ namespace MagicSurvivalCoop
             }
             p.Ghost.Offset = new Vector2((float)ox, (float)oy);
             if (writeTransform) WriteGhostTransform(p.Ghost, heroX + ox, heroY + oy, heroZ);
+        }
+
+        /// <summary>
+        /// Положение друга на момент «сейчас минус задержка» по его же часам: между двумя соседними точками — линейно,
+        /// после последней — продолжаем с последней скоростью не дольше 0,2 с. Задержка — полтора средних интервала между точками.
+        /// </summary>
+        private static bool Interpolate(Partner p, double now, out double x, out double y)
+        {
+            x = y = 0;
+            var tr = p.Track;
+            if (!p.HasClock || tr.Count < 2) return false;
+            double span = tr[tr.Count - 1].t - tr[Math.Max(0, tr.Count - 11)].t;
+            int gaps = Math.Min(10, tr.Count - 1);
+            double interval = gaps > 0 ? span / gaps : 0.1;
+            double delay = Math.Max(0.06, Math.Min(0.35, interval * 1.5 + 0.02));
+            double rt = now - p.ClockOff - delay;           // момент на часах друга, который показываем
+
+            if (rt <= tr[0].t) { x = tr[0].x; y = tr[0].y; return true; }
+            var last = tr[tr.Count - 1];
+            if (rt >= last.t)
+            {
+                var prev = tr[tr.Count - 2];
+                double dtl = last.t - prev.t;
+                double ex = Math.Min(rt - last.t, 0.2);
+                if (dtl <= 1e-4) { x = last.x; y = last.y; return true; }
+                x = last.x + (last.x - prev.x) / dtl * ex;
+                y = last.y + (last.y - prev.y) / dtl * ex;
+                return true;
+            }
+            for (int i = tr.Count - 1; i > 0; i--)
+            {
+                var a = tr[i - 1]; var b = tr[i];
+                if (rt < a.t) continue;
+                double k = (rt - a.t) / Math.Max(1e-4, b.t - a.t);
+                x = a.x + (b.x - a.x) * k;
+                y = a.y + (b.y - a.y) * k;
+                return true;
+            }
+            x = last.x; y = last.y;
+            return true;
         }
 
         /// <summary>Ставит объект союзника сразу (библиотека сама двигает его только 20 раз в секунду).</summary>

@@ -63,6 +63,32 @@ Check(maxJump < 0.5, $"нет рывков: самый большой шаг з�
 Check(stalls <= 2, $"нет остановок между пакетами: {stalls} тиков без движения");
 Check(Math.Abs(trace.Last() - Math.Min(6, Math.Sqrt(Math.Pow(2 + 7.8, 2) + 16)) * (2 + 7.8) / Math.Sqrt(Math.Pow(2 + 7.8, 2) + 16)) < 0.8 || trace.Last() > 4, $"союзник догнал друга: x = {trace.Last():0.00}");
 
+Console.WriteLine("2г. мобильная сеть: пакеты приходят неравномерно (паузы до 0,3 с и пачками), кадры 60 в секунду");
+{
+    var rnd = new Random(7);
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    double nextSend = 0, nextPump = 0, lastFrame = 0, x0 = 97;   // от -3 до +5 от старта друга: союзник всё время в пределах дальности 6
+    var frameX = new List<double>();
+    B.Combat.Pos = new Vector3((float)x0, 104, 0); TickAll(600);
+    double t0 = sw.Elapsed.TotalSeconds;
+    while (sw.Elapsed.TotalSeconds - t0 < 2.0)
+    {
+        double now = sw.Elapsed.TotalSeconds - t0;
+        B.Combat.Pos = new Vector3((float)(x0 + 4 * now), 104, 0);        // друг идёт ровно 4 ед/с
+        if (now >= nextSend) { B.Tick(); nextSend = now + 0.1; }            // друг отправляет 10 раз в секунду
+        if (now >= nextPump) { A.Call("Pump"); nextPump = now + (rnd.NextDouble() < 0.3 ? 0.15 + rnd.NextDouble() * 0.15 : 0.02 + rnd.NextDouble() * 0.06); }
+        if (now - lastFrame >= 1.0 / 60) { lastFrame = now; A.Call("FrameStep"); frameX.Add(g.Offset.x); }
+        Thread.Sleep(2);
+    }
+    // после разгона: шаги по кадрам должны быть ровными (идеал 4/60 ≈ 0,067)
+    var steps = frameX.Skip(40).Zip(frameX.Skip(41), (p0, p1) => p1 - p0).Where(d => Math.Abs(d) < 1).ToList();
+    double mean = steps.Average(), sd = Math.Sqrt(steps.Average(d => (d - mean) * (d - mean)));
+    int stops = steps.Count(d => d < 0.01), back = steps.Count(d => d < -0.005);
+    Console.WriteLine($"    шаг за кадр: средний {mean:0.000}, разброс {sd:0.000}, остановок {stops}, откатов назад {back} (кадров {steps.Count})");
+    Check(sd < 0.01, $"движение ровное: разброс шага {sd:0.000} (меньше 0,01)");
+    Check(stops <= 2 && back == 0, $"без остановок и откатов: {stops} остановок, {back} откатов");
+}
+
 Console.WriteLine("2в. покадровое движение (хук C_Battle_Manager.Update)");
 var before = g.Offset.x;
 B.Combat.Pos = new Vector3(107, 104, 0);             // обычный шаг назад на ~4 ед (не телепорт)
