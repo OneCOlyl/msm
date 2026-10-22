@@ -115,6 +115,7 @@ namespace MagicSurvivalCoop
         {
             _outCasts.Clear();
             _heroObj = null; _bulletCreate = null; _heroTrPtr = IntPtr.Zero;
+            ResetOrbits();
             _sentById.Clear(); _castsDone = 0; _castsDropped = 0; _levels.Clear(); _sources.Clear();
             _castCost.Clear(); _frameMaxMs = 0; _slowFrames = 0; _slowFramesCasts = 0;
             foreach (var p in _partners.Values) p.Casts.Clear();

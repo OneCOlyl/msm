@@ -19,7 +19,14 @@ namespace UnityEngine
     public class Component : Object { }
     public class Transform : Component { public Vector3 position { get; set; } public Vector3 localScale { get; set; } public int childCount { get; set; } public GameObject gameObject { get; set; } }
     public class Renderer : Component { }
-    public class SpriteRenderer : Renderer { public Color color { get; set; } public bool enabled { get; set; } = true; public Object sprite { get; set; } }
+    public class SpriteRenderer : Renderer { public Color color { get; set; } public bool enabled { get; set; } = true; public Sprite sprite { get; set; } }
+    public class Sprite : Object { }
+    public static class Resources
+    {
+        public static System.Collections.Generic.List<Object> TestAll = new System.Collections.Generic.List<Object>();
+        public static int TestScans;
+        public static T[] FindObjectsOfTypeAll<T>() where T : Object { TestScans++; return System.Linq.Enumerable.ToArray(System.Linq.Enumerable.OfType<T>(TestAll)); }
+    }
     public class RectTransform : Transform { }
     public class GameObject : Object
     {
@@ -28,6 +35,7 @@ namespace UnityEngine
         public Component TestComponent;
         public void SetActive(bool v) => activeSelf = v;
         public T GetComponent<T>() where T : class => TestComponent as T;
+        public T GetComponentInChildren<T>(bool includeInactive) where T : class => TestComponent as T;
     }
     public class Behaviour : Component { }
     public class MonoBehaviour : Behaviour { public bool CoroutinesStopped; public void StopAllCoroutines() => CoroutinesStopped = true; }

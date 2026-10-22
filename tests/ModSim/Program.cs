@@ -157,6 +157,8 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     bg.Array_Transform_ObjSatellitesA[0].position = new Vector3((float)(bp.x + Math.Cos(ang0) * 2.25), (float)(bp.y + Math.Sin(ang0) * 2.25), 0);
     for (int i = 1; i <= 2; i++) bg.List_IsSpirit_P[i] = true;
     bg.Obj_Shield.activeSelf = true;
+    bg.Obj_Shield.Sr.sprite = new Sprite { name = "Shield2_01" };                 // у друга щит есть, у хоста — нет: картинку найдём среди картинок игры
+    Resources.TestAll.AddRange(new UnityEngine.Object[] { new Sprite { name = "Shield2_01" }, new Sprite { name = "Shield2_03" }, new Sprite { name = "Fireball" } });
     for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
     var on = CloneGo.Made.Where(c => c.activeSelf).ToList();
     Check(on.Count(c => c.Kind == "satA") == 3, $"у хоста 3 копии Спутников: {on.Count(c => c.Kind == "satA")}");
@@ -169,6 +171,13 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     Check(Math.Abs(a0 - ang0) < 0.1, $"поворот круга как у друга: {a0:0.00} ≈ {ang0:0.00}");
     var sh = on.First(c => c.Kind == "shield").transform.position;
     Check(Math.Abs(sh.x - gp.x) < 0.01 && Math.Abs(sh.y - gp.y) < 0.05, "Щит на союзнике");
+    var shc = on.First(c => c.Kind == "shield");
+    Check(shc.Sr.sprite?.name == "Shield2_01", $"у копии Щита картинка друга, хотя у хоста щита нет: «{shc.Sr.sprite?.name}»");
+    Check(on.Where(c => c.Kind == "spirit").All(c => c.Sr.sprite?.name == "UnitSpirit1MotionA"), "у копий Духов своя картинка");
+    bg.Obj_Shield.Sr.sprite = new Sprite { name = "Shield2_03" };                 // у друга сменился заряд щита
+    for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    Check(shc.Sr.sprite?.name == "Shield2_03", $"картинка копии Щита меняется вместе с другом: «{shc.Sr.sprite?.name}»");
+    Check(Resources.TestScans == 1, $"поиск по картинкам игры — один раз: {Resources.TestScans}");
     Check(!CloneGo.Made.Any(c => c.Kind == "satB"), "круга B нет — копий B не создано");
 
     for (int i = 0; i < 3; i++) bg.Array_IsSatelliteA_P[i] = false;
@@ -356,10 +365,10 @@ class GameHero
     public bool[] Array_IsSatelliteA_P = new bool[14], Array_IsSatelliteB_P = new bool[14];
     public Transform[] Array_Transform_ObjSatellitesA = Enumerable.Range(0, 14).Select(_ => new Transform()).ToArray();
     public Transform[] Array_Transform_ObjSatellitesB = Enumerable.Range(0, 14).Select(_ => new Transform()).ToArray();
-    public GameObject[] Array_Obj_UnitSatellitesA = { new CloneGo("satA") }, Array_Obj_UnitSatellitesB = { new CloneGo("satB") };
+    public CloneGo[] Array_Obj_UnitSatellitesA = { new CloneGo("satA", "UnitSatellite01") }, Array_Obj_UnitSatellitesB = { new CloneGo("satB", "UnitSatellite01") };
     public List<bool> List_IsSpirit_P = Enumerable.Repeat(false, 15).ToList();
-    public List<GameObject> List_ObjSpirit = new() { null, new CloneGo("spirit") };
-    public GameObject Obj_Shield = new CloneGo("shield");
+    public List<CloneGo> List_ObjSpirit = new() { null, new CloneGo("spirit", "UnitSpirit1MotionA") };
+    public CloneGo Obj_Shield = new CloneGo("shield");          // картинки нет, пока нет заклинания (как в игре)
     public void Bullet_Create(Transform src, int id, float x, float y, float z, float aim, float p1, float p2, float s1, float s2, float s3, float s4, float dr)
     {
         _p.Ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", this, new object[] { src, id, x, y, z, aim, p1, p2, s1, s2, s3, s4, dr });
@@ -370,8 +379,9 @@ class CloneGo : GameObject, ICloneTarget
 {
     public static readonly List<CloneGo> Made = new();
     public readonly string Kind;
-    public CloneGo(string kind) { Kind = kind; }
-    public UnityEngine.Object CloneForTest() { var c = new CloneGo(Kind) { activeSelf = true }; Made.Add(c); return c; }
+    public CloneGo(string kind, string img = null) { Kind = kind; TestComponent = new SpriteRenderer { sprite = img == null ? null : new Sprite { name = img } }; }
+    public SpriteRenderer Sr => (SpriteRenderer)TestComponent;
+    public UnityEngine.Object CloneForTest() { var c = new CloneGo(Kind) { activeSelf = true }; c.Sr.sprite = Sr.sprite; Made.Add(c); return c; }
 }
 class FakeComps : ICompanions
 {
