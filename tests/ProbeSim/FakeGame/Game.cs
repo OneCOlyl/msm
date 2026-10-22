@@ -7,6 +7,7 @@ namespace Il2Cpp
     {
         public static Action<C_Battle_EnemyUnit, int, float, float> OnStartUnit;   // как хук Harmony: срабатывает на любой вызов Start_Unit
         public static readonly List<C_Battle_EnemyUnit> All = new List<C_Battle_EnemyUnit>();
+        public static readonly List<C_Battle_EnemyUnit> Gone = new List<C_Battle_EnemyUnit>();
         public static double Now; public static Vector3 Hero;
         public static int KillCount;
     }
@@ -36,6 +37,8 @@ namespace Il2Cpp
         public GameObject Go;
         public Transform Transform_ObjUnit { get; set; } = new Transform();
         public Rigidbody Rigidbody_ObjUnit { get; set; } = new Rigidbody();
+        public SpriteRenderer Motion_Unit { get; set; } = new SpriteRenderer();
+        public Transform Transform_ObjUnitSprite { get; set; } = new Transform();
         public bool Unit_IsLive { get; set; } public float Unit_Hp { get; set; } public float UnitApply_HpMax { get; set; } public int UnitID { get; set; }
         public float UnitApply_UnitSize { get; set; } = 1.25f;
         public static C_Battle_EnemyUnit Spawn(int id, double dx, double dy)
@@ -51,7 +54,7 @@ namespace Il2Cpp
             if (!FakeWorld.All.Contains(this)) FakeWorld.All.Add(this);
             FakeWorld.OnStartUnit?.Invoke(this, unitId, a, b);
         }
-        public void Unit_Destroy_Simple() { Unit_IsLive = false; FakeWorld.All.Remove(this); }
-        public void Unit_Death() { Unit_IsLive = false; FakeWorld.All.Remove(this); FakeWorld.KillCount++; }
+        public void Unit_Destroy_Simple() { Unit_IsLive = false; FakeWorld.All.Remove(this); FakeWorld.Gone.Add(this); }
+        public void Unit_Death() { Unit_IsLive = false; FakeWorld.All.Remove(this); FakeWorld.Gone.Add(this); FakeWorld.KillCount++; }
     }
 }

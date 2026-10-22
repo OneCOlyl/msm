@@ -13,6 +13,8 @@ var outDir = Path.Combine(Path.GetTempPath(), "coop_probe_test"); Directory.Crea
 probeType.GetField("DirOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, outDir);
 var report = Path.Combine(outDir, "coop_probe.txt"); if (File.Exists(report)) File.Delete(report);
 def.OnEnable(ctx);
+var probeObj = def.OnEnable.Target.GetType().GetField("_p", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(def.OnEnable.Target);
+var boardField = probeObj.GetType().GetField("_boardText", BindingFlags.NonPublic | BindingFlags.Instance);
 FakeWorld.OnStartUnit = (e, id, a, b) => ctx.Fire("After C_Battle_EnemyUnit.Start_Unit/3", e, new object[] { id, a, b });
 
 ctx.Emit("battleStart");
@@ -23,23 +25,27 @@ for (int frame = 0; frame < 75 * 30 && !ctx.Logs.Any(l => l.Contains("РАЗВЕ
     if (frame >= 900 && frame < 960) { ctx.Delta = 0; t -= 1.0 / 30; ctx.GameTime = t; }   // пауза 2 с посреди боя: игровое время стоит
     world.Step(t, ctx.Delta);
     ctx.Fire("Before C_Battle_Manager.Update/0", mgr, new object[0]);
-    if (frame % 3 == 0) foreach (var f in ctx.Ticks.ToArray()) f();
+    if (frame % 3 == 0) { foreach (var f in ctx.Ticks.ToArray()) f(); var bt = (string)boardField.GetValue(probeObj); if (ctx.BoardTexts.Count == 0 || ctx.BoardTexts[^1] != bt) ctx.BoardTexts.Add(bt); }
 }
 def.OnDisable(ctx); foreach (var c in ctx.Cleanups) c();
 var txt = File.Exists(report) ? File.ReadAllText(report) : "";
 Console.WriteLine(txt);
 foreach (var l in ctx.Logs.Where(l => l.Contains("ОШИБКА"))) Console.WriteLine("    " + l);
-Check(ctx.Logs.Any(l => l.Contains("РАЗВЕДКА 2 ЗАВЕРШЕНА (все опыты проведены)")), "разведка 2 прошла все опыты");
+Check(ctx.Logs.Any(l => l.Contains("РАЗВЕДКА 3 ЗАВЕРШЕНА (все опыты проведены)")), "разведка 3 прошла все опыты");
 Check(!ctx.Logs.Any(l => l.Contains("ОШИБКА")), "без исключений");
-Check(txt.Contains("создано прямо во время вызова: 1 (тип 1"), "A1: враг, созданный по команде, распознан как наш");
-Check(txt.Contains("ApplyBossNum: 0 → 1"), "A1: побочные изменения менеджера видны");
-Check(txt.Contains("копия создана") && txt.Contains("компонент врага: есть") && txt.Contains("Start_Unit прошёл; жив True"), "A2: копия шаблона создана и запущена");
-Check(txt.Contains("стоп+кин: наибольший уход от поставленной точки за кадр 0.000"), "B: ведомая марионетка стоит точно в точке");
-Check(System.Text.RegularExpressions.Regex.IsMatch(txt, @"  кин: ушёл от точки на [1-9]"), "B: без остановки корутин враг уходит (ИИ жив)");
-Check(System.Text.RegularExpressions.Regex.IsMatch(txt, @"  стоп: ушёл от точки на 0\.[0-9][0-9]"), "B: без кинематики стоящего врага немного сдвигают");
-Check(txt.Contains("===== C:") && txt.Contains("оценка на 200 врагов"), "C: нагрузка измерена");
+Check(txt.Contains("создано во время вызова: 1;"), "A: враг по команде создан и распознан как наш");
+Check(txt.Contains("ApplyBossNum возвращён в 0") && C_Battle_Manager.ApplyBossNum == 0, "A: счётчик боссов возвращён");
+var ours = FakeWorld.All.Concat(FakeWorld.Gone).FirstOrDefault(e => e.Motion_Unit.color.r == 1f && Math.Abs(e.Motion_Unit.color.g - 0.82f) < 0.01f);
+Check(ours != null && Math.Abs(ours.Transform_ObjUnitSprite.localScale.x - 1.8f) < 0.01f, "A: наш враг золотой и крупнее (1,8)");
+Check(System.Text.RegularExpressions.Regex.IsMatch(txt, @"до героя 3\.[3-7]"), "A: стоит в ~3,5 ед от героя (не на герое)");
+var blue = FakeWorld.All.Count(e => Math.Abs(e.Motion_Unit.color.b - 1f) < 0.01f && e.Motion_Unit.color.r < 0.3f);
+Check(blue == 3, $"B: три синих марионетки: {blue}");
+Check(txt.Contains("стоп+кин: наибольший уход за кадр 0.000, 0.000, 0.000"), "B: синие стоят точно в поставленных точках");
+Check(System.Text.RegularExpressions.Regex.IsMatch(txt, @"кин: ушёл от точки [1-9]"), "B: красные (ИИ жив) уходят");
+Check(txt.Contains("===== C:") && txt.Contains("на 200 врагов"), "C: нагрузка измерена");
 Check(System.Text.RegularExpressions.Regex.IsMatch(txt, @"появилось (\d+), убрано \1,"), "D: все новые враги убраны");
 Check(txt.Contains("EnemyCreateNum было 2, ставлю 0: ок") && txt.Contains("за 10 с создано врагов: 0") && mgr.EnemyCreateNum == 2, "E: спавн погашен и возвращён");
+Check(ctx.BoardTexts.Any(b => b.Contains("ЗОЛОТОЙ")) && ctx.BoardTexts.Any(b => b.Contains("СИНИЕ")), "табло показывает, какой опыт и какой цвет");
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
 
@@ -75,7 +81,7 @@ class En : IEnemies
 }
 class Ctx : ModContext
 {
-    public World World; public double GameTime, Delta;
+    public World World; public double GameTime, Delta; public readonly List<string> BoardTexts = new();
     public readonly Dictionary<string, List<Action<object, object[]>>> Hooks = new(); public readonly List<Action> Ticks = new(), Cleanups = new();
     public readonly Dictionary<string, List<Action<object>>> Handlers = new(); public readonly List<string> Logs = new();
     public void Fire(string key, object self, object[] a) { if (Hooks.TryGetValue(key, out var l)) foreach (var h in l) h(self, a); }

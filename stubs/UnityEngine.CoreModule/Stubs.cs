@@ -15,7 +15,9 @@ namespace UnityEngine
     /// <summary>Только для тестов: как копировать фальшивые объекты.</summary>
     public interface ICloneTarget { Object CloneForTest(); }
     public class Component : Object { }
-    public class Transform : Component { public Vector3 position { get; set; } }
+    public class Transform : Component { public Vector3 position { get; set; } public Vector3 localScale { get; set; } }
+    public class Renderer : Component { }
+    public class SpriteRenderer : Renderer { public Color color { get; set; } }
     public class RectTransform : Transform { }
     public class GameObject : Object
     {

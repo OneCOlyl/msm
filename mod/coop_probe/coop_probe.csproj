@@ -5,7 +5,7 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <Libs Condition="'$(Libs)' == ''">$(MSBuildThisFileDirectory)../../libs</Libs>
     <Stubs>$(MSBuildThisFileDirectory)../../stubs/out</Stubs>
   </PropertyGroup>
@@ -13,5 +13,6 @@
     <Reference Include="ModKit"><HintPath>$(Libs)/ModKit.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="modkit_combat"><HintPath>$(Libs)/modkit_combat.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(Stubs)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(Stubs)/UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 </Project>
