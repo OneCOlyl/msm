@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net8.0</TargetFramework><AssemblyName>Assembly-CSharp</AssemblyName><Nullable>disable</Nullable></PropertyGroup>
+  <ItemGroup><Reference Include="UnityEngine.CoreModule"><HintPath>../../../stubs/out/UnityEngine.CoreModule.dll</HintPath></Reference></ItemGroup>
+</Project>
