@@ -1,0 +1,2 @@
+ModKit.dll и modkit_*.dll — из релиза MS_KIT (https://github.com/Kysnez4/MS_KIT, лицензия MIT), только для сборки мода.
+На телефон их ставить не нужно: они уже есть в Zombix-melon-ModKit.zip.

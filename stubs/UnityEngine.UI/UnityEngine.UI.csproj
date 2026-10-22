@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>UnityEngine.UI</AssemblyName>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../UnityEngine.CoreModule/UnityEngine.CoreModule.csproj" /></ItemGroup>
+</Project>

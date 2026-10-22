@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Сборка:
+      dotnet build -c Release                      — против заглушек Unity из ../../stubs (без телефона)
+      dotnet build -c Release -p:Ref=/путь/к/ref   — против настоящих сборок игры (папки net8/ и il2cpp/ с телефона)
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>coop</AssemblyName>
+    <RootNamespace>MagicSurvivalCoop</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Version>1.0.0</Version>
+    <Libs Condition="'$(Libs)' == ''">$(MSBuildThisFileDirectory)../../libs</Libs>
+    <Stubs>$(MSBuildThisFileDirectory)../../stubs/out</Stubs>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="ModKit"><HintPath>$(Libs)/ModKit.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="modkit_combat"><HintPath>$(Libs)/modkit_combat.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="modkit_hero"><HintPath>$(Libs)/modkit_hero.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="modkit_spells"><HintPath>$(Libs)/modkit_spells.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="modkit_companions"><HintPath>$(Libs)/modkit_companions.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <ItemGroup Condition="'$(Ref)' == ''">
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(Stubs)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(Stubs)/UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <ItemGroup Condition="'$(Ref)' != ''">
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(Ref)/il2cpp/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(Ref)/il2cpp/UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>$(Ref)/net8/Il2CppInterop.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2Cppmscorlib"><HintPath>$(Ref)/il2cpp/Il2Cppmscorlib.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

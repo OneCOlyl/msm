@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings><LangVersion>latest</LangVersion></PropertyGroup>
+  <ItemGroup>
+    <Reference Include="coop"><HintPath>../../mod/coop/bin/Release/net8.0/coop.dll</HintPath></Reference>
+    <Reference Include="ModKit"><HintPath>../../libs/ModKit.dll</HintPath></Reference>
+    <Reference Include="modkit_combat"><HintPath>../../libs/modkit_combat.dll</HintPath></Reference>
+    <Reference Include="modkit_hero"><HintPath>../../libs/modkit_hero.dll</HintPath></Reference>
+    <Reference Include="modkit_spells"><HintPath>../../libs/modkit_spells.dll</HintPath></Reference>
+    <Reference Include="modkit_companions"><HintPath>../../libs/modkit_companions.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>../../stubs/out/UnityEngine.CoreModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>../../stubs/out/UnityEngine.UI.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>
