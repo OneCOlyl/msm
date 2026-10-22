@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.2.1";
+        public const string ModVersion = "1.3.0";
 
         public ModDef Define() => new ModDef
         {
@@ -41,6 +41,7 @@ namespace MagicSurvivalCoop
                 new ModOption { Key = "ghostDist", Label = "Дальность призрака друга", Default = 6, Min = 2, Max = 12, Step = 1 },
                 new ModOption { Key = "healPct", Label = "Лечение друга, % (0 — выкл.)", Default = 25, Min = 0, Max = 50, Step = 5 },
                 new ModOption { Key = "healCd", Label = "Перезарядка лечения, с", Default = 40, Min = 10, Max = 120, Step = 5 },
+                new ModOption { Key = "mirrorDmg", Label = "Урон магии друга у вас, % (0 — только эффект)", Default = 100, Min = 0, Max = 200, Step = 25 },
                 new ModOption { Key = "sendHz", Label = "Обновлений позиции в секунду (больше — плавнее, но больше трафика)", Default = 15, Min = 5, Max = 30, Step = 5 },
                 new ModOption { Key = "ip1", Label = "IP 1", Default = 10, Min = 0, Max = 255, Hidden = true },
                 new ModOption { Key = "ip2", Label = "IP 2", Default = 66, Min = 0, Max = 255, Hidden = true },
@@ -57,7 +58,7 @@ namespace MagicSurvivalCoop
     }
 
     /// <summary>Всё состояние мода, пока он включён.</summary>
-    internal sealed class Session
+    internal sealed partial class Session
     {
         // заклинания, которыми умеет стрелять союзник (проверено в modkit_companions: 2, 5, 7; 16, 13, 1 — снаряды того же типа)
         private static readonly int[] GhostSpells = { 2, 5, 7, 16, 13, 1 };
@@ -113,8 +114,9 @@ namespace MagicSurvivalCoop
         private Transform _heroTr;                 // объект героя — один раз за бой (без мусора в каждом кадре)
         private bool _heroTrTried;
         private double _heroTrRetryAt;
-        private Action _sendAction;
+        private Action _sendAction, _flushAction;
         private int _bestSpell;
+        private readonly Dictionary<int, int> _levels = new Dictionary<int, int>();   // уровни заклинаний за бой — для итога в журнал
         private double _bestSpellAt = -1;
         private const int PortSpan = 4;            // если основной порт занят, хост берёт следующий (до +4), клиенты ищут его сами
 
@@ -139,6 +141,8 @@ namespace MagicSurvivalCoop
             public double ClockOff;
             public bool HasClock;
             public Transform GhostTr;          // объект союзника — берётся один раз, а не каждый кадр
+            public bool Mirror;                // друг пересылает свою магию (1.3+): союзник не стреляет сам, повторяет касты друга
+            public readonly Queue<Cast> Casts = new Queue<Cast>();
             public ICompanion Ghost;
             public int GhostSpell = -1;
             public double NextSpawn;
@@ -168,7 +172,9 @@ namespace MagicSurvivalCoop
             ctx.Events.On("enemyDeath", _ => { if (_inRun) _kills++; });
 
             _sendAction = SendState;
+            _flushAction = FlushCasts;
             ctx.Every(50, Tick);
+            InstallMagicHook();
             try { ctx.Before("C_Battle_Manager", "Update", 0, (self, args) => FrameStep()); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
             ctx.OnCleanup(Shutdown);
@@ -275,6 +281,7 @@ namespace MagicSurvivalCoop
             _nextSend = Math.Max(now, _nextSend + interval);                // ровный шаг без накопления сдвига
             if (_nextSend - now > interval) _nextSend = now + interval;
             _ctx.Guard("отправка состояния", _sendAction);
+            _ctx.Guard("отправка магии", _flushAction);
         }
 
         private void Pump()
@@ -394,6 +401,7 @@ namespace MagicSurvivalCoop
             p.Hp = Protocol.Num(s, "hp"); p.HpMax = Math.Max(1, Protocol.Num(s, "hpMax", 1));
             p.Kills = Protocol.Num(s, "kills");
             p.Spell = (int)Protocol.Num(s, "spell");
+            if (Protocol.Bool(s, "mirror")) p.Mirror = true;
             p.HasState = true;
             p.StateAt = _clockMs;
 
@@ -451,6 +459,9 @@ namespace MagicSurvivalCoop
                 case "sos":
                     _ctx.Toast($"{who}: нужна помощь!", 3);
                     break;
+                case "casts":
+                    if (from != null && _partners.TryGetValue(from, out var cp)) OnRemoteCasts(cp, e);
+                    break;
             }
         }
 
@@ -465,6 +476,7 @@ namespace MagicSurvivalCoop
             _healReadyAt = 0; _nextSos = 0;
             _fpsSince = -1; _fpsFrames = 0; _fpsLogged = false;
             _heroTr = null; _heroTrTried = false; _bestSpellAt = -1;
+            ResetMagic();
             foreach (var p in _partners.Values) p.GhostTr = null;
             foreach (var p in _partners.Values) { p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; }
             DestroyBtn(ref _menuBtn);
@@ -473,6 +485,7 @@ namespace MagicSurvivalCoop
 
         private void OnBattleEnd()
         {
+            _ctx.Guard("итог магии", LogMagicSummary);
             _inRun = false;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             DestroyBtn(ref _healBtn);
@@ -509,6 +522,7 @@ namespace MagicSurvivalCoop
                     int lvl = _spells.Level(id);
                     if (lvl > best) { best = lvl; _bestSpell = id; }
                 }
+                for (int id = 1; id <= 21; id++) { int l = _spells.Level(id); if (l > 0) _levels[id] = l; }
             }
             int spell = _bestSpell;
 
@@ -537,6 +551,7 @@ namespace MagicSurvivalCoop
                 w.WriteNumber("hpMax", Math.Round(hpMax));
                 w.WriteNumber("kills", _kills);
                 w.WriteNumber("spell", spell);
+                if (_magicHooked) w.WriteNumber("mirror", 1);                    // мы пересылаем свою магию — пусть наш союзник у друзей не стреляет сам
                 w.WriteNumber("t", Math.Round(Clock.Elapsed.TotalSeconds, 4));   // время снятия позиции — для интерполяции у друзей
             }));
         }
@@ -562,15 +577,17 @@ namespace MagicSurvivalCoop
                     p.NextSpawn = _clockMs + 2000;
                     var color = SlotColors[Math.Max(0, Math.Min(3, p.Slot - 1))];
                     _ctx.Mark("союзник: создание");
-                    p.Ghost = _companions.Spawn(0, 0, p.Spell, color, 0.75, CompanionMode.Follow);
-                    p.GhostSpell = p.Spell;
+                    int gs = p.Mirror ? NoOwnFire : p.Spell;
+                    p.Ghost = _companions.Spawn(0, 0, gs, color, 0.75, CompanionMode.Follow);
+                    p.GhostSpell = gs;
                     p.GhostTr = null;
                     if (p.Ghost == null) continue;
                     p.Ghost.Speed = 200;   // библиотека сразу ставит союзника в нашу сглаженную точку, плавность — за нами
                     _ctx.Log($"союзник «{p.Name}» создан, слот {p.Ghost.Slot}, заклинание {p.Spell}");
                 }
 
-                if (p.GhostSpell != p.Spell) { p.Ghost.Spell = p.Spell; p.GhostSpell = p.Spell; }
+                int wantSpell = p.Mirror ? NoOwnFire : p.Spell;
+                if (p.GhostSpell != wantSpell) { p.Ghost.Spell = wantSpell; p.GhostSpell = wantSpell; }
 
                 // нет покадрового хука (или пауза кадров) — двигаем здесь, 20 раз в секунду
                 if (Clock.Elapsed.TotalSeconds - _frameSeenSec > 0.25)
@@ -600,7 +617,11 @@ namespace MagicSurvivalCoop
                 if (!HeroPosition(out var hx, out var hy, out var hz)) return;
                 _frameSeenSec = now;
                 foreach (var p in _partners.Values)
-                    if (p.Ghost != null && p.Ghost.Alive) PlaceGhost(p, dt, hx, hy, hz, _directWrite);
+                    if (p.Ghost != null && p.Ghost.Alive)
+                    {
+                        PlaceGhost(p, dt, hx, hy, hz, _directWrite);
+                        if (p.Casts.Count > 0) { if (p.GhostTr == null) EnsureGhostTr(p); RunCasts(p, now, hz); }
+                    }
             }
             catch (Exception e)
             {
@@ -619,7 +640,7 @@ namespace MagicSurvivalCoop
                 _heroTrRetryAt = nowS + 1;                 // не нашли — следующая попытка не раньше чем через секунду
                 try
                 {
-                    var hero = typeof(BattleState).GetProperty("Hero", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+                    var hero = RawHero();
                     _heroTr = hero?.GetType().GetProperty("Transform_ObjUnit", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(hero) as Transform;
                 }
                 catch { _heroTr = null; }
@@ -681,11 +702,7 @@ namespace MagicSurvivalCoop
             x = y = 0;
             var tr = p.Track;
             if (!p.HasClock || tr.Count < 2) return false;
-            double span = tr[tr.Count - 1].t - tr[Math.Max(0, tr.Count - 11)].t;
-            int gaps = Math.Min(10, tr.Count - 1);
-            double interval = gaps > 0 ? span / gaps : 0.1;
-            double delay = Math.Max(0.06, Math.Min(0.35, interval * 1.5 + 0.02));
-            double rt = now - p.ClockOff - delay;           // момент на часах друга, который показываем
+            double rt = now - p.ClockOff - RenderDelay(p);   // момент на часах друга, который показываем
 
             if (rt <= tr[0].t) { x = tr[0].x; y = tr[0].y; return true; }
             var last = tr[tr.Count - 1];
@@ -710,6 +727,28 @@ namespace MagicSurvivalCoop
             }
             x = last.x; y = last.y;
             return true;
+        }
+
+        /// <summary>Задержка показа друга: полтора средних интервала между его точками (те же часы — и для движения, и для его магии).</summary>
+        private static double RenderDelay(Partner p)
+        {
+            var tr = p.Track;
+            if (tr.Count < 2) return 0.15;
+            double span = tr[tr.Count - 1].t - tr[Math.Max(0, tr.Count - 11)].t;
+            int gaps = Math.Min(10, tr.Count - 1);
+            double interval = gaps > 0 ? span / gaps : 0.1;
+            return Math.Max(0.06, Math.Min(0.35, interval * 1.5 + 0.02));
+        }
+
+        private void EnsureGhostTr(Partner p)
+        {
+            try
+            {
+                var t = p.Ghost.GetType();
+                if (t != _compType) { _compType = t; _compTr = t.GetField("Tr", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
+                p.GhostTr = _compTr?.GetValue(p.Ghost) as Transform;
+            }
+            catch { p.GhostTr = null; }
         }
 
         /// <summary>Ставит объект союзника сразу (библиотека сама двигает его только 20 раз в секунду).</summary>

@@ -43,7 +43,7 @@ TickAll(800);
 var g = A.Comp.Spawned.LastOrDefault(c => c.Alive);
 Check(g != null, "у хоста создан союзник-друг");
 Check(g != null && Math.Abs(g.Offset.x - 3) < 0.05 && Math.Abs(g.Offset.y - 4) < 0.05, $"смещение союзника = движению друга от старта (3, 4): ({g?.Offset.x}, {g?.Offset.y})");
-Check(g != null && g.Spell == 7, $"союзник стреляет лучшим заклинанием друга (7, Молния): {g?.Spell}");
+Check(g != null && g.Spell == 99, $"друг пересылает магию — союзник сам не стреляет, только повторяет его касты (заклинание 99): {g?.Spell}");
 Check(g != null && g.Speed == 200, "библиотека ставит союзника сразу в сглаженную точку (скорость 200)");
 A.Combat.Pos = new Vector3(6, 5, 0);
 TickAll(400);
@@ -105,11 +105,33 @@ for (int fr = 0; fr < 30; fr++) { A.Call("FrameStep"); frames.Add(g.Offset.x); T
 var fd = frames.Zip(frames.Skip(1), (p0, p1) => Math.Abs(p1 - p0)).ToList();
 Check(fd.Max() < 0.6 && fd.Count(x => x > 1e-4) > 5, $"по кадрам союзник двигается мелкими шагами (макс {fd.Max():0.00} за кадр)");
 
+Console.WriteLine("2д. магия друга: каждый снаряд героя друга повторяется у хоста из союзника");
+{
+    B.Combat.Pos = new Vector3(102, 103, 0); TickAll(600);
+    for (int fr = 0; fr < 10; fr++) { A.Call("FrameStep"); Thread.Sleep(16); }      // союзник встал на место
+    var gp = g.Tr.position;
+    int callsBefore = A.Game.Calls.Count;
+    // друг кастует: снаряд 6 из своего героя в точку на (2, 1) от себя
+    var bh = B.Combat.HeroTr.position;
+    B.Game.Bullet_Create(B.Combat.HeroTr, 6, bh.x + 2, bh.y + 1, 0, 0.25f, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
+    // союзник хоста (у друга) стреляет сам — это НЕ должно уйти хосту
+    B.Game.Bullet_Create(B.Comp.Spawned.Last().Tr, 7, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1);
+    for (int fr = 0; fr < 40; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var mirrored = A.Game.Calls.Skip(callsBefore).ToList();
+    Check(mirrored.Count == 1 && mirrored[0].id == 6, $"у хоста повторён ровно один снаряд (тип 6): {string.Join(",", mirrored.Select(m => m.id))}");
+    Check(mirrored.Count == 1 && ReferenceEquals(mirrored[0].src, g.Tr), "снаряд вылетел из союзника-друга");
+    var gp2 = g.Tr.position;
+    Check(mirrored.Count == 1 && Math.Abs(mirrored[0].x - (gp2.x + 2)) < 0.3 && Math.Abs(mirrored[0].y - (gp2.y + 1)) < 0.3, $"цель на том же месте относительно союзника (+2, +1): ({mirrored.FirstOrDefault().x - gp2.x:0.00}, {mirrored.FirstOrDefault().y - gp2.y:0.00})");
+    Check(mirrored.Count == 1 && Math.Abs(mirrored[0].dr - 1f) < 1e-3, "урон по настройке 100%");
+    int echo = B.Game.Calls.Count(c => c.id == 6 && !ReferenceEquals(c.src, B.Combat.HeroTr));
+    Check(echo == 0, "повтор у хоста не вернулся другу эхом");
+}
+
 B.Combat.Pos = new Vector3(150, 100, 0);
 TickAll(400);
 Check(g != null && Math.Abs(Math.Sqrt(g.Offset.x * g.Offset.x + g.Offset.y * g.Offset.y) - 6) < 0.01, "друг убежал далеко — союзник держится на дальности 6");
 var gB = B.Comp.Spawned.LastOrDefault(c => c.Alive);
-Check(gB != null && gB.Spell == 0, "у друга тоже есть союзник-хост (без заклинаний — стрельба двойника игры)");
+Check(gB != null && gB.Spell == 99, "у друга тоже есть союзник-хост, тоже повторяет магию");
 
 Console.WriteLine("3. мало здоровья: сигнал SOS и лечение");
 B.Hero.Hp = 20;
@@ -151,11 +173,16 @@ return fails == 0 ? 0 : 1;
 class Player
 {
     public readonly FakeCtx Ctx; public readonly FakeSpells Spells = new(); public readonly FakeHero Hero = new(); public readonly FakeCombat Combat = new(); public readonly FakeComps Comp = new();
+    public readonly GameHero Game;
+    static readonly Dictionary<ModContext, Player> ByCtx = new();
     public List<string> Toasts => Ctx.Toasts; public List<string> Errors => Ctx.Errors;
     private readonly ModDef _def; private object _session;
     public Player(string name)
     {
         Ctx = new FakeCtx(name, this);
+        Game = new GameHero(this); ByCtx[Ctx] = this;
+        var sess = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session");
+        sess.GetField("HeroOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, (Func<ModContext, object>)(c => ByCtx.TryGetValue(c, out var pl) ? pl.Game : null));
         _def = new MagicSurvivalCoop.CoopMod().Define();
         foreach (var o in _def.Options) Ctx.Set[o.Key] = o.Default;
         Ctx.Set["port"] = 28766; Ctx.Set["ip1"] = 127; Ctx.Set["ip2"] = 0; Ctx.Set["ip3"] = 0; Ctx.Set["ip4"] = 1;
@@ -197,8 +224,11 @@ class FakeCtx : ModContext
         return lib as T;
     }
     public void Replace(string c, string m, int n, Func<object, object[], object> f) { }
-    public void After(string c, string m, int n, Action<object, object[]> f) { }
-    public void Before(string c, string m, int n, Action<object, object[]> f) { }
+    public readonly Dictionary<string, List<Action<object, object[]>>> Hooks = new();
+    public void After(string c, string m, int n, Action<object, object[]> f) => AddHook($"After {c}.{m}/{n}", f);
+    public void Before(string c, string m, int n, Action<object, object[]> f) => AddHook($"Before {c}.{m}/{n}", f);
+    void AddHook(string k, Action<object, object[]> f) { if (!Hooks.TryGetValue(k, out var l)) Hooks[k] = l = new(); l.Add(f); }
+    public void Fire(string k, object self, object[] a) { if (Hooks.TryGetValue(k, out var l)) foreach (var h in l) h(self, a); }
     public void Every(double ms, Action fn) => Ticks.Add(fn);
     public void OnCleanup(Action fn) => Cleanups.Add(fn);
     public IRegistry<T> Registry<T>(string name) => null;
@@ -246,7 +276,8 @@ class FakeHero : IHero
 }
 class FakeCombat : IEnemies
 {
-    public Vector3 Pos;
+    public readonly Transform HeroTr = new Transform();                 // объект героя (как Transform_ObjUnit)
+    public Vector3 Pos { get => HeroTr.position; set => HeroTr.position = value; }
     public IReadOnlyList<IEnemy> Alive => new List<IEnemy>();
     public IReadOnlyList<IEnemy> Near(double x, double y, double r) => new List<IEnemy>();
     public IEnemy Nearest(double x, double y) => null;
@@ -257,6 +288,20 @@ class FakeComp : ICompanion
     public int Slot { get; set; } public Vector2 Offset { get; set; } public bool Alive { get; set; } = true; public int Spell { get; set; }
     public CompanionMode Mode { get; set; } public Vector2 Pos => Offset; public double Speed { get; set; } public double Leash { get; set; } public double StandOff { get; set; } public double GuardRadius { get; set; }
     public void Remove() => Alive = false;
+    public Transform Tr = new Transform();                               // как в библиотеке: объект союзника в поле Tr
+}
+/// <summary>Герой игры (вместо C_Battle_AllyUnit): Bullet_Create записывает вызов и, как хук Harmony, вызывает хуки мода.</summary>
+class GameHero
+{
+    public readonly List<(object src, int id, float x, float y, float dr)> Calls = new();
+    readonly Player _p;
+    public GameHero(Player p) { _p = p; }
+    public Transform Transform_ObjUnit => _p.Combat.HeroTr;
+    public void Bullet_Create(Transform src, int id, float x, float y, float z, float aim, float p1, float p2, float s1, float s2, float s3, float s4, float dr)
+    {
+        _p.Ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", this, new object[] { src, id, x, y, z, aim, p1, p2, s1, s2, s3, s4, dr });
+        Calls.Add((src, id, x, y, dr));
+    }
 }
 class FakeComps : ICompanions
 {
