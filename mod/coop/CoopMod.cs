@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.4.1";
+        public const string ModVersion = "1.4.2";
 
         public ModDef Define() => new ModDef
         {

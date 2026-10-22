@@ -154,14 +154,105 @@ namespace MagicSurvivalCoop
             }
             return m?.Invoke(go, new object[] { true });
         }
-        private static object SpriteOf(object sr) => GetMember(sr, "sprite");
-        private static string NameOf(object o) { var n = GetMember(o, "name") as string; return string.IsNullOrEmpty(n) ? null : n; }
+        // Картинки — только по указателям: обёртка UnityEngine.Sprite из Il2CppInterop роняет игру под Mono (MS_KIT, MELONLOADER.md).
+        // «Картинка» ниже — либо IntPtr (на телефоне), либо объект-заглушка Sprite (в тестах без Unity).
+        private static readonly bool RawSprites = typeof(SpriteRenderer).GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance) != null;
+        private static IntPtr _getSprite, _setSprite, _getName, _findAll, _spriteClass;
+
+        private static IntPtr PtrOf(object wrapper) => wrapper?.GetType().GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance)?.GetValue(wrapper) is IntPtr p ? p : IntPtr.Zero;
+
+        private static void InitRaw()
+        {
+            if (_getSprite != IntPtr.Zero) return;
+            const string core = "UnityEngine.CoreModule.dll";
+            var sr = Raw.Class(core, "UnityEngine", "SpriteRenderer");
+            _setSprite = Raw.Method(sr, "set_sprite", 1);
+            _getName = Raw.Method(Raw.Class(core, "UnityEngine", "Object"), "get_name", 0);
+            _spriteClass = Raw.Class(core, "UnityEngine", "Sprite");
+            _findAll = Raw.Method(Raw.Class(core, "UnityEngine", "Resources"), "FindObjectsOfTypeAll", 1);
+            _getSprite = Raw.Method(sr, "get_sprite", 0);
+        }
+
+        /// <summary>Картинка рендера (null — нет).</summary>
+        private static object SpriteOf(object sr)
+        {
+            if (sr == null) return null;
+            if (!RawSprites) return GetMember(sr, "sprite");
+            InitRaw();
+            var p = PtrOf(sr);
+            if (p == IntPtr.Zero) return null;
+            var sp = Raw.Invoke(_getSprite, p);
+            return sp == IntPtr.Zero ? null : (object)sp;
+        }
+        private static void SetSprite(object sr, object sprite)
+        {
+            if (!RawSprites) { sr.GetType().GetProperty("sprite")?.SetValue(sr, sprite); return; }
+            InitRaw();
+            Raw.Invoke(_setSprite, PtrOf(sr), (IntPtr)sprite);
+        }
+        /// <summary>Имя картинки (или любого объекта Unity в тестах).</summary>
+        private static string NameOf(object o)
+        {
+            if (o == null) return null;
+            string n;
+            if (o is IntPtr p)
+            {
+                InitRaw();
+                n = ReadString(Raw.Invoke(_getName, p));
+            }
+            else n = GetMember(o, "name") as string;
+            return string.IsNullOrEmpty(n) ? null : n;
+        }
+        /// <summary>Строка IL2CPP: заголовок объекта (2 указателя), длина int32, символы UTF-16.</summary>
+        private static string ReadString(IntPtr s)
+        {
+            if (s == IntPtr.Zero) return null;
+            int head = 2 * IntPtr.Size;
+            int len = System.Runtime.InteropServices.Marshal.ReadInt32(s + head);
+            if (len <= 0 || len > 512) return null;
+            return System.Runtime.InteropServices.Marshal.PtrToStringUni(s + head + 4, len);
+        }
         private string ImageOf(object go) => NameOf(SpriteOf(RendererOf(go)));
 
         private void Remember(object sprite)
         {
             var n = NameOf(sprite);
-            if (n != null && !_sprites.ContainsKey(n)) _sprites[n] = sprite;
+            if (n == null || _sprites.ContainsKey(n)) return;
+            if (sprite is IntPtr p) Raw.Pin(p);
+            _sprites[n] = sprite;
+        }
+
+        /// <summary>Все картинки игры: на телефоне — Resources.FindObjectsOfTypeAll(typeof(Sprite)) по указателям, в тестах — заглушка.</summary>
+        private List<object> AllSprites()
+        {
+            var res = new List<object>();
+            if (!RawSprites)
+            {
+                var spriteType = typeof(SpriteRenderer).GetProperty("sprite")?.PropertyType;
+                var m = typeof(Transform).Assembly.GetType("UnityEngine.Resources")?.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault(x => x.Name == "FindObjectsOfTypeAll" && x.IsGenericMethodDefinition && x.GetParameters().Length == 0);
+                if (spriteType == null || m == null) return res;
+                foreach (var o in (IEnumerable)m.MakeGenericMethod(spriteType).Invoke(null, null)) res.Add(o);
+                return res;
+            }
+            InitRaw();
+            // объект System.Type для Sprite: il2cpp_class_get_type + il2cpp_type_get_object (Il2CppInterop.Runtime.IL2CPP)
+            var il2 = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Il2CppInterop.Runtime.IL2CPP")).FirstOrDefault(t => t != null)
+                      ?? throw new Exception("нет Il2CppInterop.Runtime.IL2CPP");
+            var getType = il2.GetMethod("il2cpp_class_get_type", BindingFlags.Public | BindingFlags.Static);
+            var typeObj = il2.GetMethod("il2cpp_type_get_object", BindingFlags.Public | BindingFlags.Static);
+            var t2 = (IntPtr)getType.Invoke(null, new object[] { _spriteClass });
+            var tObj = (IntPtr)typeObj.Invoke(null, new object[] { t2 });
+            var arr = Raw.Invoke(_findAll, IntPtr.Zero, tObj);
+            if (arr == IntPtr.Zero) return res;
+            // массив IL2CPP: заголовок (2 указателя), bounds, max_length, затем элементы
+            long n = System.Runtime.InteropServices.Marshal.ReadInt64(arr + 3 * IntPtr.Size);
+            for (long i = 0; i < n && i < 100000; i++)
+            {
+                var e = System.Runtime.InteropServices.Marshal.ReadIntPtr(arr + 4 * IntPtr.Size + (int)(i * IntPtr.Size));
+                if (e != IntPtr.Zero) res.Add(e);
+            }
+            return res;
         }
 
         /// <summary>Картинка по имени: из своих объектов героя, иначе — один раз за бой поиск среди всех картинок игры.</summary>
@@ -196,23 +287,16 @@ namespace MagicSurvivalCoop
             var sw = Stopwatch.StartNew();
             try
             {
-                var spriteType = typeof(SpriteRenderer).GetProperty("sprite")?.PropertyType;
-                var res = typeof(Transform).Assembly.GetType("UnityEngine.Resources");
-                var m = res?.GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .FirstOrDefault(x => x.Name == "FindObjectsOfTypeAll" && x.IsGenericMethodDefinition && x.GetParameters().Length == 0);
-                if (spriteType == null || m == null) { _ctx.Log("орбиты: поиск картинок недоступен"); return; }
                 _ctx.Mark("орбиты: поиск картинок");
-                var all = m.MakeGenericMethod(spriteType).Invoke(null, null);
-                int n = Count(all), kept = 0;
-                var get = all.GetType().GetMethod("get_Item", new[] { typeof(int) });
-                var list = all as IList;
-                for (int i = 0; i < n; i++)
+                var all = AllSprites();
+                int n = all.Count, kept = 0;
+                foreach (var sp in all)
                 {
-                    var sp = get != null ? get.Invoke(all, new object[] { i }) : list?[i];
                     var nm = NameOf(sp);
                     if (nm == null || _sprites.ContainsKey(nm)) continue;
                     if (nm.IndexOf("Shield", StringComparison.OrdinalIgnoreCase) < 0 && nm.IndexOf("Satellite", StringComparison.OrdinalIgnoreCase) < 0
                         && nm.IndexOf("Spirit", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    if (sp is IntPtr pp) Raw.Pin(pp);
                     _sprites[nm] = sp; kept++;
                 }
                 _ctx.Log($"орбиты: поиск картинок по игре — всего {n}, подходящих {kept} ({string.Join(", ", _sprites.Keys.Where(k => k.IndexOf("Shield", StringComparison.OrdinalIgnoreCase) >= 0).Take(8))}) за {sw.ElapsedMilliseconds} мс");
@@ -229,7 +313,7 @@ namespace MagicSurvivalCoop
             if (NameOf(SpriteOf(c.Sr)) == want) { c.Applied = want; return; }
             var sp = FindSprite(want, now);
             if (sp == null) { c.Missed = want; _ctx.Log($"орбиты: картинка «{want}» ({what}) не найдена"); return; }
-            c.Sr.GetType().GetProperty("sprite")?.SetValue(c.Sr, sp);
+            SetSprite(c.Sr, sp);
             c.Applied = want;
         }
 
