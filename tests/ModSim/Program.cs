@@ -155,7 +155,8 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     for (int i = 0; i < 3; i++) { bg.Array_IsSatelliteA_P[i] = true; }
     double ang0 = 0.7;
     bg.Array_Transform_ObjSatellitesA[0].position = new Vector3((float)(bp.x + Math.Cos(ang0) * 2.25), (float)(bp.y + Math.Sin(ang0) * 2.25), 0);
-    for (int i = 1; i <= 2; i++) bg.List_IsSpirit_P[i] = true;
+    for (int i = 1; i <= 2; i++) { bg.List_IsSpirit_P[i] = true; bg.List_ObjSpirit[i].activeSelf = true; bg.List_ObjSpirit[i].transform.position = new Vector3(bp.x + (i == 1 ? -0.4f : 0.4f), bp.y + 0.55f, 0); }
+    bg.Obj_ElectricZone.activeSelf = true;
     bg.Obj_Shield.activeSelf = true;
     bg.Obj_Shield.Sr.sprite = new Sprite { name = "Shield2_01" };                 // у друга щит есть, у хоста — нет: картинку найдём среди картинок игры
     Resources.TestAll.AddRange(new UnityEngine.Object[] { new Sprite { name = "Shield2_01" }, new Sprite { name = "Shield2_03" }, new Sprite { name = "Fireball" } });
@@ -172,6 +173,11 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     var sh = on.First(c => c.Kind == "shield").transform.position;
     Check(Math.Abs(sh.x - gp.x) < 0.01 && Math.Abs(sh.y - gp.y) < 0.05, "Щит на союзнике");
     var shc = on.First(c => c.Kind == "shield");
+    var sps = on.Where(c => c.Kind == "spirit").Select(c => (c.transform.position.x - gp.x, c.transform.position.y - gp.y)).OrderBy(q => q.Item1).ToList();
+    Check(sps.Count == 2 && Math.Abs(sps[0].Item1 + 0.4) < 0.05 && Math.Abs(sps[1].Item1 - 0.4) < 0.05 && sps.All(q => Math.Abs(q.Item2 - 0.55) < 0.05),
+          $"Духи стоят там же, где у друга (над героем), а не крутятся по кругу: {string.Join(" ", sps.Select(q => $"({q.Item1:0.00};{q.Item2:0.00})"))}");
+    var zc = on.FirstOrDefault(c => c.Kind == "zone");
+    Check(zc != null && Math.Abs(zc.transform.position.x - gp.x) < 0.01 && Math.Abs(zc.transform.position.y - gp.y) < 0.01, "Электрозона друга — на союзнике");
     Check(shc.Sr.sprite?.name == "Shield2_01", $"у копии Щита картинка друга, хотя у хоста щита нет: «{shc.Sr.sprite?.name}»");
     Check(on.Where(c => c.Kind == "spirit").All(c => c.Sr.sprite?.name == "UnitSpirit1MotionA"), "у копий Духов своя картинка");
     bg.Obj_Shield.Sr.sprite = new Sprite { name = "Shield2_03" };                 // у друга сменился заряд щита
@@ -204,10 +210,12 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     }
     for (int i = 0; i < 3; i++) bg.Array_IsSatelliteA_P[i] = false;
     bg.Obj_Shield.activeSelf = false;
+    bg.Obj_ElectricZone.activeSelf = false;
     for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
     on = CloneGo.Made.Where(c => c.activeSelf).ToList();
     Check(on.Count(c => c.Kind == "satA") == 0 && on.Count(c => c.Kind == "shield") == 0 && on.Count(c => c.Kind == "spirit") == 2, "Спутники и Щит пропали у друга — копии выключены, Духи остались");
-    Check(CloneGo.Made.Count == 6, $"новых копий не создаётся: {CloneGo.Made.Count}");
+    Check(on.Count(c => c.Kind == "zone") == 0, "Электрозона пропала у друга — копия выключена");
+    Check(CloneGo.Made.Count == 7, $"новых копий не создаётся: {CloneGo.Made.Count}");
 }
 
 B.Combat.Pos = new Vector3(150, 100, 0);
@@ -389,7 +397,9 @@ class GameHero
     public Transform[] Array_Transform_ObjSatellitesB = Enumerable.Range(0, 14).Select(_ => new Transform()).ToArray();
     public CloneGo[] Array_Obj_UnitSatellitesA = { new CloneGo("satA", "UnitSatellite01") }, Array_Obj_UnitSatellitesB = { new CloneGo("satB", "UnitSatellite01") };
     public List<bool> List_IsSpirit_P = Enumerable.Repeat(false, 15).ToList();
-    public List<CloneGo> List_ObjSpirit = new() { null, new CloneGo("spirit", "UnitSpirit1MotionA") };
+    public List<CloneGo> List_ObjSpirit = new[] { (CloneGo)null }.Concat(Enumerable.Range(1, 14).Select(_ => new CloneGo("spirit", "UnitSpirit1MotionA"))).ToList();
+    public List<Transform> List_Transform_ObjSpirit => List_ObjSpirit.Select(g => g?.transform).ToList();
+    public CloneGo Obj_ElectricZone = new CloneGo("zone", "ElectricZone01");
     public CloneGo Obj_Shield = new CloneGo("shield");          // картинки нет, пока нет заклинания (как в игре)
     public void Bullet_Create(Transform src, int id, float x, float y, float z, float aim, float p1, float p2, float s1, float s2, float s3, float s4, float dr)
     {

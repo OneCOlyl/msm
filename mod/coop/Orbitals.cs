@@ -35,6 +35,10 @@ namespace MagicSurvivalCoop
             public double DispA, DispB, LastFrame = -1;               // что рисуем: угол плавно догоняет предсказанный
             public bool HasDisp;
             public int ShownSatA, ShownSatB;
+            public double[] SpiritOff;                                // смещения духов от героя друга (x, y парами), null — старая версия
+            public double[] SpiritDisp;                               // что рисуем: смещения плавно догоняют присланные
+            public bool Zone;                                         // Электрозона
+            public double ZoneSx = 1, ZoneSy = 1;
         }
 
         internal sealed class OrbClone
@@ -49,9 +53,11 @@ namespace MagicSurvivalCoop
         internal sealed class OrbVisuals
         {
             public readonly List<OrbClone> SatA = new List<OrbClone>(), SatB = new List<OrbClone>(), Spirits = new List<OrbClone>();
-            public OrbClone Shield;
-            public bool Logged;
-            public IEnumerable<OrbClone> All => SatA.Concat(SatB).Concat(Spirits).Concat(Shield != null ? new[] { Shield } : Array.Empty<OrbClone>());
+            public OrbClone Shield, Zone;
+            public bool Logged, ShieldLogged, ZoneScaleFailed;
+            public double ZoneSx = double.NaN, ZoneSy = double.NaN;
+            public string LastState;
+            public IEnumerable<OrbClone> All => SatA.Concat(SatB).Concat(Spirits).Concat(new[] { Shield, Zone }.Where(c => c != null));
         }
 
         // ------------------------------------------------------------ отправка: своё состояние
@@ -61,8 +67,13 @@ namespace MagicSurvivalCoop
         private bool _myOrbShield;
         private double _myOrbAngA, _myOrbAngB;
         private string _myImgShield, _myImgSatA, _myImgSatB, _myImgSpirit;
-        private int _orbFails;
-        private bool _myOrbLogged;
+        private int _orbFails, _orbStateLogs;
+        private string _myOrbState;
+        private int _myOrbLogs;
+        private readonly List<Transform> _mySpiritTr = new List<Transform>();   // включённые духи (их объекты) — смещения шлём при каждой отправке
+        private readonly List<double> _mySpiritOff = new List<double>();
+        private bool _myZone;
+        private double _myZoneSx = 1, _myZoneSy = 1;
 
         /// <summary>Своё состояние «орбит»: угол спутников — при каждой отправке (он вместе со временем «t» в том же сообщении),
         /// остальное — не чаще 4 раз в секунду (чтение массивов героя через рефлексию).</summary>
@@ -80,28 +91,59 @@ namespace MagicSurvivalCoop
                 }
                 catch { }
             }
+            _mySpiritOff.Clear();
+            if (_mySpiritTr.Count > 0 && HeroPosition(out var sx, out var sy, out _))
+            {
+                try
+                {
+                    foreach (var tr in _mySpiritTr) { var q = tr.position; _mySpiritOff.Add(Math.Round(q.x - sx, 2)); _mySpiritOff.Add(Math.Round(q.y - sy, 2)); }
+                }
+                catch { _mySpiritOff.Clear(); }
+            }
         }
 
         private void RefreshOrbitCounts(double now)
         {
             _orbAt = now;
             var hero = HeroObject();
-            if (hero == null) { _myOrbSatA = _myOrbSatB = _myOrbSpirits = 0; _myOrbShield = false; return; }
+            if (hero == null) { _myOrbSatA = _myOrbSatB = _myOrbSpirits = 0; _myOrbShield = false; _myZone = false; _mySpiritTr.Clear(); return; }
             try
             {
                 _myOrbSatA = CountTrue(GetMember(hero, "Array_IsSatelliteA_P"), 0);
                 _myOrbSatB = CountTrue(GetMember(hero, "Array_IsSatelliteB_P"), 0);
-                _myOrbSpirits = CountTrue(GetMember(hero, "List_IsSpirit_P"), 1);
+                // духи: включённые флагом и объект активен; их Transform — для смещений
+                _mySpiritTr.Clear();
+                var flags = GetMember(hero, "List_IsSpirit_P");
+                var gos = GetMember(hero, "List_ObjSpirit");
+                var trs = GetMember(hero, "List_Transform_ObjSpirit");
+                int nsp = Count(flags);
+                for (int i = 1; i < nsp; i++)
+                {
+                    if (!(ItemAt(flags, i) is bool f && f)) continue;
+                    var go = ItemAt(gos, i);
+                    if (go != null && !Convert.ToBoolean(GetMember(go, "activeSelf") ?? false)) continue;
+                    if (ItemAt(trs, i) is Transform tr) _mySpiritTr.Add(tr);
+                }
+                _myOrbSpirits = _mySpiritTr.Count;
+                // Электрозона: объект на герое, включён, пока заклинание есть; размер — масштаб объекта
+                var ez = GetMember(hero, "Obj_ElectricZone");
+                _myZone = ez != null && Convert.ToBoolean(GetMember(ez, "activeSelf") ?? false);
+                if (_myZone)
+                {
+                    try { if (GetMember(GetMember(ez, "transform"), "localScale") is Vector3 ls) { _myZoneSx = ls.x; _myZoneSy = ls.y; } }
+                    catch { }
+                }
                 var sh = GetMember(hero, "Obj_Shield");
                 _myOrbShield = sh != null && Convert.ToBoolean(GetMember(sh, "activeSelf") ?? false);
                 _myImgShield = _myOrbShield ? ImageOf(sh) : null;
                 _myImgSatA = _myOrbSatA > 0 ? ImageOf(ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesA"), 0)) : null;
                 _myImgSatB = _myOrbSatB > 0 ? ImageOf(ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesB"), 0)) : null;
                 _myImgSpirit = _myOrbSpirits > 0 ? ImageOf(ItemAt(GetMember(hero, "List_ObjSpirit"), 1)) : null;
-                if (!_myOrbLogged && (_myOrbShield || _myOrbSatA + _myOrbSatB + _myOrbSpirits > 0))
+                string state = $"щит {(_myOrbShield ? "есть" : "нет")} «{_myImgShield}», спутники {_myOrbSatA}+{_myOrbSatB} «{_myImgSatA}», духи {_myOrbSpirits} «{_myImgSpirit}», электрозона {(_myZone ? $"есть ×{_myZoneSx:0.##}" : "нет")}";
+                if (state != _myOrbState && (_myOrbShield || _myZone || _myOrbSatA + _myOrbSatB + _myOrbSpirits > 0))
                 {
-                    _myOrbLogged = true;
-                    _ctx.Log($"орбиты (свои): щит {(_myOrbShield ? "есть" : "нет")} «{_myImgShield}», спутники {_myOrbSatA}+{_myOrbSatB} «{_myImgSatA}», духи {_myOrbSpirits} «{_myImgSpirit}»");
+                    _myOrbState = state;
+                    if (_myOrbLogs++ < 12) _ctx.Log("орбиты (свои): " + state);
                 }
             }
             catch (Exception e) { if (++_orbFails <= 3) _ctx.Log("орбиты: " + Inner(e).Message); }
@@ -109,7 +151,7 @@ namespace MagicSurvivalCoop
 
         private void WriteMyOrbits(Utf8JsonWriter w)
         {
-            if (_myOrbSatA + _myOrbSatB + _myOrbSpirits == 0 && !_myOrbShield) return;
+            if (_myOrbSatA + _myOrbSatB + _myOrbSpirits == 0 && !_myOrbShield && !_myZone) return;
             w.WriteStartObject("orb");
             w.WriteNumber("sa", _myOrbSatA); w.WriteNumber("sb", _myOrbSatB); w.WriteNumber("sp", _myOrbSpirits); w.WriteNumber("sh", _myOrbShield ? 1 : 0);
             w.WriteNumber("aa", Math.Round(_myOrbAngA, 3)); w.WriteNumber("ab", Math.Round(_myOrbAngB, 3));
@@ -117,6 +159,13 @@ namespace MagicSurvivalCoop
             if (_myImgSatA != null) w.WriteString("isa", _myImgSatA);
             if (_myImgSatB != null) w.WriteString("isb", _myImgSatB);
             if (_myImgSpirit != null) w.WriteString("isp", _myImgSpirit);
+            if (_mySpiritOff.Count > 0)
+            {
+                w.WriteStartArray("so");
+                foreach (var v in _mySpiritOff) w.WriteNumberValue(v);
+                w.WriteEndArray();
+            }
+            if (_myZone) { w.WriteNumber("ez", 1); w.WriteNumber("ezx", Math.Round(_myZoneSx, 3)); w.WriteNumber("ezy", Math.Round(_myZoneSy, 3)); }
             w.WriteEndObject();
         }
 
@@ -417,12 +466,13 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>Поставить копии картинку, как у друга (если надо).</summary>
-        private void ApplyImage(OrbClone c, string want, double now, string what)
+        private void ApplyImage(OrbClone c, string want, double now, string what, bool onlyIfEmpty = false)
         {
             if (want == null || want == c.Applied || (want == c.Missed && now - c.MissedAt < 3)) return;
             c.Sr ??= RendererOf(c.Go);
             if (c.Sr == null) { c.Missed = want; c.MissedAt = now + 1e9; _ctx.Log($"орбиты: у копии ({what}) нет картинки-рендера"); return; }
-            if (NameOf(SpriteOf(c.Sr)) == want) { c.Applied = want; return; }
+            var have = NameOf(SpriteOf(c.Sr));
+            if (have == want || (onlyIfEmpty && have != null)) { c.Applied = want; return; }      // у своей копии картинка уже есть — не трогаем
             var sp = FindSprite(want, now);
             if (sp == null) { if (c.Missed != want) _ctx.Log($"орбиты: картинка «{want}» ({what}) не найдена"); c.Missed = want; c.MissedAt = now; return; }
             SetSprite(c.Sr, sp);
@@ -436,11 +486,22 @@ namespace MagicSurvivalCoop
             double senderT = Protocol.Num(s, "t", -1);
             var o = Protocol.Obj(s, "orb");
             var st = p.Orb ??= new OrbState();
-            if (o.ValueKind != JsonValueKind.Object) { st.SatA = st.SatB = st.Spirits = 0; st.Shield = false; return; }
+            if (o.ValueKind != JsonValueKind.Object) { st.SatA = st.SatB = st.Spirits = 0; st.Shield = false; st.Zone = false; st.SpiritOff = null; return; }
             st.SatA = Clamp((int)Protocol.Num(o, "sa"), 0, 14);
             st.SatB = Clamp((int)Protocol.Num(o, "sb"), 0, 14);
             st.Spirits = Clamp((int)Protocol.Num(o, "sp"), 0, 14);
             st.Shield = Protocol.Bool(o, "sh");
+            st.Zone = Protocol.Bool(o, "ez");
+            if (st.Zone) { st.ZoneSx = Protocol.Num(o, "ezx", 1); st.ZoneSy = Protocol.Num(o, "ezy", 1); }
+            if (o.TryGetProperty("so", out var so) && so.ValueKind == JsonValueKind.Array)
+            {
+                int n = Math.Min(28, so.GetArrayLength());
+                var arr = new double[n & ~1];
+                int i = 0;
+                foreach (var v in so.EnumerateArray()) { if (i >= arr.Length) break; arr[i++] = v.ValueKind == JsonValueKind.Number ? v.GetDouble() : 0; }
+                st.SpiritOff = arr;
+            }
+            else st.SpiritOff = null;
             st.ImgShield = Protocol.Str(o, "ish") ?? st.ImgShield;
             st.ImgSatA = Protocol.Str(o, "isa") ?? st.ImgSatA;
             st.ImgSatB = Protocol.Str(o, "isb") ?? st.ImgSatB;
@@ -526,7 +587,7 @@ namespace MagicSurvivalCoop
             }
             for (int i = 0; i < list.Count; i++)
             {
-                if (i < want) ApplyImage(list[i], img, now, what);
+                if (i < want) ApplyImage(list[i], img, now, what, true);
                 Show(list[i], i < want);
             }
         }
@@ -556,10 +617,18 @@ namespace MagicSurvivalCoop
                     if (st.Shield) ApplyImage(v.Shield, st.ImgShield, now, "щит");
                     Show(v.Shield, st.Shield);
                 }
-                if (!v.Logged && v.All.Any(c => c.Active == true))
+                if (st.Zone && v.Zone == null) v.Zone = MakeClone(GetMember(hero, "Obj_ElectricZone"));
+                if (v.Zone != null) Show(v.Zone, st.Zone);
+                string state = $"спутники {st.SatA}+{st.SatB} «{st.ImgSatA}», духи {st.Spirits} «{st.ImgSpirit}», щит {(st.Shield ? "есть" : "нет")} «{st.ImgShield}», электрозона {(st.Zone ? "есть" : "нет")}";
+                if (state != v.LastState)
                 {
-                    v.Logged = true;
-                    _ctx.Log($"орбиты «{p.Name}»: спутники {st.SatA}+{st.SatB} «{st.ImgSatA}», духи {st.Spirits} «{st.ImgSpirit}», щит {(st.Shield ? "есть" : "нет")} «{st.ImgShield}»; копий {v.All.Count()}");
+                    v.LastState = state;
+                    if (_orbStateLogs++ < 30) _ctx.Log($"орбиты «{p.Name}»: {state}; копий {v.All.Count()}");
+                }
+                if (st.Shield && v.Shield?.Active == true && !v.ShieldLogged)
+                {
+                    v.ShieldLogged = true;
+                    _ctx.Log($"орбиты «{p.Name}»: копия Щита «{NameOf(v.Shield.Go)}» включена, рендер «{NameOf(GetMember(v.Shield.Sr, "gameObject"))}», картинка «{NameOf(SpriteOf(v.Shield.Sr))}», детей {GetMember(v.Shield.Tr, "childCount")}");
                 }
             }
             catch (Exception e) { if (++_orbFails <= 3) _ctx.Log("орбиты, копии: " + Inner(e).Message); return; }
@@ -575,8 +644,34 @@ namespace MagicSurvivalCoop
             else { st.DispA = Follow(st.DispA, ta, st.SpeedA, fdt); st.DispB = Follow(st.DispB, tb, st.SpeedB, fdt); }
             Ring(v.SatA, st.SatA, g, SatRadius, st.DispA);
             Ring(v.SatB, st.SatB, g, SatRadius, st.DispB);
-            Ring(v.Spirits, st.Spirits, g, SpiritRadius, now * 0.8);
+            if (st.SpiritOff != null && st.SpiritOff.Length > 0) PlaceSpirits(v.Spirits, st, g, fdt);
+            else Ring(v.Spirits, st.Spirits, g, SpiritRadius, now * 0.8);          // друг на старой версии — смещений нет
             if (v.Shield != null && st.Shield) v.Shield.Tr.position = new Vector3(g.x, g.y + 0.03f, g.z);
+            if (v.Zone != null && st.Zone)
+            {
+                v.Zone.Tr.position = new Vector3(g.x, g.y, g.z);
+                if (!v.ZoneScaleFailed && (st.ZoneSx != v.ZoneSx || st.ZoneSy != v.ZoneSy))
+                {
+                    v.ZoneSx = st.ZoneSx; v.ZoneSy = st.ZoneSy;
+                    try { v.Zone.Tr.GetType().GetProperty("localScale")?.SetValue(v.Zone.Tr, new Vector3((float)st.ZoneSx, (float)st.ZoneSy, 1f)); }
+                    catch (Exception e) { v.ZoneScaleFailed = true; _ctx.Log("орбиты: размер электрозоны: " + Inner(e).Message); }
+                }
+            }
+        }
+
+        /// <summary>Духи — там же относительно союзника, где они у друга относительно героя (плавно, без рывков между сообщениями).</summary>
+        private static void PlaceSpirits(List<OrbClone> list, OrbState st, Vector3 g, double dt)
+        {
+            var off = st.SpiritOff;
+            if (st.SpiritDisp == null || st.SpiritDisp.Length != off.Length) st.SpiritDisp = (double[])off.Clone();
+            else
+            {
+                double k = Math.Min(1, dt * 10);
+                for (int i = 0; i < off.Length; i++) st.SpiritDisp[i] += (off[i] - st.SpiritDisp[i]) * k;
+            }
+            int n = Math.Min(off.Length / 2, list.Count);
+            for (int i = 0; i < n; i++)
+                list[i].Tr.position = new Vector3((float)(g.x + st.SpiritDisp[2 * i]), (float)(g.y + st.SpiritDisp[2 * i + 1]), g.z);
         }
 
         private static double Follow(double disp, double target, double speed, double dt)
@@ -604,7 +699,7 @@ namespace MagicSurvivalCoop
         /// <summary>Конец боя: картинки и объекты прошлого боя больше не годятся.</summary>
         private void ResetOrbits()
         {
-            _sprites.Clear(); _spriteScanDone = false; _spriteHarvestAt = -1; _myOrbLogged = false;
+            _sprites.Clear(); _spriteScanDone = false; _spriteHarvestAt = -1; _myOrbState = null; _myOrbLogs = 0; _orbStateLogs = 0; _mySpiritTr.Clear(); _mySpiritOff.Clear();
         }
     }
 }
