@@ -22,8 +22,13 @@ namespace MagicSurvivalCoop
         /// <summary>Заклинание союзника, которое ничего не стреляет сам: при пересылке магии стреляют только повторы касов друга.</summary>
         private const int NoOwnFire = 99;
         private const int MaxCastsPerSend = 40;
-        private const int MaxCastsPerFrame = 4;    // остальные — в следующих кадрах (повтор снаряда — работа самой игры, её надо дозировать)
-        private const double CastBudgetMs = 3;
+        private const int MaxCastsPerFrame = 3;    // остальные — в следующих кадрах (повтор снаряда — работа самой игры, её надо дозировать)
+        private const double CastBudgetMs = 2;     // бюджет на кадр; один «тяжёлый» повтор (дольше бюджета) заканчивает повторы этого кадра
+
+        // замеры для итога в журнал: сколько стоит повтор каждого снаряда и кадр мода
+        private readonly Dictionary<int, (double max, double sum, int n)> _castCost = new Dictionary<int, (double, double, int)>();
+        private double _frameMaxMs, _frameCastMs;
+        private int _slowFrames, _slowFramesCasts;
 
         private float[] _enemyX = new float[64], _enemyY = new float[64];
         private int _enemyCount;
@@ -31,7 +36,14 @@ namespace MagicSurvivalCoop
         private readonly System.Diagnostics.Stopwatch _frameCastWatch = new System.Diagnostics.Stopwatch();
 
         /// <summary>Начало кадра: обнулить бюджет повторов (вызывается из FrameStep).</summary>
-        private void BeginFrameCasts() => _frameCastWatch.Restart();
+        private void BeginFrameCasts() { _frameCastWatch.Restart(); _frameCastMs = 0; }
+
+        /// <summary>Конец кадра: учесть, сколько занял кадр мода и сколько из него — повторы магии.</summary>
+        private void EndFrame(double frameMs)
+        {
+            if (frameMs > _frameMaxMs) _frameMaxMs = frameMs;
+            if (frameMs > 8) { _slowFrames++; if (_frameCastMs > frameMs * 0.5) _slowFramesCasts++; }
+        }
 
         /// <summary>Позиции живых врагов — не чаще 4 раз в секунду и только когда есть что повторять.</summary>
         private void RefreshEnemyCache(double now)
@@ -104,6 +116,7 @@ namespace MagicSurvivalCoop
             _outCasts.Clear();
             _heroObj = null; _bulletCreate = null; _heroTrPtr = IntPtr.Zero;
             _sentById.Clear(); _castsDone = 0; _castsDropped = 0; _levels.Clear(); _sources.Clear();
+            _castCost.Clear(); _frameMaxMs = 0; _slowFrames = 0; _slowFramesCasts = 0;
             foreach (var p in _partners.Values) p.Casts.Clear();
         }
 
@@ -220,8 +233,14 @@ namespace MagicSurvivalCoop
             {
                 var c = p.Casts.Dequeue();
                 if (p.HasClock && renderT - c.T > 1.0) { _castsDropped++; continue; }      // слишком старый (был на паузе / лаг)
+                double t0 = _frameCastWatch.Elapsed.TotalMilliseconds;
                 ExecuteCast(p, c, heroZ);
+                double cost = _frameCastWatch.Elapsed.TotalMilliseconds - t0;
+                _frameCastMs += cost;
+                var cc = _castCost.TryGetValue(c.Id, out var v) ? v : (0, 0, 0);
+                _castCost[c.Id] = (Math.Max(cc.Item1, cost), cc.Item2 + cost, cc.Item3 + 1);
                 done++;
+                if (cost > CastBudgetMs) break;
             }
         }
 
@@ -258,7 +277,9 @@ namespace MagicSurvivalCoop
             var lv = _levels.OrderBy(k => k.Key).Select(k => $"{k.Key}:{k.Value}");
             _ctx.Log($"магия за бой: отправлено {string.Join(", ", _sentById.OrderBy(k => k.Key).Select(k => $"снаряд {k.Key}×{k.Value}"))}; " +
                      $"повторено касов друзей {_castsDone}, пропущено {_castsDropped}; свои заклинания (ID:уровень) {string.Join(" ", lv)}; " +
-                     $"источники снарядов: {string.Join(", ", _sources.Values.GroupBy(v => v.name).Select(g => $"{g.Key}×{g.Sum(x => x.n)}"))}");
+                     $"источники снарядов: {string.Join(", ", _sources.Values.GroupBy(v => v.name).Select(g => $"{g.Key}×{g.Sum(x => x.n)}"))}; " +
+                     $"цена повтора (мс, макс/среднее): {string.Join(", ", _castCost.OrderByDescending(k => k.Value.max).Select(k => $"снаряд {k.Key} {k.Value.max:0.0}/{k.Value.sum / Math.Max(1, k.Value.n):0.0}"))}; " +
+                     $"кадр мода: макс {_frameMaxMs:0.0} мс, дольше 8 мс — {_slowFrames} (из них из-за повторов {_slowFramesCasts})");
         }
     }
 }

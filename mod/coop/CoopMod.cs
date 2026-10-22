@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.3.2";
+        public const string ModVersion = "1.3.3";
 
         public ModDef Define() => new ModDef
         {
@@ -603,6 +603,7 @@ namespace MagicSurvivalCoop
         /// <summary>Каждый кадр боя (хук C_Battle_Manager.Update): плавно ведём союзников.</summary>
         private void FrameStep()
         {
+            double frameStart = Clock.Elapsed.TotalMilliseconds;
             try
             {
                 double now = Clock.Elapsed.TotalSeconds;
@@ -630,6 +631,7 @@ namespace MagicSurvivalCoop
             {
                 if (++_writeFails == 1 || _writeFails % 500 == 0) _ctx.Log("кадр: " + e.Message);
             }
+            if (_inRun) EndFrame(Clock.Elapsed.TotalMilliseconds - frameStart);
         }
 
         /// <summary>Позиция героя: объект героя берётся один раз за бой, дальше — одно чтение position без лишних объектов.</summary>

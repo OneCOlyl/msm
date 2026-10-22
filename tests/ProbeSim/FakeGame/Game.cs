@@ -67,6 +67,7 @@ namespace Il2Cpp
     {
         public Transform Transform_ObjUnit { get; set; } = new Transform { name = "1000" };
         public GameObject Obj_UnitShield { get; set; }
+        public GameObject Obj_Shield { get; set; }
         public GameObject[] Array_Obj_UnitSatellitesA { get; set; }
         public List<GameObject> List_ObjSpirit { get; set; } = new List<GameObject>();
         public float UnitApply_ShieldMaxNum { get; set; } = 3;
@@ -75,12 +76,24 @@ namespace Il2Cpp
         public C_Battle_AllyUnit()
         {
             Obj_UnitShield = Make("Obj_UnitShield", 0, 0, true, 3);
+            Obj_Shield = Make("1100", 0, 0.03f, false, 1);
+            List_ObjSpirit.Add(null);
             Array_Obj_UnitSatellitesA = new[] { Make("SatA01", 2, 0, true, 0), Make("SatA02", -2, 0, true, 0), Make("SatA03", 0, 2, false, 0) };
             List_ObjSpirit.Add(Make("Spirit01", 1, 1, true, 1));
         }
+        public static readonly List<GameObject> Clones = new List<GameObject>();
+        public class FakeGO : GameObject, ICloneTarget
+        {
+            public Object CloneForTest()
+            {
+                var c = Make(name + "(Clone)", transform.position.x, transform.position.y, activeSelf, transform.childCount);
+                Clones.Add(c);
+                return c;
+            }
+        }
         static GameObject Make(string n, float x, float y, bool on, int kids)
         {
-            var go = new GameObject { name = n, activeSelf = on };
+            var go = new FakeGO { name = n, activeSelf = on };
             go.transform = new Transform { name = n, position = new Vector3(x, y, 0), childCount = kids, gameObject = go };
             return go;
         }

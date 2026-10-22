@@ -14,16 +14,19 @@ probeType.GetField("HeroOverride", BindingFlags.NonPublic | BindingFlags.Static)
 var report = Path.Combine(outDir, "coop_probe.txt"); if (File.Exists(report)) File.Delete(report);
 var def = new MagicSurvivalCoop.Probe.ProbeMod().Define();
 def.OnEnable(ctx);
+var probeObj = def.OnEnable.Target.GetType().GetField("_p", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(def.OnEnable.Target);
+var boardField = probeObj.GetType().GetField("_boardText", BindingFlags.NonPublic | BindingFlags.Instance);
 Check(ctx.Hooks.ContainsKey("Before C_Battle_AllyUnit.Bullet_Create/13"), "хук на снаряды героя поставлен");
 
 ctx.Emit("battleStart");
-var spiritTr = hero.List_ObjSpirit[0].transform;
+var spiritTr = hero.List_ObjSpirit[1].transform;
 for (int i = 0; i < 400; i++)   // 40 с игрового времени, шаг 0,1 с
 {
     ctx.GameTime += 0.1;
     if (i % 5 == 0) ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", hero, new object[] { hero.Transform_ObjUnit, 1, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f });
     if (i % 10 == 0) ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", hero, new object[] { spiritTr, 16, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f });
-    if (i % 2 == 0) foreach (var f in ctx.Ticks.ToArray()) f();
+    ctx.Fire("Before C_Battle_Manager.Update/0", null, new object[0]);
+    if (i % 2 == 0) { foreach (var f in ctx.Ticks.ToArray()) f(); var bt = (string)boardField.GetValue(probeObj); if (ctx.BoardTexts.Count == 0 || ctx.BoardTexts[^1] != bt) ctx.BoardTexts.Add(bt); }
 }
 ctx.Emit("battleEnd");
 def.OnDisable(ctx); foreach (var c in ctx.Cleanups) c();
@@ -39,12 +42,19 @@ Check(txt.Contains("UnitApply_ShieldMaxNum = 3") && txt.Contains("IsShield_P = T
 Check(txt.Contains("ГЕРОЙ (1000): ") && txt.Contains("Spirit01: ") && txt.Contains("16×"), "источники снарядов: герой и Дух по именам");
 Check(System.Text.RegularExpressions.Regex.Matches(txt, "===== снимок").Count >= 3, "снимки раз в 15 с и в конце боя");
 Check(ctx.Logs.Any(l => l.Contains("РАЗВЕДКА ГЕРОЯ ЗАВЕРШЕНА")), "разведка завершилась с концом боя");
+Check(txt.Contains("Щит (Obj_Shield): копия «1100(Clone)» создана, активна True"), "опыт копий: копия Щита создана и включена");
+Check(txt.Contains("Спутник (Array_Obj_UnitSatellitesA[0]): копия «SatA01(Clone)» создана") && txt.Contains("Дух (List_ObjSpirit[1]): копия «Spirit01(Clone)» создана"), "опыт копий: копии Спутника и Духа созданы");
+Check(txt.Contains("через 6 с ведения") && txt.Contains("Щит (Obj_Shield): 0.000"), "опыт копий: ведомая копия стоит точно в поставленной точке");
+var shieldClone = C_Battle_AllyUnit.Clones.FirstOrDefault(c => c.name == "1100(Clone)");
+Check(shieldClone != null && Math.Abs(shieldClone.transform.position.x - 3) < 0.01, "опыт копий: копия Щита стоит справа от героя (+3)");
+Check(txt.Contains("копии удалены: 3 из 3") && C_Battle_AllyUnit.Clones.All(c => c.DestroyedForTest), "опыт копий: копии удалены");
+Check(ctx.BoardTexts.Any(b => b.Contains("СПРАВА — копия Щита")), "табло объясняет опыт копий");
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
 
 class Ctx : ModContext
 {
-    public double GameTime;
+    public double GameTime; public readonly List<string> BoardTexts = new();
     public readonly Dictionary<string, List<Action<object, object[]>>> Hooks = new(); public readonly List<Action> Ticks = new(), Cleanups = new();
     public readonly Dictionary<string, List<Action<object>>> Handlers = new(); public readonly List<string> Logs = new();
     public void Fire(string key, object self, object[] a) { if (Hooks.TryGetValue(key, out var l)) foreach (var h in l) h(self, a); }

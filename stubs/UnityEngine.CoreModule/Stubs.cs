@@ -11,6 +11,8 @@ namespace UnityEngine
     {
         public string name { get; set; }
         public static Object Instantiate(Object original) => original is ICloneTarget c ? c.CloneForTest() : null;
+        public bool DestroyedForTest;
+        public static void Destroy(Object o) { if (o != null) o.DestroyedForTest = true; }
     }
     /// <summary>Только для тестов: как копировать фальшивые объекты.</summary>
     public interface ICloneTarget { Object CloneForTest(); }
