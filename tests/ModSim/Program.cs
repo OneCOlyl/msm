@@ -149,6 +149,36 @@ Console.WriteLine("2д. магия друга: каждый снаряд гер�
     A.Combat.Enemies.Clear();
 }
 
+Console.WriteLine("2е. Щит, Спутники и Духи друга видны у его союзника");
+{
+    var bg = B.Game; var bp = B.Combat.HeroTr.position;
+    for (int i = 0; i < 3; i++) { bg.Array_IsSatelliteA_P[i] = true; }
+    double ang0 = 0.7;
+    bg.Array_Transform_ObjSatellitesA[0].position = new Vector3((float)(bp.x + Math.Cos(ang0) * 2.25), (float)(bp.y + Math.Sin(ang0) * 2.25), 0);
+    for (int i = 1; i <= 2; i++) bg.List_IsSpirit_P[i] = true;
+    bg.Obj_Shield.activeSelf = true;
+    for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var on = CloneGo.Made.Where(c => c.activeSelf).ToList();
+    Check(on.Count(c => c.Kind == "satA") == 3, $"у хоста 3 копии Спутников: {on.Count(c => c.Kind == "satA")}");
+    Check(on.Count(c => c.Kind == "spirit") == 2, $"2 копии Духов: {on.Count(c => c.Kind == "spirit")}");
+    Check(on.Count(c => c.Kind == "shield") == 1, "копия Щита включена");
+    var gp = g.Tr.position;
+    var sats = on.Where(c => c.Kind == "satA").Select(c => c.transform.position).ToList();
+    Check(sats.All(q => Math.Abs(Math.Sqrt((q.x - gp.x) * (q.x - gp.x) + (q.y - gp.y) * (q.y - gp.y)) - 2.25) < 0.05), "Спутники по кругу 2,25 вокруг союзника");
+    var a0 = sats.Select(q => Math.Atan2(q.y - gp.y, q.x - gp.x)).OrderBy(a => Math.Abs(a - ang0)).First();
+    Check(Math.Abs(a0 - ang0) < 0.1, $"поворот круга как у друга: {a0:0.00} ≈ {ang0:0.00}");
+    var sh = on.First(c => c.Kind == "shield").transform.position;
+    Check(Math.Abs(sh.x - gp.x) < 0.01 && Math.Abs(sh.y - gp.y) < 0.05, "Щит на союзнике");
+    Check(!CloneGo.Made.Any(c => c.Kind == "satB"), "круга B нет — копий B не создано");
+
+    for (int i = 0; i < 3; i++) bg.Array_IsSatelliteA_P[i] = false;
+    bg.Obj_Shield.activeSelf = false;
+    for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    on = CloneGo.Made.Where(c => c.activeSelf).ToList();
+    Check(on.Count(c => c.Kind == "satA") == 0 && on.Count(c => c.Kind == "shield") == 0 && on.Count(c => c.Kind == "spirit") == 2, "Спутники и Щит пропали у друга — копии выключены, Духи остались");
+    Check(CloneGo.Made.Count == 6, $"новых копий не создаётся: {CloneGo.Made.Count}");
+}
+
 B.Combat.Pos = new Vector3(150, 100, 0);
 TickAll(400);
 Check(g != null && Math.Abs(Math.Sqrt(g.Offset.x * g.Offset.x + g.Offset.y * g.Offset.y) - 6) < 0.01, "друг убежал далеко — союзник держится на дальности 6");
@@ -177,6 +207,7 @@ Console.WriteLine("5. конец боя и выход");
 A.Spells.InBattle = B.Spells.InBattle = false; A.Emit("battleEnd"); B.Emit("battleEnd");
 TickAll(300);
 Check(A.Comp.Spawned.All(c => !c.Alive), "после боя союзников нет");
+Check(CloneGo.Made.All(c => c.DestroyedForTest), "после боя все копии Щита/Спутников/Духов удалены");
 B.Call("Disconnect");
 TickAll(1500);
 Check(A.Partners().Count == 0, "друг вышел — хост это увидел");
@@ -321,11 +352,26 @@ class GameHero
     readonly Player _p;
     public GameHero(Player p) { _p = p; }
     public Transform Transform_ObjUnit => _p.Combat.HeroTr;
+    // Щит/Спутники/Духи, как у C_Battle_AllyUnit (docs/ORBITALS.md)
+    public bool[] Array_IsSatelliteA_P = new bool[14], Array_IsSatelliteB_P = new bool[14];
+    public Transform[] Array_Transform_ObjSatellitesA = Enumerable.Range(0, 14).Select(_ => new Transform()).ToArray();
+    public Transform[] Array_Transform_ObjSatellitesB = Enumerable.Range(0, 14).Select(_ => new Transform()).ToArray();
+    public GameObject[] Array_Obj_UnitSatellitesA = { new CloneGo("satA") }, Array_Obj_UnitSatellitesB = { new CloneGo("satB") };
+    public List<bool> List_IsSpirit_P = Enumerable.Repeat(false, 15).ToList();
+    public List<GameObject> List_ObjSpirit = new() { null, new CloneGo("spirit") };
+    public GameObject Obj_Shield = new CloneGo("shield");
     public void Bullet_Create(Transform src, int id, float x, float y, float z, float aim, float p1, float p2, float s1, float s2, float s3, float s4, float dr)
     {
         _p.Ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", this, new object[] { src, id, x, y, z, aim, p1, p2, s1, s2, s3, s4, dr });
         Calls.Add((src, id, x, y, dr));
     }
+}
+class CloneGo : GameObject, ICloneTarget
+{
+    public static readonly List<CloneGo> Made = new();
+    public readonly string Kind;
+    public CloneGo(string kind) { Kind = kind; }
+    public UnityEngine.Object CloneForTest() { var c = new CloneGo(Kind) { activeSelf = true }; Made.Add(c); return c; }
 }
 class FakeComps : ICompanions
 {

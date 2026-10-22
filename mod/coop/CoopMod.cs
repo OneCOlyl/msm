@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.3.3";
+        public const string ModVersion = "1.4.0";
 
         public ModDef Define() => new ModDef
         {
@@ -42,6 +42,7 @@ namespace MagicSurvivalCoop
                 new ModOption { Key = "healPct", Label = "Лечение друга, % (0 — выкл.)", Default = 25, Min = 0, Max = 50, Step = 5 },
                 new ModOption { Key = "healCd", Label = "Перезарядка лечения, с", Default = 40, Min = 10, Max = 120, Step = 5 },
                 new ModOption { Key = "mirrorDmg", Label = "Урон магии друга у вас, % (0 — только эффект)", Default = 100, Min = 0, Max = 200, Step = 25 },
+                new ModOption { Key = "orbitals", Label = "Показывать Щит, Спутников и Духов друга (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "sendHz", Label = "Обновлений позиции в секунду (больше — плавнее, но больше трафика)", Default = 15, Min = 5, Max = 30, Step = 5 },
                 new ModOption { Key = "ip1", Label = "IP 1", Default = 10, Min = 0, Max = 255, Hidden = true },
                 new ModOption { Key = "ip2", Label = "IP 2", Default = 66, Min = 0, Max = 255, Hidden = true },
@@ -143,6 +144,8 @@ namespace MagicSurvivalCoop
             public Transform GhostTr;          // объект союзника — берётся один раз, а не каждый кадр
             public bool Mirror;                // друг пересылает свою магию (1.3+): союзник не стреляет сам, повторяет касты друга
             public readonly Queue<Cast> Casts = new Queue<Cast>();
+            public OrbState Orb;               // Щит/Спутники/Духи друга (1.4+)
+            public OrbVisuals OrbVis;          // наши копии вокруг его союзника
             public ICompanion Ghost;
             public int GhostSpell = -1;
             public double NextSpawn;
@@ -385,6 +388,7 @@ namespace MagicSurvivalCoop
             p.Ghost = null;
             try { p.Bar?.Destroy(); } catch { }
             p.Bar = null;
+            try { DestroyOrbVisuals(p); } catch { }
         }
 
         private void ApplyState(Partner p, JsonElement m)
@@ -404,6 +408,7 @@ namespace MagicSurvivalCoop
             p.Kills = Protocol.Num(s, "kills");
             p.Spell = (int)Protocol.Num(s, "spell");
             if (Protocol.Bool(s, "mirror")) p.Mirror = true;
+            ReadOrbits(p, s, Clock.Elapsed.TotalSeconds);
             p.HasState = true;
             p.StateAt = _clockMs;
 
@@ -538,6 +543,7 @@ namespace MagicSurvivalCoop
                 _client.SendEvent(Protocol.Build(w => w.WriteString("kind", "sos")));
             }
 
+            if (_inRun) RefreshMyOrbits(_lastX, _lastY);
             _client.SendState(Protocol.Build(w =>
             {
                 w.WriteString("name", _myName);
@@ -553,7 +559,8 @@ namespace MagicSurvivalCoop
                 w.WriteNumber("hpMax", Math.Round(hpMax));
                 w.WriteNumber("kills", _kills);
                 w.WriteNumber("spell", spell);
-                if (_magicHooked) w.WriteNumber("mirror", 1);                    // мы пересылаем свою магию — пусть наш союзник у друзей не стреляет сам
+                if (_magicHooked) w.WriteNumber("mirror", 1);
+                if (_inRun) WriteMyOrbits(w);                    // мы пересылаем свою магию — пусть наш союзник у друзей не стреляет сам
                 w.WriteNumber("t", Math.Round(Clock.Elapsed.TotalSeconds, 4));   // время снятия позиции — для интерполяции у друзей
             }));
         }
@@ -625,7 +632,9 @@ namespace MagicSurvivalCoop
                     {
                         PlaceGhost(p, dt, hx, hy, hz, _directWrite);
                         if (p.Casts.Count > 0) { if (p.GhostTr == null) EnsureGhostTr(p); RunCasts(p, now, hz); }
+                        if (p.Orb != null) { if (p.GhostTr == null) EnsureGhostTr(p); PlaceOrbits(p, now); }
                     }
+                    else if (p.OrbVis != null) HideAll(p.OrbVis);
             }
             catch (Exception e)
             {
