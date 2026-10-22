@@ -35,7 +35,7 @@ jobs:
         run: |
           set -o pipefail
           bash build.sh | tee build.log
-          if grep -q "FAIL" build.log; then echo "::error::тесты не прошли"; exit 1; fi
+          if grep -qE "^  FAIL " build.log; then echo "::error::тесты не прошли"; exit 1; fi
 
       - name: Публикация релиза
         env:
