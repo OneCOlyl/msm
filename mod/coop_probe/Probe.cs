@@ -25,7 +25,7 @@ namespace MagicSurvivalCoop.Probe
         {
             Id = "coop_probe",
             Name = "Кооператив: разведка",
-            Version = "0.5.0",
+            Version = "0.5.1",
             Description = "Разведка героя: как устроены Щит, Спутники, Духи — чтобы показать их у союзника-друга. Ничего не меняет, только записывает. Потом выключите.",
             Depends = { ["modkit_combat"] = ">=1.0", ["modkit_spells"] = ">=1.0" },
             OnEnable = ctx => _p = new Probe(ctx),
@@ -67,7 +67,7 @@ namespace MagicSurvivalCoop.Probe
             string dir = DirOverride;
             if (dir == null) { try { dir = Paths.Dir; } catch { dir = "/sdcard/MelonLoader/com.vkslrzm.Zombix/UserData/ModKit"; } }
             _path = Path.Combine(dir, "coop_probe.txt");
-            W($"=== coop_probe 0.5.0 (разведка героя + копии Щита/Спутника/Духа), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+            W($"=== coop_probe 0.5.1 (разведка героя + копии Щита/Спутника/Духа), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
             ctx.Log("разведка героя включена: начните бой, берите Щит, Спутник, Духа, если выпадут");
 
             ctx.Before("C_Battle_AllyUnit", "Bullet_Create", 13, (s, a) => OnBullet(a));
@@ -158,14 +158,22 @@ namespace MagicSurvivalCoop.Probe
             double t = GameT;
             if (!_dumped && t >= 2) { _dumped = true; _ctx.Guard("структура героя", DumpStructure); }
             if (t >= _nextSnap) { _nextSnap = t + 15; _ctx.Guard("снимок героя", Snapshot); }
-            if (_cloneStage == 0 && t >= 10) { _cloneStage = 1; _ctx.Guard("копии", ClonesStart); }
-            if (_cloneStage == 1 && t >= 11) { _cloneStage = 2; _ctx.Guard("копии", () => ClonesCheck("через 1 с ведения")); }
-            if (_cloneStage == 2 && t >= 16) { _cloneStage = 3; _ctx.Guard("копии", () => ClonesCheck("через 6 с ведения")); _cloneFollow = false; _cloneFreeAt = t; foreach (var c in _clones) c.FreeStart = PosOf(c.Go); }
-            if (_cloneStage == 3 && t >= 19) { _cloneStage = 4; _ctx.Guard("копии", ClonesFreeCheck); }
-            if (_cloneStage == 4 && t >= 22) { _cloneStage = 5; _ctx.Guard("копии", ClonesEnd); }
+            bool ready = SafeLevel(3) > 0 && SafeLevel(4) > 0 && SafeLevel(6) > 0;
+            if (_cloneStage == 0 && (ready || t >= 90)) { _cloneStage = 1; _cloneT0 = t; W($"опыт копий начат на {t:0} с ({(ready ? "Дух, Спутник и Щит есть" : "время вышло")})"); _ctx.Guard("копии", ClonesStart); }
+            double ct = t - _cloneT0;
+            if (_cloneStage == 1 && ct >= 1) { _cloneStage = 2; _ctx.Guard("копии", () => ClonesCheck("через 1 с ведения")); }
+            if (_cloneStage == 2 && ct >= 8) { _cloneStage = 3; _ctx.Guard("копии", () => ClonesCheck("через 8 с ведения")); _cloneFollow = false; _cloneFreeAt = t; foreach (var c in _clones) c.FreeStart = PosOf(c.Go); }
+            if (_cloneStage == 3 && ct >= 12) { _cloneStage = 4; _ctx.Guard("копии", ClonesFreeCheck); }
+            if (_cloneStage == 4 && ct >= 16) { _cloneStage = 5; _ctx.Guard("копии", ClonesEnd); }
+            if (_cloneStage == 0)
+            {
+                _boardText = $"Разведка: возьмите (можно читом) Дух, Спутник и Щит — начнётся опыт копий. Сейчас: Дух {SafeLevel(3)}, Спутник {SafeLevel(4)}, Щит {SafeLevel(6)}";
+                ShowBoard();
+                return;
+            }
             if (_cloneStage >= 1 && _cloneStage <= 4)
             {
-                _boardText = $"Опыт копий: СПРАВА — копия Щита, СЛЕВА — Спутника, СВЕРХУ — Духа. {(_cloneFollow ? "Идут за героем" : "Оставлены на месте")} ({Math.Max(0, 22 - t):0} с)";
+                _boardText = $"Опыт копий: СПРАВА — копия Щита, СЛЕВА — Спутника, СВЕРХУ — Духа. {(_cloneFollow ? "Идут за героем" : "Оставлены на месте")} ({Math.Max(0, 16 - ct):0} с)";
                 ShowBoard();
                 return;
             }
@@ -185,7 +193,7 @@ namespace MagicSurvivalCoop.Probe
         private readonly List<CloneInfo> _clones = new List<CloneInfo>();
         private int _cloneStage;
         private bool _cloneFollow;
-        private double _cloneFreeAt;
+        private double _cloneFreeAt, _cloneT0;
 
         private static (double x, double y)? PosOf(object go)
         {
@@ -220,8 +228,10 @@ namespace MagicSurvivalCoop.Probe
                     var t = tpl();
                     if (t == null) { W($"  {what}: шаблона нет"); continue; }
                     Flush(); _ctx.Mark("копия: " + what);
-                    var go = inst.Invoke(null, new[] { t });
-                    if (go == null) { W($"  {what}: копия не создалась"); continue; }
+                    var raw = inst.Invoke(null, new[] { t });
+                    if (raw == null) { W($"  {what}: копия не создалась"); continue; }
+                    var go = AsGameObject(raw);
+                    if (go == null) { W($"  {what}: копия создана, но не удалось получить её как GameObject ({raw.GetType().Name})"); continue; }
                     Call(go, "SetActive", true);
                     var c = new CloneInfo { What = what, Go = go, Dx = dx, Dy = dy };
                     _clones.Add(c);
@@ -232,6 +242,19 @@ namespace MagicSurvivalCoop.Probe
             }
             _cloneFollow = true;
             Flush();
+        }
+
+        /// <summary>Instantiate возвращает «UnityEngine.Object» — у такой обёртки нет методов GameObject; создаём обёртку GameObject по адресу объекта.</summary>
+        private static object AsGameObject(object o)
+        {
+            if (o is GameObject) return o;
+            try
+            {
+                if (o.GetType().GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance)?.GetValue(o) is IntPtr ptr && ptr != IntPtr.Zero)
+                    return Activator.CreateInstance(typeof(GameObject), ptr);
+            }
+            catch { }
+            return null;
         }
 
         private static void Call(object o, string name, params object[] args)

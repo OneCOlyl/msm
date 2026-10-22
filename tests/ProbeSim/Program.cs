@@ -20,9 +20,9 @@ Check(ctx.Hooks.ContainsKey("Before C_Battle_AllyUnit.Bullet_Create/13"), "ху�
 
 ctx.Emit("battleStart");
 var spiritTr = hero.List_ObjSpirit[1].transform;
-for (int i = 0; i < 400; i++)   // 40 с игрового времени, шаг 0,1 с
+for (int i = 0; i < 600; i++)   // 60 с игрового времени, шаг 0,1 с
 {
-    ctx.GameTime += 0.1;
+    ctx.GameTime += 0.1; Ctx.Sp.Now = ctx.GameTime;
     if (i % 5 == 0) ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", hero, new object[] { hero.Transform_ObjUnit, 1, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f });
     if (i % 10 == 0) ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", hero, new object[] { spiritTr, 16, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f });
     ctx.Fire("Before C_Battle_Manager.Update/0", null, new object[0]);
@@ -44,11 +44,13 @@ Check(System.Text.RegularExpressions.Regex.Matches(txt, "===== снимок").Co
 Check(ctx.Logs.Any(l => l.Contains("РАЗВЕДКА ГЕРОЯ ЗАВЕРШЕНА")), "разведка завершилась с концом боя");
 Check(txt.Contains("Щит (Obj_Shield): копия «1100(Clone)» создана, активна True"), "опыт копий: копия Щита создана и включена");
 Check(txt.Contains("Спутник (Array_Obj_UnitSatellitesA[0]): копия «SatA01(Clone)» создана") && txt.Contains("Дух (List_ObjSpirit[1]): копия «Spirit01(Clone)» создана"), "опыт копий: копии Спутника и Духа созданы");
-Check(txt.Contains("через 6 с ведения") && txt.Contains("Щит (Obj_Shield): 0.000"), "опыт копий: ведомая копия стоит точно в поставленной точке");
+Check(txt.Contains("через 8 с ведения") && txt.Contains("Щит (Obj_Shield): 0.000"), "опыт копий: ведомая копия стоит точно в поставленной точке");
 var shieldClone = C_Battle_AllyUnit.Clones.FirstOrDefault(c => c.name == "1100(Clone)");
 Check(shieldClone != null && Math.Abs(shieldClone.transform.position.x - 3) < 0.01, "опыт копий: копия Щита стоит справа от героя (+3)");
 Check(txt.Contains("копии удалены: 3 из 3") && C_Battle_AllyUnit.Clones.All(c => c.DestroyedForTest), "опыт копий: копии удалены");
 Check(ctx.BoardTexts.Any(b => b.Contains("СПРАВА — копия Щита")), "табло объясняет опыт копий");
+Check(ctx.BoardTexts.Any(b => b.Contains("возьмите (можно читом)")), "до появления заклинаний табло подсказывает взять их");
+Check(System.Text.RegularExpressions.Regex.IsMatch(txt, @"опыт копий начат на 3[0-1] с \(Дух, Спутник и Щит есть\)"), "опыт копий начался, как только появились Дух, Спутник и Щит");
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
 
@@ -78,9 +80,11 @@ class Ctx : ModContext
     class Ev : ModEvents { readonly Ctx _c; public Ev(Ctx c) { _c = c; } public void On(string n, Action<object> f) { if (!_c.Handlers.TryGetValue(n, out var l)) _c.Handlers[n] = l = new(); l.Add(f); } public void Emit(string n, object p = null) { } public void On<T>(Action<T> f) { } public void Emit<T>(T p) { } }
     class Lib<T> : ILibrary<T> where T : class { readonly T _a; public Lib(T a) { _a = a; } public T For(ModContext c) => _a; }
     class En : IEnemies { public IReadOnlyList<IEnemy> Alive => new List<IEnemy>(); public IReadOnlyList<IEnemy> Near(double x, double y, double r) => new List<IEnemy>(); public IEnemy Nearest(double x, double y) => null; public Vector3? HeroPos => new Vector3(0, 0, 0); }
-    class Sp : ISpells
+    public class Sp : ISpells
     {
         public IActiveSpell AddActive(ActiveSpellDef d) => null; public bool InBattle => true; public bool Paused => false;
-        public int Level(int id) => id == 1 ? 3 : id == 6 ? 2 : 0; public bool CanCast(int id) => false; public void SetAuto(int id, bool a) { } public bool Cast(int id, int s = 2) => false; public double Cooldown(int id) => 1;
+        public static double Now;
+        public int Level(int id) => id == 1 ? 3 : (id == 3 || id == 4 || id == 6) && Now >= 30 ? 2 : 0;   // Дух, Спутник, Щит «взяты» на 30-й секунде
+        public bool CanCast(int id) => false; public void SetAuto(int id, bool a) { } public bool Cast(int id, int s = 2) => false; public double Cooldown(int id) => 1;
     }
 }
