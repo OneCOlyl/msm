@@ -104,6 +104,13 @@ int dSlot = j4.HasValue ? (int)Protocol.Num(j4.Value, "slot") : -1;
 Check(jn.HasValue && Protocol.Num(jn.Value, "slot") == dSlot, $"освободившийся слот {dSlot} занят новым игроком");
 j6.Stop();
 
+Console.WriteLine("7б. кириллица и эмодзи на границе буфера чтения");
+{
+    // буква «Ж» (2 байта) и эмодзи (4 байта) попадают на границу 4096-байтового буфера LineReader
+    var text = new string('a', 4095) + "Ж" + new string('b', 4090) + "🔥" + "конец";
+    var ms = new System.IO.MemoryStream(Encoding.UTF8.GetBytes(text + "\n"));
+    Check(new LineReader(ms).ReadLine() == text, "строка собирается из байтов целиком и только потом декодируется — символы не рвутся");
+}
 Console.WriteLine("8. защита сервера");
 using (var raw = new TcpClient(host, port))
 {
@@ -118,6 +125,9 @@ using (var raw = new TcpClient(host, port))
     var nr = Encoding.UTF8.GetBytes("{\"type\":\"PLAYER_STATE\",\"state\":{}}\n"); st.Write(nr, 0, nr.Length);
     resp = rd.ReadLine();
     Check(resp != null && resp.Contains("not_in_room"), "состояние без комнаты → not_in_room");
+    var old = Encoding.UTF8.GetBytes("{\"type\":\"JOIN_ROOM\",\"roomCode\":\"\",\"name\":\"Старый\",\"protocol\":1}\n"); st.Write(old, 0, old.Length);
+    resp = rd.ReadLine();
+    Check(resp != null && resp.Contains("protocol_mismatch"), "клиент со старым протоколом → понятная ошибка protocol_mismatch");
     var big = Encoding.UTF8.GetBytes(new string('x', 40000) + "\n");
     bool closed = false;
     try { st.Write(big, 0, big.Length); string l; var sw = Stopwatch.StartNew(); while ((l = rd.ReadLine()) != null && sw.ElapsedMilliseconds < 4000) { } closed = true; } catch { closed = true; }

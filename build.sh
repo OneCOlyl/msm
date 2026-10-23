@@ -9,6 +9,13 @@ ROOT="$PWD"
 echo "== заглушки Unity"
 dotnet build stubs/UnityEngine.UI/UnityEngine.UI.csproj -c Release -o stubs/out -nologo -v q
 
+echo "== версии"
+V_JSON=$(python3 -c "import json;print(json.load(open('mod/coop/mod.json',encoding='utf-8'))['version'])")
+V_CS=$(grep -oP 'ModVersion = "\K[^"]+' mod/coop/CoopMod.cs)
+V_PROJ=$(grep -oP '<Version>\K[^<]+' mod/coop/coop.csproj)
+if [ "$V_JSON" != "$V_CS" ] || [ "$V_JSON" != "$V_PROJ" ]; then echo "версии не совпадают: mod.json $V_JSON, CoopMod.cs $V_CS, coop.csproj $V_PROJ"; exit 1; fi
+echo "Кооператив $V_JSON"
+
 echo "== мод"
 EXTRA=()
 [ -n "${REF:-}" ] && EXTRA=(-p:Ref="$REF")
@@ -40,16 +47,20 @@ if [ "${SKIP_TESTS:-}" != "1" ]; then
   dotnet build tests/NetTest/NetTest.csproj -c Release -nologo -v q >/dev/null
   dotnet build tests/ModSim/ModSim.csproj -c Release -nologo -v q >/dev/null
   NET=tests/NetTest/bin/Release/net8.0/NetTest.dll
+  FAILED=0
+  # тест: выводим только заголовки, провалы и итог; провал — по коду выхода программы
+  run_test() { local log; log=$(mktemp); "$@" >"$log" 2>&1; local rc=$?; grep -E "^== [^=]|FAIL|ИТОГ" "$log" || true; rm -f "$log"; [ $rc -eq 0 ] || { echo "!! провал: $* (код $rc)"; FAILED=1; }; }
   echo "== тест сети: встроенный сервер"
-  dotnet "$NET" embedded | grep -E "^==|FAIL|ИТОГ"
+  run_test dotnet "$NET" embedded
   echo "== тест сети: Python-сервер"
   python3 server/coop_server.py --port 18766 >/dev/null 2>&1 & PY=$!
   sleep 1
-  dotnet "$NET" external 127.0.0.1 18766 | grep -E "^==|FAIL|ИТОГ" || true
+  run_test dotnet "$NET" external 127.0.0.1 18766
   kill $PY 2>/dev/null || true
   echo "== имитация игры: два мода (хост и друг)"
-  dotnet tests/ModSim/bin/Release/net8.0/ModSim.dll | grep -E "FAIL|ИТОГ"
+  run_test dotnet tests/ModSim/bin/Release/net8.0/ModSim.dll
   echo "== разведчик врагов на фальшивой игре"
   dotnet build tests/ProbeSim/ProbeSim.csproj -c Release -nologo -v q >/dev/null
-  dotnet tests/ProbeSim/bin/Release/net8.0/ProbeSim.dll | grep -E "FAIL|ИТОГ"
+  run_test dotnet tests/ProbeSim/bin/Release/net8.0/ProbeSim.dll
+  [ $FAILED -eq 0 ] || { echo "ТЕСТЫ НЕ ПРОШЛИ"; exit 1; }
 fi

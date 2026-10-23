@@ -184,6 +184,13 @@ namespace MagicSurvivalCoop.Net
         private void Handle(Conn c, JsonElement m)
         {
             var type = Protocol.TypeOf(m);
+            // разные версии протокола не поймут друг друга — сразу понятная ошибка вместо странных обрывов
+            if ((type == Protocol.CreateRoom || type == Protocol.JoinRoom) && m.TryGetProperty("protocol", out var pv)
+                && pv.ValueKind == JsonValueKind.Number && pv.GetInt32() != Protocol.Version)
+            {
+                SendError(c, "protocol_mismatch", $"Версия «Кооператива» не совпадает с хостом (протокол {pv.GetInt32()}, у хоста {Protocol.Version}). Обновите мод у всех игроков.");
+                return;
+            }
             switch (type)
             {
                 case Protocol.CreateRoom:

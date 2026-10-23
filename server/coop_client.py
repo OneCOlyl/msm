@@ -29,9 +29,13 @@ def main():
 
     threading.Thread(target=reader, daemon=True).start()
 
+    send_lock = threading.Lock()   # пинг идёт из своего потока — строки не должны перемешаться
+
     def send(obj):
-        f.write((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
-        f.flush()
+        data = (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
+        with send_lock:
+            f.write(data)
+            f.flush()
 
     def pinger():
         while True:

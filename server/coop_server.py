@@ -14,6 +14,7 @@ import secrets
 import time
 
 PROTOCOL = 2
+MAX_PENDING_BYTES = 512 * 1024   # ~512 сообщений состояния
 MAX_PLAYERS = 4
 MAX_LINE = 16 * 1024
 IDLE_TIMEOUT = 40
@@ -40,6 +41,10 @@ class Conn:
         if self.closed:
             return
         try:
+            # медленный клиент: как очередь на 512 сообщений во встроенном сервере — не копим бесконечно, отключаем
+            if self.writer.transport.get_write_buffer_size() > MAX_PENDING_BYTES:
+                self.close()
+                return
             self.writer.write((json.dumps(obj, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
         except Exception:
             self.close()
@@ -107,6 +112,11 @@ class Server:
     # ---------------------------------------------------------------- сообщения
     def handle(self, c, m):
         kind = m.get("type")
+        pv = m.get("protocol")
+        if kind in ("CREATE_ROOM", "JOIN_ROOM") and isinstance(pv, int) and not isinstance(pv, bool) and pv != PROTOCOL:
+            self.error(c, "protocol_mismatch",
+                       f"Версия «Кооператива» не совпадает с сервером (протокол {pv}, у сервера {PROTOCOL}). Обновите мод у всех игроков.")
+            return
         if kind == "CREATE_ROOM":
             self.leave_room(c)
             c.name = clean_name(m.get("name"))

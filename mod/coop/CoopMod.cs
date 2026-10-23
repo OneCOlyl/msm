@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.4.4";
+        public const string ModVersion = "1.4.5";
 
         public ModDef Define() => new ModDef
         {
@@ -102,6 +102,7 @@ namespace MagicSurvivalCoop
 
         // таймеры главного потока (мс реального времени)
         private double _clockMs, _nextSend, _nextHud, _nextWin;
+        private int _hudFails;
 
         // плавное движение союзников: каждый кадр через хук C_Battle_Manager.Update
         private static readonly Stopwatch Clock = Stopwatch.StartNew();
@@ -351,7 +352,8 @@ namespace MagicSurvivalCoop
                             var msg = Protocol.Str(m, "message", "ошибка сервера");
                             _ctx.Log("сервер: " + msg);
                             _ctx.Toast(msg, 4);
-                            if (Protocol.Str(m, "code") == "room_full") _client.Stop();
+                            var code = Protocol.Str(m, "code");
+                            if (code == "room_full" || code == "protocol_mismatch") _client.Stop();   // переподключение не поможет
                         }
                         break;
 
@@ -811,7 +813,7 @@ namespace MagicSurvivalCoop
             catch (Exception e)
             {
                 // элементы могли исчезнуть вместе со сценой — пересоздадим на следующем тике
-                _ctx.Log("HUD: " + e.Message);
+                if (++_hudFails == 1 || _hudFails % 200 == 0) _ctx.Log($"HUD: {e.Message} (раз: {_hudFails})");
                 foreach (var p in _partners.Values) p.Bar = null;
                 _healBtn = null;
             }

@@ -56,7 +56,8 @@ namespace MagicSurvivalCoop
             public OrbClone Shield, Zone;
             public bool Logged, ShieldLogged, ZoneScaleFailed;
             public double ZoneSx = double.NaN, ZoneSy = double.NaN;
-            public string LastState;
+            public (int, int, int, bool, bool, string, string, string) LastKey;
+            public bool HasKey, Hidden;
             public IEnumerable<OrbClone> All => SatA.Concat(SatB).Concat(Spirits).Concat(new[] { Shield, Zone }.Where(c => c != null));
         }
 
@@ -171,13 +172,23 @@ namespace MagicSurvivalCoop
 
         private static Exception Inner(Exception e) => (e as TargetInvocationException)?.InnerException ?? e;
 
+        // поиск члена по имени — один раз на (тип, имя): чтение орбит идёт при каждой отправке
+        private static readonly Dictionary<(Type, string), MemberInfo> MemberCache = new Dictionary<(Type, string), MemberInfo>();
         private static object GetMember(object o, string name)
         {
             if (o == null) return null;
             var t = o.GetType();
-            var p = t.GetProperty(name, AnyInst);
-            if (p != null && p.GetIndexParameters().Length == 0) return p.GetValue(o);
-            return t.GetField(name, AnyInst)?.GetValue(o);
+            MemberInfo mi;
+            lock (MemberCache)
+            {
+                if (!MemberCache.TryGetValue((t, name), out mi))
+                {
+                    var p = t.GetProperty(name, AnyInst);
+                    mi = p != null && p.GetIndexParameters().Length == 0 ? p : (MemberInfo)t.GetField(name, AnyInst);
+                    MemberCache[(t, name)] = mi;
+                }
+            }
+            return mi is PropertyInfo pi ? pi.GetValue(o) : (mi as FieldInfo)?.GetValue(o);
         }
         private static int Count(object coll) => coll == null ? 0 : Convert.ToInt32(GetMember(coll, "Length") ?? GetMember(coll, "Count") ?? (coll is ICollection c ? c.Count : 0));
         private static object ItemAt(object coll, int i)
@@ -286,9 +297,13 @@ namespace MagicSurvivalCoop
         {
             var n = NameOf(sprite);
             if (n == null || _sprites.ContainsKey(n)) return;
-            if (sprite is IntPtr p) Raw.Pin(p);
+            if (sprite is IntPtr p) PinOnce(p);
             _sprites[n] = sprite;
         }
+
+        // картинки — ресурсы игры, живут всё время; закрепляем каждую один раз за запуск (иначе дескрипторы копились бы с каждым боем)
+        private static readonly HashSet<IntPtr> Pinned = new HashSet<IntPtr>();
+        private static void PinOnce(IntPtr p) { if (Pinned.Add(p)) Raw.Pin(p); }
 
         /// <summary>Все картинки игры: на телефоне — Resources.FindObjectsOfTypeAll(typeof(Sprite)) по указателям, в тестах — заглушка.</summary>
         private List<object> AllSprites()
@@ -457,7 +472,7 @@ namespace MagicSurvivalCoop
                     if (nm == null || _sprites.ContainsKey(nm)) continue;
                     if (nm.IndexOf("Shield", StringComparison.OrdinalIgnoreCase) < 0 && nm.IndexOf("Satellite", StringComparison.OrdinalIgnoreCase) < 0
                         && nm.IndexOf("Spirit", StringComparison.OrdinalIgnoreCase) < 0) continue;
-                    if (sp is IntPtr pp) Raw.Pin(pp);
+                    if (sp is IntPtr pp) PinOnce(pp);
                     _sprites[nm] = sp; kept++;
                 }
                 _ctx.Log($"орбиты: поиск картинок по игре — всего {n}, подходящих {kept} ({string.Join(", ", _sprites.Keys.Where(k => k.IndexOf("Shield", StringComparison.OrdinalIgnoreCase) >= 0).Take(8))}) за {sw.ElapsedMilliseconds} мс");
@@ -552,9 +567,12 @@ namespace MagicSurvivalCoop
             return null;
         }
 
+        private static readonly Dictionary<Type, MethodInfo> SetActiveCache = new Dictionary<Type, MethodInfo>();
         private static void SetActive(object go, bool on)
         {
-            var m = go.GetType().GetMethod("SetActive", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(bool) }, null);
+            var t = go.GetType();
+            if (!SetActiveCache.TryGetValue(t, out var m))
+                SetActiveCache[t] = m = t.GetMethod("SetActive", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(bool) }, null);
             m?.Invoke(go, new object[] { on });
         }
 
@@ -577,11 +595,11 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>Держать столько копий, сколько у друга, и включать/выключать их без лишних вызовов.</summary>
-        private void EnsureCount(List<OrbClone> list, int want, Func<object> template, string img, double now, string what)
+        private void EnsureCount(List<OrbClone> list, int want, object hero, string field, int index, string img, double now, string what)
         {
             while (list.Count < want)
             {
-                var c = MakeClone(template());
+                var c = MakeClone(ItemAt(GetMember(hero, field), index));
                 if (c == null) return;
                 list.Add(c);
             }
@@ -606,11 +624,12 @@ namespace MagicSurvivalCoop
             var hero = HeroObject();
             if (hero == null) return;
             var v = p.OrbVis ??= new OrbVisuals();
+            v.Hidden = false;
             try
             {
-                EnsureCount(v.SatA, st.SatA, () => ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesA"), 0), st.ImgSatA, now, "спутник");
-                EnsureCount(v.SatB, st.SatB, () => ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesB"), 0), st.ImgSatB, now, "спутник B");
-                EnsureCount(v.Spirits, st.Spirits, () => ItemAt(GetMember(hero, "List_ObjSpirit"), 1), st.ImgSpirit, now, "дух");
+                EnsureCount(v.SatA, st.SatA, hero, "Array_Obj_UnitSatellitesA", 0, st.ImgSatA, now, "спутник");
+                EnsureCount(v.SatB, st.SatB, hero, "Array_Obj_UnitSatellitesB", 0, st.ImgSatB, now, "спутник B");
+                EnsureCount(v.Spirits, st.Spirits, hero, "List_ObjSpirit", 1, st.ImgSpirit, now, "дух");
                 if (st.Shield && v.Shield == null) v.Shield = MakeClone(GetMember(hero, "Obj_Shield"));
                 if (v.Shield != null)
                 {
@@ -619,11 +638,13 @@ namespace MagicSurvivalCoop
                 }
                 if (st.Zone && v.Zone == null) v.Zone = MakeClone(GetMember(hero, "Obj_ElectricZone"));
                 if (v.Zone != null) Show(v.Zone, st.Zone);
-                string state = $"спутники {st.SatA}+{st.SatB} «{st.ImgSatA}», духи {st.Spirits} «{st.ImgSpirit}», щит {(st.Shield ? "есть" : "нет")} «{st.ImgShield}», электрозона {(st.Zone ? "есть" : "нет")}";
-                if (state != v.LastState)
+                // строку для журнала собираем, только когда что-то изменилось (не каждый кадр)
+                var key = (st.SatA, st.SatB, st.Spirits, st.Shield, st.Zone, st.ImgSatA, st.ImgSpirit, st.ImgShield);
+                if (!v.HasKey || !key.Equals(v.LastKey))
                 {
-                    v.LastState = state;
-                    if (_orbStateLogs++ < 30) _ctx.Log($"орбиты «{p.Name}»: {state}; копий {v.All.Count()}");
+                    v.HasKey = true; v.LastKey = key;
+                    if (_orbStateLogs++ < 30)
+                        _ctx.Log($"орбиты «{p.Name}»: спутники {st.SatA}+{st.SatB} «{st.ImgSatA}», духи {st.Spirits} «{st.ImgSpirit}», щит {(st.Shield ? "есть" : "нет")} «{st.ImgShield}», электрозона {(st.Zone ? "есть" : "нет")}; копий {v.All.Count()}");
                 }
                 if (st.Shield && v.Shield?.Active == true && !v.ShieldLogged)
                 {
@@ -693,6 +714,8 @@ namespace MagicSurvivalCoop
 
         private static void HideAll(OrbVisuals v)
         {
+            if (v.Hidden) return;                                     // вызывается каждый кадр, пока союзника нет — без лишней работы
+            v.Hidden = true;
             foreach (var c in v.All) Show(c, false);
         }
 

@@ -34,8 +34,7 @@ jobs:
       - name: Сборка и тесты
         run: |
           set -o pipefail
-          bash build.sh | tee build.log
-          if grep -qE "^  FAIL " build.log; then echo "::error::тесты не прошли"; exit 1; fi
+          bash build.sh | tee build.log      # build.sh сам завершается с ошибкой, если тесты не прошли или версии не совпадают
 
       - name: Публикация релиза
         env:
