@@ -247,7 +247,10 @@ Console.WriteLine("2ж. Армагеддон друга: взрыв виден �
     Check(flash && land, "вспышка и падение — по порядку разведки");
     Check(new[] { am.Obj_ArmageddonGround_Front, am.Obj_ArmageddonGround_Back, am.Obj_Armageddon, am.Obj_ArmageddonLand, am.Obj_ArmageddonGround_Destroy }.All(o => !o.activeSelf), "через 5 с всё выключено");
     Check((int)A.Get("_armaPlayed") == 1 && (int)B.Get("_armaSent") == 1, "один взрыв — одно сообщение и один повтор");
-    bm.IsArmageddonContinue = false; Frames(5);
+    bm.IsArmageddonContinue = false;
+    void FramesFor(double sec) { var w = System.Diagnostics.Stopwatch.StartNew(); while (w.Elapsed.TotalSeconds < sec) Frames(1); }
+    FramesFor(0.4);                                                       // флаг взрыва мод смотрит раз в 0,1 с: дать ему увидеть конец взрыва
+                                                                          // (5 кадров на Linux — 80 мс, CI падал)
     am.IsArmageddonContinue = true; bm.IsArmageddonContinue = true; Frames(20);   // у хоста свой взрыв идёт — повтор не нужен
     Check((int)A.Get("_armaPlayed") == 1 && (int)A.Get("_armaSkipped") == 1, "свой взрыв идёт — взрыв друга пропущен");
     am.IsArmageddonContinue = bm.IsArmageddonContinue = false; Frames(5);
