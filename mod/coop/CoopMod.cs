@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.4.8";
+        public const string ModVersion = "1.5.11";
 
         public ModDef Define() => new ModDef
         {
@@ -43,6 +43,9 @@ namespace MagicSurvivalCoop
                 new ModOption { Key = "healCd", Label = "Перезарядка лечения, с", Default = 40, Min = 10, Max = 120, Step = 5 },
                 new ModOption { Key = "mirrorDmg", Label = "Урон магии друга у вас, % (0 — только эффект)", Default = 100, Min = 0, Max = 200, Step = 25 },
                 new ModOption { Key = "orbitals", Label = "Показывать Щит, Спутников и Духов друга (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
+                new ModOption { Key = "world", Label = "Общие враги: у всех враги хоста (1 — да, 0 — нет; включить у всех игроков)", Default = 0, Min = 0, Max = 1, Step = 1 },
+                new ModOption { Key = "clockSync", Label = "Общие враги: часы боя гостя по хосту (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
+                new ModOption { Key = "puppetAi", Label = "Копии врагов: анимация и атаки игры (1) или замершие (0)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
                 new ModOption { Key = "sendHz", Label = "Обновлений позиции в секунду (больше — плавнее, но больше трафика)", Default = 15, Min = 5, Max = 30, Step = 5 },
                 new ModOption { Key = "ip1", Label = "IP 1", Default = 10, Min = 0, Max = 255, Hidden = true },
                 new ModOption { Key = "ip2", Label = "IP 2", Default = 66, Min = 0, Max = 255, Hidden = true },
@@ -143,6 +146,7 @@ namespace MagicSurvivalCoop
             public double ClockOff;
             public bool HasClock;
             public Transform GhostTr;          // объект союзника — берётся один раз, а не каждый кадр
+            public bool WorldGuest;            // друг играет в наших общих врагах и сам шлёт свой урон (1.5.5) — повтор его магии без урона
             public bool Mirror;                // друг пересылает свою магию (1.3+): союзник не стреляет сам, повторяет касты друга
             public readonly Queue<Cast> Casts = new Queue<Cast>();
             public OrbState Orb;               // Щит/Спутники/Духи друга (1.4+)
@@ -181,6 +185,9 @@ namespace MagicSurvivalCoop
             _flushAction = FlushCasts;
             ctx.Every(50, Tick);
             InstallMagicHook();
+            InstallWorldHooks();
+            InstallTimeDiag();
+            InstallPlayTimeHook();
             try { ctx.Before("C_Battle_Manager", "Update", 0, (self, args) => { if (self != null) _battleMgr = self; FrameStep(); }); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
             ctx.OnCleanup(Shutdown);
@@ -410,7 +417,10 @@ namespace MagicSurvivalCoop
             p.Kills = Protocol.Num(s, "kills");
             p.Spell = (int)Protocol.Num(s, "spell");
             if (Protocol.Bool(s, "mirror")) p.Mirror = true;
+            p.WorldGuest = Protocol.Bool(s, "wg");
             ReadOrbits(p, s, Clock.Elapsed.TotalSeconds);
+            ReadEnemies(p, s);
+            ReadClock(p, s);
             p.HasState = true;
             p.StateAt = _clockMs;
 
@@ -471,6 +481,9 @@ namespace MagicSurvivalCoop
                 case "casts":
                     if (from != null && _partners.TryGetValue(from, out var cp)) OnRemoteCasts(cp, e);
                     break;
+                case "dmg":
+                    OnRemoteDamage(e);
+                    break;
                 case "arma":
                     OnRemoteArmageddon(who);
                     break;
@@ -490,6 +503,9 @@ namespace MagicSurvivalCoop
             _heroTr = null; _heroTrTried = false; _bestSpellAt = -1;
             ResetMagic();
             ResetArmageddon();
+            ResetWorld();
+            ResetTimeDiag();
+            ResetClock();
             foreach (var p in _partners.Values) p.GhostTr = null;
             foreach (var p in _partners.Values) { p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; }
             DestroyBtn(ref _menuBtn);
@@ -500,6 +516,8 @@ namespace MagicSurvivalCoop
         {
             _ctx.Guard("итог магии", LogMagicSummary);
             StopArmaReplay();
+            _ctx.Guard("итог общих врагов", LogWorldSummary);
+            ResetWorld();
             _inRun = false;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             DestroyBtn(ref _healBtn);
@@ -567,7 +585,10 @@ namespace MagicSurvivalCoop
                 w.WriteNumber("kills", _kills);
                 w.WriteNumber("spell", spell);
                 if (_magicHooked) w.WriteNumber("mirror", 1);
-                if (_inRun) WriteMyOrbits(w);                    // мы пересылаем свою магию — пусть наш союзник у друзей не стреляет сам
+                if (_inRun) WriteMyOrbits(w);
+                if (_inRun && _hosting && WorldOn) WriteEnemies(w);
+                if (_worldActive) w.WriteNumber("wg", 1);
+                if (_inRun) WriteClock(w);                    // мы пересылаем свою магию — пусть наш союзник у друзей не стреляет сам
                 w.WriteNumber("t", Math.Round(Clock.Elapsed.TotalSeconds, 4));   // время снятия позиции — для интерполяции у друзей
             }));
         }
@@ -631,6 +652,9 @@ namespace MagicSurvivalCoop
                 }
                 if (_inRun && _client.Connected) MaybeSend();
                 if (_inRun) ArmageddonStep(now);
+                if (_inRun && !_spells.Paused) WorldStep(now);
+                if (_inRun) _ctx.Guard("время боя", () => TimeDiagStep(now));
+                if (_inRun && !_spells.Paused) _ctx.Guard("часы боя", () => ClockStep(now));
                 if (!_inRun || _partners.Count == 0 || _spells.Paused) return;
                 if (!HeroPosition(out var hx, out var hy, out var hz)) return;
                 _frameSeenSec = now;
@@ -702,7 +726,7 @@ namespace MagicSurvivalCoop
                 p.DispY += (ty - p.DispY) * k;
             }
 
-            double maxDist = _ctx.Setting("ghostDist");
+            double maxDist = WorldOn ? 1000 : _ctx.Setting("ghostDist");   // общие враги — союзник там же, где друг на самом деле
             double ox = (_startX ?? heroX) + p.DispX - heroX;
             double oy = (_startY ?? heroY) + p.DispY - heroY;
             double len = Math.Sqrt(ox * ox + oy * oy);

@@ -21,6 +21,7 @@ EXTRA=()
 [ -n "${REF:-}" ] && EXTRA=(-p:Ref="$REF")
 dotnet build mod/coop/coop.csproj -c Release -nologo -v q "${EXTRA[@]}"
 dotnet build mod/coop_probe/coop_probe.csproj -c Release -nologo -v q
+dotnet build mod/coop_debug/coop_debug.csproj -c Release -nologo -v q
 
 echo "== упаковка"
 OUT="$ROOT/dist"; mkdir -p "$OUT"; rm -f "$OUT/coop.zip"
@@ -42,6 +43,15 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
 print("dist/coop_probe.zip готов (разведка)")
 EOF
 )
+( cd mod/coop_debug && python3 - "$OUT/coop_debug.zip" <<'EOF'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    z.write("mod.json", "mod.json")
+    z.write("bin/Release/net8.0/coop_debug.dll", "coop_debug.dll")
+    z.write("icon.png", "icon.png")
+print("dist/coop_debug.zip готов (отладка)")
+EOF
+)
 
 if [ "${SKIP_TESTS:-}" != "1" ]; then
   dotnet build tests/NetTest/NetTest.csproj -c Release -nologo -v q >/dev/null
@@ -59,6 +69,9 @@ if [ "${SKIP_TESTS:-}" != "1" ]; then
   kill $PY 2>/dev/null || true
   echo "== имитация игры: два мода (хост и друг)"
   run_test dotnet tests/ModSim/bin/Release/net8.0/ModSim.dll
+  echo "== отладочная консоль: разбор команд"
+  dotnet build tests/DebugSim/DebugSim.csproj -c Release -nologo -v q >/dev/null
+  run_test dotnet tests/DebugSim/bin/Release/net8.0/DebugSim.dll
   echo "== разведчик врагов на фальшивой игре"
   dotnet build tests/ProbeSim/ProbeSim.csproj -c Release -nologo -v q >/dev/null
   run_test dotnet tests/ProbeSim/bin/Release/net8.0/ProbeSim.dll

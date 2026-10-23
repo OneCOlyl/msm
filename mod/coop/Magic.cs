@@ -72,6 +72,8 @@ namespace MagicSurvivalCoop
         }
 
         private readonly List<Cast> _outCasts = new List<Cast>();
+        private readonly Dictionary<int, (float min, float max)> _drById = new Dictionary<int, (float, float)>();   // журнал: последний параметр снаряда
+        private const double WorldReplayRatio = 0.001;
         private bool _mirroring;                   // идёт наш повтор — свой хук его не пересылает
         private object _heroObj;
         private MethodInfo _bulletCreate;
@@ -178,6 +180,7 @@ namespace MagicSurvivalCoop
                 };
                 _outCasts.Add(c);
                 _sentById[c.Id] = _sentById.TryGetValue(c.Id, out var n) ? n + 1 : 1;
+                _drById[c.Id] = _drById.TryGetValue(c.Id, out var dr) ? (Math.Min(dr.min, c.Dr), Math.Max(dr.max, c.Dr)) : (c.Dr, c.Dr);
             }
             catch (Exception e) { if (++_castFails <= 3) _ctx.Log("снаряд: " + e.Message); }
         }
@@ -261,7 +264,8 @@ namespace MagicSurvivalCoop
                     double ddx = _enemyX[i] - tx, ddy = _enemyY[i] - ty, d2 = ddx * ddx + ddy * ddy;
                     if (d2 <= best) { best = d2; tx = _enemyX[i]; ty = _enemyY[i]; }
                 }
-                float ratio = (float)(c.Dr * Math.Max(0, _ctx.Setting("mirrorDmg")) / 100.0);
+                // общие враги: урон друга идёт через здоровье копий — повтор почти без урона. Не 0: при 0 не видно Маг. круга (1.5.7)
+                float ratio = (float)(c.Dr * (ReplayWithoutDamage(p) ? WorldReplayRatio : Math.Max(0, _ctx.Setting("mirrorDmg")) / 100.0));
                 _mirroring = true;
                 _ctx.Mark("повтор снаряда друга");
                 _bulletCreate.Invoke(hero, new object[] { p.GhostTr, c.Id, (float)tx, (float)ty, (float)z, c.Aim, c.P1, c.P2, c.S1, c.S2, c.S3, c.S4, ratio });
@@ -280,7 +284,8 @@ namespace MagicSurvivalCoop
                      $"повторено касов друзей {_castsDone}, пропущено {_castsDropped}; свои заклинания (ID:уровень) {string.Join(" ", lv)}; " +
                      $"источники снарядов: {string.Join(", ", _sources.Values.GroupBy(v => v.name).Select(g => $"{g.Key}×{g.Sum(x => x.n)}"))}; " +
                      $"цена повтора (мс, макс/среднее): {string.Join(", ", _castCost.OrderByDescending(k => k.Value.max).Select(k => $"снаряд {k.Key} {k.Value.max:0.0}/{k.Value.sum / Math.Max(1, k.Value.n):0.0}"))}; " +
-                     $"кадр мода: макс {_frameMaxMs:0.0} мс, дольше 8 мс — {_slowFrames} (из них из-за повторов {_slowFramesCasts})" + ArmageddonSummary());
+                     $"кадр мода: макс {_frameMaxMs:0.0} мс, дольше 8 мс — {_slowFrames} (из них из-за повторов {_slowFramesCasts})" + ArmageddonSummary() +
+                     $"; последний параметр снарядов (мин/макс): {string.Join(", ", _drById.OrderBy(k => k.Key).Select(k => $"{k.Key}: {k.Value.min:0.###}/{k.Value.max:0.###}"))}");
         }
     }
 }

@@ -44,7 +44,7 @@ namespace MagicSurvivalCoop
             {
                 if (!InitVis()) return null;
                 var m = behaviour ? _bGetEnabled : _rGetEnabled;
-                var p = PtrOf(comp);
+                var p = LivePtr(comp);
                 if (m == IntPtr.Zero || p == IntPtr.Zero) return null;
                 var box = Raw.Invoke(m, p);
                 return box == IntPtr.Zero ? (bool?)null : Raw.UnboxBool(box);
@@ -57,7 +57,7 @@ namespace MagicSurvivalCoop
             if (sr == null) return;
             if (!RawSprites) { sr.GetType().GetProperty("enabled")?.SetValue(sr, on); return; }
             if (!InitVis() || _rSetEnabled == IntPtr.Zero) return;
-            var p = PtrOf(sr);
+            var p = LivePtr(sr);
             if (p != IntPtr.Zero) Raw.InvokeInt(_rSetEnabled, p, on ? 1 : 0);   // bool в первом байте int
         }
 
@@ -70,7 +70,7 @@ namespace MagicSurvivalCoop
             {
                 if (!InitVis()) return null;
                 var m = graphic ? _gGetColor : _srGetColor;
-                var p = PtrOf(comp);
+                var p = LivePtr(comp);
                 if (m == IntPtr.Zero || p == IntPtr.Zero) return null;
                 var box = Raw.Invoke(m, p);
                 if (box == IntPtr.Zero) return null;
@@ -86,7 +86,7 @@ namespace MagicSurvivalCoop
             if (sr == null || c == null) return;
             if (!RawSprites) { sr.GetType().GetProperty("color")?.SetValue(sr, new Color(c[0], c[1], c[2], c[3])); return; }
             if (!InitVis() || _srSetColor == IntPtr.Zero) return;
-            var p = PtrOf(sr);
+            var p = LivePtr(sr);
             if (p == IntPtr.Zero) return;
             var mem = Marshal.AllocHGlobal(16);
             try { Marshal.Copy(c, 0, mem, 4); Raw.Invoke(_srSetColor, p, mem); }

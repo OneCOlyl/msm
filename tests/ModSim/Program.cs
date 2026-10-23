@@ -184,6 +184,11 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     Check(zc != null && !zc.Sr.enabled && Math.Abs(zc.Sr.color.a - 0.4f) < 0.01, $"копия зоны мигает вместе с зоной друга (рендер {zc?.Sr.enabled}, α {zc?.Sr.color.a:0.00})");
     Check(zc?.Sr.sprite?.name == "ElectricZone1B", $"и меняет кадр вместе с ней: «{zc?.Sr.sprite?.name}»");
     bg.Obj_ElectricZone.Sr.enabled = true;
+    bg.IsMagicCircle_P = true; bg.Obj_MagicCircleMid.activeSelf = true; bg.Obj_MagicCircleMid.transform.localScale = new Vector3(1.4f, 1.4f, 1);
+    for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var mc = CloneGo.Made.FirstOrDefault(c => c.Kind == "circle");
+    Check(mc != null && mc.activeSelf && Math.Abs(mc.transform.position.x - g.Tr.position.x) < 0.01 && Math.Abs(mc.transform.localScale.x - 1.4f) < 0.01, "Маг. круг друга — копия на союзнике, того же размера");
+    bg.IsMagicCircle_P = false; bg.Obj_MagicCircleMid.activeSelf = false;
     Check(shc.Sr.sprite?.name == "Shield2_01", $"у копии Щита картинка друга, хотя у хоста щита нет: «{shc.Sr.sprite?.name}»");
     Check(on.Where(c => c.Kind == "spirit").All(c => c.Sr.sprite?.name == "UnitSpirit1MotionA"), "у копий Духов своя картинка");
     bg.Obj_Shield.Sr.sprite = new Sprite { name = "Shield2_03" };                 // у друга сменился заряд щита
@@ -221,7 +226,7 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     on = CloneGo.Made.Where(c => c.activeSelf).ToList();
     Check(on.Count(c => c.Kind == "satA") == 0 && on.Count(c => c.Kind == "shield") == 0 && on.Count(c => c.Kind == "spirit") == 2, "Спутники и Щит пропали у друга — копии выключены, Духи остались");
     Check(on.Count(c => c.Kind == "zone") == 0, "Электрозона пропала у друга — копия выключена");
-    Check(CloneGo.Made.Count == 7, $"новых копий не создаётся: {CloneGo.Made.Count}");
+    Check(CloneGo.Made.Count == 8, $"новых копий не создаётся (с копией Маг. круга): {CloneGo.Made.Count}");
 }
 
 Console.WriteLine("2ж. Армагеддон друга: взрыв виден у хоста (объекты менеджера боя)");
@@ -243,6 +248,83 @@ Console.WriteLine("2ж. Армагеддон друга: взрыв виден �
     am.IsArmageddonContinue = true; bm.IsArmageddonContinue = true; Frames(20);   // у хоста свой взрыв идёт — повтор не нужен
     Check((int)A.Get("_armaPlayed") == 1 && (int)A.Get("_armaSkipped") == 1, "свой взрыв идёт — взрыв друга пропущен");
     am.IsArmageddonContinue = bm.IsArmageddonContinue = false; Frames(5);
+}
+
+Console.WriteLine("2з. общие враги: у гостя — копии врагов хоста, свой спавн погашен");
+{
+    A.Ctx.Set["world"] = 1; B.Ctx.Set["world"] = 1;
+    var am = new FakeManager { Owner = A }; var bm = new FakeManager { Owner = B };
+    A.Set("_battleMgr", am); B.Set("_battleMgr", bm);
+    void Frames(int n) { for (int fr = 0; fr < n; fr++) { A.Call("FrameStep"); A.Tick(); B.Tick(); B.Call("FrameStep"); Thread.Sleep(16); } }
+    double asx = (double)A.Get("_startX"), asy = (double)A.Get("_startY"), bsx = (double)B.Get("_startX"), bsy = (double)B.Get("_startY");
+    var own = new FakeEnemy(B, 1); own.Transform_ObjUnit.position = new Vector3((float)bsx + 3, (float)bsy, 0); B.Combat.Enemies.Add(own);
+    var e6 = new FakeEnemy(A, 6); e6.Transform_ObjUnit.position = new Vector3((float)asx + 2, (float)asy + 1, 0);
+    var e11 = new FakeEnemy(A, 11); e11.Transform_ObjUnit.position = new Vector3((float)asx - 4, (float)asy + 0.5f, 0);
+    A.Combat.Enemies.AddRange(new IEnemy[] { e6, e11 });
+    Frames(60);
+    var pups = B.Combat.Enemies.OfType<FakeEnemy>().Where(e => e.Puppet).ToList();
+    Check(own.DestroyedSimple && !B.Combat.Enemies.Contains(own), "свой враг гостя убран без награды (Unit_Destroy_Simple)");
+    Check(bm.EnemyCreateNum == 0 && bm.EnemyCreateNum_Max == 0, "свой спавн гостя погашен (EnemyCreateNum = 0)");
+    Check(pups.Count == 2 && pups.Select(e => e.UnitID).OrderBy(x => x).SequenceEqual(new[] { 6, 11 }), $"у гостя копии врагов хоста тех же типов: {string.Join(",", pups.Select(e => e.UnitID))}");
+    Check(pups.All(e => !e.CoroutinesStopped && e.UnitApply_MoveSpeed == 0 && e.UnitBase_MoveSpeed == 0 && e.Rigidbody_ObjUnit.isKinematic),
+          "у копий ИИ работает (анимация), но скорость нулевая, тело кинематическое");
+    Check(pups.All(e => Math.Abs(e.Transform_ObjUnitSprite.localScale.x - 1.25f) < 0.01), "картинка копии — по размеру врага (1,25), как у обычного врага");
+    Check(FakeManager.ApplyBossNum == 0, "счётчик боссов после создания копий возвращён");
+    FakeEnemy P6() => pups.First(e => e.UnitID == 6);
+    var q = P6().Transform_ObjUnit.position;
+    Check(Math.Abs(q.x - bsx - 2) < 0.05 && Math.Abs(q.y - bsy - 1) < 0.05, $"копия стоит относительно старта гостя там же, где враг хоста от старта хоста: ({q.x - bsx:0.00}; {q.y - bsy:0.00})");
+    e6.Transform_ObjUnit.position = new Vector3((float)asx + 3, (float)asy - 1, 0);
+    Frames(40);
+    q = P6().Transform_ObjUnit.position;
+    Check(Math.Abs(q.x - bsx - 3) < 0.05 && Math.Abs(q.y - bsy + 1) < 0.05, $"копия идёт за врагом хоста: ({q.x - bsx:0.00}; {q.y - bsy:0.00})");
+    P6().Unit_Hp -= 7;                                                   // гость попал по копии (любым заклинанием)
+    Frames(30);
+    Check(Math.Abs(e6.DamageTaken - 7) < 0.01 && e6.Unit_IsLive, $"урон гостя по копии дошёл до врага хоста: {e6.DamageTaken:0.##}");
+    Check(P6().Unit_Hp >= 1e5, "здоровье копии снова полное");
+    A.Combat.Enemies.Remove(e6);
+    Frames(40);
+    Check(B.Combat.Kills == 1 && !P6().DestroyedSimple && !P6().Unit_IsLive, "враг пропал у хоста — копия убита уроном (гостю — убийство)");
+    var p11 = pups.First(e => e.UnitID == 11);
+    Check(p11.Unit_Hp >= 1e5, $"копии у гостя неуязвимы — умирают только вслед за хостом (здоровье {p11.Unit_Hp:0})");
+    p11.Unit_IsLive = false; B.Combat.Enemies.Remove(p11);                // копия погибла у гостя в обход здоровья (Армагеддон)
+    Frames(30);
+    Check(!B.Combat.Enemies.OfType<FakeEnemy>().Any(e => e.Unit_IsLive && e.UnitID == 11), "погибшую у гостя копию сразу не пересоздаём — ждём хоста");
+    var sw11 = System.Diagnostics.Stopwatch.StartNew();
+    while (sw11.Elapsed.TotalSeconds < 2.5 && !B.Combat.Enemies.OfType<FakeEnemy>().Any(e => e.Unit_IsLive && e.UnitID == 11)) Frames(5);
+    Check(B.Combat.Enemies.OfType<FakeEnemy>().Any(e => e.Unit_IsLive && e.UnitID == 11), $"у хоста враг жив и через 2 с — копия создана заново ({sw11.Elapsed.TotalSeconds:0.0} с)");
+    var late = new FakeEnemy(B, 1); B.Combat.Enemies.Add(late); late.Fire();  // игра гостя всё же создала врага (новая волна)
+    Frames(5);
+    Check(late.DestroyedSimple, "новый свой враг гостя убран сразу (хук Start_Unit)");
+    Frames(20);
+    Check(A.Combat.Enemies.OfType<FakeEnemy>().Count(e => e.Puppet && e.UnitID == 1) == 1, "свой враг гостя (фиолетовая сфера и т.п.) создан у хоста — стал общим");
+    Check(!A.Combat.Enemies.OfType<FakeEnemy>().Any(e => e.DestroyedSimple), "у хоста враги не трогаются");
+    var e1 = new FakeEnemy(A, 1); A.Combat.Enemies.Add(e1);
+    Frames(30);
+    Check(B.Combat.Enemies.OfType<FakeEnemy>().Count(e => e.Puppet && e.Unit_IsLive && e.UnitID == 1) == 2, "новый враг хоста появился у гостя (рядом с копией врага из сферы гостя)");
+    Check(FakeManager.List_BattleUnitEnemy_Empty.Count < 30, $"пул боссов кончился — пополнен из обычного пула (статического; там осталось {FakeManager.List_BattleUnitEnemy_Empty.Count})");
+    am.Time_Min = 2; am.Time_Sec = 30; bm.Time_Min = 2; bm.Time_Sec = 21;   // у гостя была своя пауза — часы отстали
+    Frames(30);
+    Check(bm.Time_Min == 2 && Math.Abs(bm.Time_Sec - 30) <= 1, $"часы гостя подстроены под хоста: {bm.Time_Min}:{bm.Time_Sec:00}");
+    {   // счётчик секунд — переменная корутины Play_Time (как на телефоне: Time_* игра пишет из неё)
+        var pt = new FakePlayTime { Counter = 140, Other = 7, __1__state = 140 };
+        var iters = (System.Collections.IDictionary)B.Get("_timeIters"); iters["_Play_Time_d__1"] = pt;
+        var fix = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session").GetMethod("FixPlayTime", BindingFlags.NonPublic | BindingFlags.Instance);
+        int n = (int)fix.Invoke(B.Session, new object[] { 140, 150 });
+        Check(n == 1 && pt.Counter == 150 && pt.Other == 7, $"в корутине переписан счётчик секунд (140 → {pt.Counter}), прочее не тронуто");
+        Check(pt.__1__state == 140, "служебное состояние корутины (__1__state) не тронуто — иначе часы встают (1.5.10)");
+        iters.Clear();
+    }
+    am.Time_Min = 3; am.Time_Sec = 0; am.Battle_ClearWaveON = 1;
+    Frames(15);                                                          // состояние хоста с босс-волной дошло до гостя
+    bm.Time_Min = 2; bm.Time_Sec = 50;
+    Frames(30);
+    Check(bm.Time_Min == 2 && bm.Time_Sec == 50, "во время босс-волны часы не трогаем");
+    am.Battle_ClearWaveON = 0;
+    B.Ctx.Set["world"] = 0;
+    Frames(10);
+    Check(!B.Combat.Enemies.OfType<FakeEnemy>().Any(e => e.Puppet && e.Unit_IsLive), "общие враги выключены — копии убраны");
+    Check(bm.EnemyCreateNum == 2 && bm.EnemyCreateNum_Max == 300, $"и свой спавн гостя вернулся: {bm.EnemyCreateNum}/{bm.EnemyCreateNum_Min}/{bm.EnemyCreateNum_Max}");
+    A.Ctx.Set["world"] = 0; A.Combat.Enemies.Clear(); B.Combat.Enemies.Clear();
 }
 
 B.Combat.Pos = new Vector3(150, 100, 0);
@@ -318,6 +400,7 @@ class Player
         _session.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance).Invoke(_session, null);
     }
     public void Set(string field, object v) => _session.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance).SetValue(_session, v);
+    public object Session => _session;
     public object Get(string field) => _session.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_session);
     public System.Collections.IDictionary Partners() => (System.Collections.IDictionary)_session.GetType().GetField("_partners", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_session);
     public void Disable() { _def.OnDisable(Ctx); foreach (var c in Ctx.Cleanups) c(); }
@@ -340,6 +423,7 @@ class FakeCtx : ModContext
     public void Expose(object api) { }
     public T Mod<T>(string id) where T : class
     {
+        if (id == "modkit_combat" && typeof(T) == typeof(ILibrary<ICombat>)) return new Lib<ICombat>(_p.Combat) as T;
         object lib = id switch { "modkit_combat" => new Lib<IEnemies>(_p.Combat), "modkit_hero" => new Lib<IHero>(_p.Hero), "modkit_spells" => new Lib<ISpells>(_p.Spells), "modkit_companions" => new Lib<ICompanions>(_p.Comp), _ => null };
         return lib as T;
     }
@@ -394,7 +478,7 @@ class FakeHero : IHero
     public double Heal(double amount) { Healed.Add(amount); Hp = Math.Min(HpMax, Hp + amount); return amount; }
     public double Shield => 0; public void AddShield(double amount) { }
 }
-class FakeCombat : IEnemies
+class FakeCombat : IEnemies, ICombat
 {
     public readonly Transform HeroTr = new Transform();                 // объект героя (как Transform_ObjUnit)
     public Vector3 Pos { get => HeroTr.position; set => HeroTr.position = value; }
@@ -403,6 +487,31 @@ class FakeCombat : IEnemies
     public IReadOnlyList<IEnemy> Near(double x, double y, double r) => new List<IEnemy>();
     public IEnemy Nearest(double x, double y) => null;
     public Vector3? HeroPos => Pos;
+    public int Kills;
+    public bool Damage(IEnemy e, double amount, int magicId = 0, int criRan = 0, double criMultiplier = 1)
+    {
+        if (!(e is FakeEnemy fe) || !fe.Unit_IsLive) return false;
+        fe.DamageTaken += amount; fe.Unit_Hp -= (float)amount;
+        if (fe.Unit_Hp <= 0) { fe.Unit_IsLive = false; Enemies.Remove(e); Kills++; }
+        return true;
+    }
+    public bool Freeze(IEnemy e, double seconds) => false; public bool Stun(IEnemy e, double seconds) => false;
+    public bool Pull(IEnemy e, double x, double y, double dist) => false; public bool Shoot(int bulletId, double x, double y, double z = 0, double ratio = 1) => false;
+}
+/// <summary>Враг игры (вместо C_Battle_EnemyUnit): поля и методы, которыми пользуются общие враги.</summary>
+class FakeEnemy : MonoBehaviour, IEnemy
+{
+    private readonly Player _p;
+    public FakeEnemy(Player p, int unitId) { _p = p; UnitID = unitId; }
+    public int UnitID; public bool Unit_IsLive = true, Puppet, DestroyedSimple;
+    public Transform Transform_ObjUnit = new Transform();
+    public Rigidbody Rigidbody_ObjUnit = new Rigidbody();
+    public float UnitBase_MoveSpeed = 0.064f, UnitApply_MoveSpeed = 0.064f, UnitApply_UnitSize = 1.25f, Unit_Hp = 20;
+    public double DamageTaken;
+    public Transform Transform_ObjUnitSprite = new Transform { localScale = new Vector3(1, 1, 1) };
+    public void Unit_Destroy_Simple() { DestroyedSimple = true; Unit_IsLive = false; _p.Combat.Enemies.Remove(this); }
+    public void Fire() => _p.Ctx.Fire("After C_Battle_EnemyUnit.Start_Unit/3", this, new object[] { UnitID, 0f, 0f });   // как хук Harmony
+    int IEnemy.Id => UnitID; double IEnemy.Hp => 20; Vector3 IEnemy.Pos => Transform_ObjUnit.position; bool IEnemy.Alive => Unit_IsLive; object IEnemy.Raw => this;
 }
 class StillEnemy : IEnemy { public Vector3 P; public int Id => 1; public double Hp => 20; public Vector3 Pos => P; public bool Alive => true; public object Raw => this; }
 class FakeComp : ICompanion
@@ -429,7 +538,9 @@ class GameHero
     public List<Transform> List_Transform_ObjSpirit => List_ObjSpirit.Select(g => g?.transform).ToList();
     public CloneGo Obj_ElectricZone = new CloneGo("zone", "ElectricZone01");
     public CloneGo Obj_Shield = new CloneGo("shield");          // картинки нет, пока нет заклинания (как в игре)
-    public bool IsShield_P, IsElectricZone_P;
+    public bool IsShield_P, IsElectricZone_P, IsMagicCircle_P;
+    public CloneGo Obj_MagicCircleMid = new CloneGo("circle");
+    public SpriteRenderer SpriteRenderer_MagicCircleA = new SpriteRenderer { sprite = new Sprite { name = "MagicCircle3" } }, SpriteRenderer_MagicCircleB = new SpriteRenderer(), SpriteRenderer_MagicCircleC = new SpriteRenderer();
     public SpriteRenderer SpriteRenderer_Shield => Obj_Shield.Sr;
     public void Bullet_Create(Transform src, int id, float x, float y, float z, float aim, float p1, float p2, float s1, float s2, float s3, float s4, float dr)
     {
@@ -437,9 +548,25 @@ class GameHero
         Calls.Add((src, id, x, y, dr));
     }
 }
+class FakePlayTime { public int Counter { get; set; } public int Other { get; set; } public int __1__state { get; set; } }
 /// <summary>Менеджер боя (вместо C_Battle_Manager): флаг взрыва Армагеддона и его объекты.</summary>
 class FakeManager
 {
+    public Player Owner;
+    public int EnemyCreateNum = 2, EnemyCreateNum_Min = 0, EnemyCreateNum_Max = 300;
+    public int Time_Min, Time_Sec, Battle_ClearWaveON, EnemyWaveID = 1;
+    public static int ApplyBossNum { get; set; }
+    // как в игре: статические пулы; Create_UnitEnemyBoss берёт из пула боссов (маленький; при 1 заготовке уже не создаёт),
+    // погибшие уходят в обычный пул
+    public static List<object> List_BattleUnitEnemyBoss_Empty { get; set; } = new() { new object(), new object(), new object() };
+    public static List<object> List_BattleUnitEnemy_Empty { get; set; } = Enumerable.Range(0, 30).Select(_ => new object()).ToList();
+    public void Create_UnitEnemyBoss(int id, int num)
+    {
+        ApplyBossNum++;
+        for (int i = 0; i < num; i++) {
+            if (List_BattleUnitEnemyBoss_Empty.Count <= 1) return;
+            List_BattleUnitEnemyBoss_Empty.RemoveAt(0); var e = new FakeEnemy(Owner, id) { Puppet = true }; e.Transform_ObjUnit.position = Owner.Combat.Pos; Owner.Combat.Enemies.Add(e); e.Fire(); }
+    }
     public bool IsArmageddonContinue;
     public CloneGo Obj_ArmageddonGround_Front = new("arma"), Obj_ArmageddonGround_Back = new("arma"), Obj_Armageddon = new("arma", "Armageddon1"),
                    Obj_ArmageddonLand = new("arma", "ArmageddonLandA"), Obj_ArmageddonGround_Destroy = new("arma");

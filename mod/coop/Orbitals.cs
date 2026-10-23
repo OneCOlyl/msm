@@ -42,6 +42,8 @@ namespace MagicSurvivalCoop
             public string ImgZone; public bool ZoneEn = true; public double ZoneA = double.NaN;   // кадр, enabled и прозрачность рендера зоны (1.4.8)
             public double ShieldDx, ShieldDy = 0.03, ShieldSx = 1, ShieldSy = 1;
             public double ZoneSx = 1, ZoneSy = 1;
+            public bool Mc, McOn; public double McS = 1;                // Маг. круг (1.5.9): есть / включён, масштаб, кадры и повороты кругов
+            public readonly string[] McImg = new string[3]; public readonly double[] McRot = new double[3];
         }
 
         internal sealed class OrbClone
@@ -56,14 +58,16 @@ namespace MagicSurvivalCoop
         internal sealed class OrbVisuals
         {
             public readonly List<OrbClone> SatA = new List<OrbClone>(), SatB = new List<OrbClone>(), Spirits = new List<OrbClone>();
-            public OrbClone Shield, Zone;
+            public OrbClone Shield, Zone, Mc;
+            public readonly List<OrbClone> McKids = new List<OrbClone>();
+            public bool McFailed, McLogged; public double McS = double.NaN;
             public bool Logged, ShieldLogged, ZoneScaleFailed;
             public double ZoneSx = double.NaN, ZoneSy = double.NaN;
             public bool? ZoneEnSet; public double ZoneASet = double.NaN;
             public (int, int, int, bool, bool, string, string, string) LastKey;
             public bool HasKey, Hidden, ShieldFailed;
             public double ShieldSx = double.NaN, ShieldSy = double.NaN;
-            public IEnumerable<OrbClone> All => SatA.Concat(SatB).Concat(Spirits).Concat(new[] { Shield, Zone }.Where(c => c != null));
+            public IEnumerable<OrbClone> All => SatA.Concat(SatB).Concat(Spirits).Concat(new[] { Shield, Zone, Mc }.Where(c => c != null));
         }
 
         // ------------------------------------------------------------ отправка: своё состояние
@@ -125,6 +129,7 @@ namespace MagicSurvivalCoop
                     _ctx.Log($"электрозона (своя): видна в {_zoneSentOn} из {_zoneSent} отправок; объект {TreeOf(_myZoneObj)}, {VisOf(RendererOf(_myZoneObj))}; земля {TreeOf(GetMember(hero1, "Obj_EffectGround_ElectricZone"))}");
                 }
             }
+            try { RefreshMyCircle(); } catch { _myMc = false; }
             _mySpiritOff.Clear();
             if (_mySpiritTr.Count > 0 && HeroPosition(out var sx, out var sy, out _))
             {
@@ -206,7 +211,7 @@ namespace MagicSurvivalCoop
 
         private void WriteMyOrbits(Utf8JsonWriter w)
         {
-            if (_myOrbSatA + _myOrbSatB + _myOrbSpirits == 0 && !_myOrbShield && !_myZone) return;
+            if (_myOrbSatA + _myOrbSatB + _myOrbSpirits == 0 && !_myOrbShield && !_myZone && !_myMc) return;
             w.WriteStartObject("orb");
             w.WriteNumber("sa", _myOrbSatA); w.WriteNumber("sb", _myOrbSatB); w.WriteNumber("sp", _myOrbSpirits); w.WriteNumber("sh", _myOrbShield ? 1 : 0);
             w.WriteNumber("aa", Math.Round(_myOrbAngA, 3)); w.WriteNumber("ab", Math.Round(_myOrbAngB, 3));
@@ -232,6 +237,7 @@ namespace MagicSurvivalCoop
                 if (_myZoneEn.HasValue) w.WriteNumber("eze", _myZoneEn.Value ? 1 : 0);
                 if (!float.IsNaN(_myZoneA)) w.WriteNumber("ezc", Math.Round(_myZoneA, 2));
             }
+            WriteMyCircle(w);
             w.WriteEndObject();
         }
 
@@ -342,7 +348,7 @@ namespace MagicSurvivalCoop
             if (sr == null) return null;
             if (!RawSprites) return GetMember(sr, "sprite");
             InitRaw();
-            var p = PtrOf(sr);
+            var p = LivePtr(sr);
             if (p == IntPtr.Zero) return null;
             var sp = Raw.Invoke(_getSprite, p);
             return sp == IntPtr.Zero ? null : (object)sp;
@@ -351,7 +357,18 @@ namespace MagicSurvivalCoop
         {
             if (!RawSprites) { sr.GetType().GetProperty("sprite")?.SetValue(sr, sprite); return; }
             InitRaw();
-            Raw.Invoke(_setSprite, PtrOf(sr), (IntPtr)sprite);
+            var p = LivePtr(sr);
+            if (p != IntPtr.Zero) Raw.Invoke(_setSprite, p, (IntPtr)sprite);
+        }
+        /// <summary>
+        /// Указатель на живой объект Unity: уничтоженный (смена области в 3:04, конец боя) — IntPtr.Zero. Прямой вызов (Raw) на
+        /// уничтоженный объект роняет игру целиком (1.5.10: вылет у друга внутри отправки состояния сразу после смены области).
+        /// </summary>
+        private static IntPtr LivePtr(object wrapper)
+        {
+            var p = PtrOf(wrapper);
+            if (p == IntPtr.Zero) return p;
+            try { return Raw.IsDestroyed(p) ? IntPtr.Zero : p; } catch { return IntPtr.Zero; }
         }
         /// <summary>Имя картинки (или любого объекта Unity в тестах).</summary>
         private static string NameOf(object o)
@@ -531,6 +548,7 @@ namespace MagicSurvivalCoop
                     Remember(SpriteOf(RendererOf(ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesB"), 0))));
                     Remember(SpriteOf(RendererOf(ItemAt(GetMember(hero, "List_ObjSpirit"), 1))));
                     Remember(SpriteOf(RendererOf(GetMember(hero, "Obj_ElectricZone"))));
+                    foreach (var k in CircleKeys) Remember(SpriteOf(GetMember(hero, "SpriteRenderer_MagicCircle" + k)));
                 }
                 if (_sprites.TryGetValue(name, out s)) return s;
             }
@@ -556,7 +574,8 @@ namespace MagicSurvivalCoop
                     var nm = NameOf(sp);
                     if (nm == null || _sprites.ContainsKey(nm)) continue;
                     if (nm.IndexOf("Shield", StringComparison.OrdinalIgnoreCase) < 0 && nm.IndexOf("Satellite", StringComparison.OrdinalIgnoreCase) < 0
-                        && nm.IndexOf("Spirit", StringComparison.OrdinalIgnoreCase) < 0 && nm.IndexOf("ElectricZone", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        && nm.IndexOf("Spirit", StringComparison.OrdinalIgnoreCase) < 0 && nm.IndexOf("ElectricZone", StringComparison.OrdinalIgnoreCase) < 0
+                        && nm.IndexOf("MagicCircle", StringComparison.OrdinalIgnoreCase) < 0) continue;
                     if (sp is IntPtr pp) PinOnce(pp);
                     _sprites[nm] = sp; kept++;
                 }
@@ -586,7 +605,7 @@ namespace MagicSurvivalCoop
             double senderT = Protocol.Num(s, "t", -1);
             var o = Protocol.Obj(s, "orb");
             var st = p.Orb ??= new OrbState();
-            if (o.ValueKind != JsonValueKind.Object) { st.SatA = st.SatB = st.Spirits = 0; st.Shield = false; st.Zone = false; st.SpiritOff = null; return; }
+            if (o.ValueKind != JsonValueKind.Object) { st.SatA = st.SatB = st.Spirits = 0; st.Shield = false; st.Zone = false; st.Mc = st.McOn = false; st.SpiritOff = null; return; }
             st.SatA = Clamp((int)Protocol.Num(o, "sa"), 0, 14);
             st.SatB = Clamp((int)Protocol.Num(o, "sb"), 0, 14);
             st.Spirits = Clamp((int)Protocol.Num(o, "sp"), 0, 14);
@@ -594,6 +613,7 @@ namespace MagicSurvivalCoop
             st.Zone = Protocol.Bool(o, "ez");
             st.ZoneOn = st.Zone && Protocol.Num(o, "eza", 1) != 0;          // без «eza» (1.4.4–1.4.5) — показывать всё время
             if (st.Zone) { st.ZoneRecv++; if (st.ZoneOn) st.ZoneRecvOn++; }
+            ReadCircle(st, o);
             if (st.Zone)
             {
                 st.ZoneSx = Protocol.Num(o, "ezx", 1); st.ZoneSy = Protocol.Num(o, "ezy", 1);
@@ -790,6 +810,7 @@ namespace MagicSurvivalCoop
                         if (c != null) { c[3] = (float)st.ZoneA; SetColor(v.Zone.Sr, c); }
                     }
                 }
+                UpdateCircleCopy(p, v, st, hero, now);
                 if (st.Zone && now >= _zoneCopyDiagAt && _zoneCopyDiags < 4)
                 {
                     _zoneCopyDiagAt = now + 15; _zoneCopyDiags++;
@@ -836,6 +857,7 @@ namespace MagicSurvivalCoop
                     try { v.Shield.Tr.GetType().GetProperty("localScale")?.SetValue(v.Shield.Tr, new Vector3((float)st.ShieldSx, (float)st.ShieldSy, 1f)); } catch { }
                 }
             }
+            PlaceCircleCopy(v, st, g);
             if (v.Zone != null && st.ZoneOn)
             {
                 v.Zone.Tr.position = new Vector3(g.x, g.y, g.z);
