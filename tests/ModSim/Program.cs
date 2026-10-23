@@ -8,6 +8,9 @@ using UnityEngine;
 
 // Имитация игры: два настоящих экземпляра мода «Кооператив» (хост и друг) в одном процессе.
 // Unity здесь нет, поэтому вызовы интерфейса падают и ловятся модом — проверяется сеть и игровая логика.
+// Windows: шаг системного таймера ~15,6 мс — Sleep(16) длился бы ~31 мс, а на Linux (CI) — 16. Точный таймер — чтобы тесты
+// шли одинаково везде (1.5.11 упал на GitHub, а на ПК проходил).
+if (OperatingSystem.IsWindows()) WinTimer.timeBeginPeriod(1);
 int passes = 0, fails = 0;
 void Check(bool ok, string what) { if (ok) { passes++; Console.WriteLine("  PASS " + what); } else { fails++; Console.WriteLine("  FAIL " + what); } }
 
@@ -548,6 +551,7 @@ class GameHero
         Calls.Add((src, id, x, y, dr));
     }
 }
+static class WinTimer { [System.Runtime.InteropServices.DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint ms); }
 class FakePlayTime { public int Counter { get; set; } public int Other { get; set; } public int __1__state { get; set; } }
 /// <summary>Менеджер боя (вместо C_Battle_Manager): флаг взрыва Армагеддона и его объекты.</summary>
 class FakeManager

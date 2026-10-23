@@ -59,7 +59,21 @@ if [ "${SKIP_TESTS:-}" != "1" ]; then
   NET=tests/NetTest/bin/Release/net8.0/NetTest.dll
   FAILED=0
   # тест: выводим только заголовки, провалы и итог; провал — по коду выхода программы
-  run_test() { local log; log=$(mktemp); "$@" >"$log" 2>&1; local rc=$?; grep -E "^== [^=]|FAIL|ИТОГ" "$log" || true; rm -f "$log"; [ $rc -eq 0 ] || { echo "!! провал: $* (код $rc)"; FAILED=1; }; }
+  # «|| rc=$?»: под set -e упавший тест иначе обрывает скрипт молча, без строк FAIL (так было на CI с 1.5.11).
+  # Провал: хвост вывода, а на GitHub — ещё и аннотации ::error:: (их видно в API без прав администратора).
+  run_test() {
+    local log rc=0; log=$(mktemp)
+    "$@" >"$log" 2>&1 || rc=$?
+    grep -E "^== [^=]|FAIL|ИТОГ" "$log" || true
+    if [ $rc -ne 0 ]; then
+      echo "!! провал: $* (код $rc), последние строки:"; tail -n 25 "$log"
+      if [ -n "${GITHUB_ACTIONS:-}" ]; then
+        grep -E "FAIL|Unhandled|Exception" "$log" | head -n 10 | while IFS= read -r l; do echo "::error::$l"; done
+      fi
+      FAILED=1
+    fi
+    rm -f "$log"
+  }
   echo "== тест сети: встроенный сервер"
   run_test dotnet "$NET" embedded
   echo "== тест сети: Python-сервер"
