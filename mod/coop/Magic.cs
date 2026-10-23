@@ -280,7 +280,7 @@ namespace MagicSurvivalCoop
                      $"повторено касов друзей {_castsDone}, пропущено {_castsDropped}; свои заклинания (ID:уровень) {string.Join(" ", lv)}; " +
                      $"источники снарядов: {string.Join(", ", _sources.Values.GroupBy(v => v.name).Select(g => $"{g.Key}×{g.Sum(x => x.n)}"))}; " +
                      $"цена повтора (мс, макс/среднее): {string.Join(", ", _castCost.OrderByDescending(k => k.Value.max).Select(k => $"снаряд {k.Key} {k.Value.max:0.0}/{k.Value.sum / Math.Max(1, k.Value.n):0.0}"))}; " +
-                     $"кадр мода: макс {_frameMaxMs:0.0} мс, дольше 8 мс — {_slowFrames} (из них из-за повторов {_slowFramesCasts})");
+                     $"кадр мода: макс {_frameMaxMs:0.0} мс, дольше 8 мс — {_slowFrames} (из них из-за повторов {_slowFramesCasts})" + ArmageddonSummary());
         }
     }
 }

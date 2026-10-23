@@ -160,7 +160,7 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     bg.IsShield_P = true;
     bg.Obj_Shield.transform.position = new Vector3(bp.x, bp.y + 0.03f, 0); bg.Obj_Shield.transform.localScale = new Vector3(1, 1, 1);
     bg.Obj_Shield.Sr.sprite = new Sprite { name = "Shield2_01" };                 // у друга щит есть, у хоста — нет: картинку найдём среди картинок игры
-    Resources.TestAll.AddRange(new UnityEngine.Object[] { new Sprite { name = "Shield2_01" }, new Sprite { name = "Shield2_03" }, new Sprite { name = "Fireball" } });
+    Resources.TestAll.AddRange(new UnityEngine.Object[] { new Sprite { name = "Shield2_01" }, new Sprite { name = "Shield2_03" }, new Sprite { name = "Fireball" }, new Sprite { name = "ElectricZone1B" } });
     for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
     var on = CloneGo.Made.Where(c => c.activeSelf).ToList();
     Check(on.Count(c => c.Kind == "satA") == 3, $"у хоста 3 копии Спутников: {on.Count(c => c.Kind == "satA")}");
@@ -179,6 +179,11 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
           $"Духи стоят там же, где у друга (над героем), а не крутятся по кругу: {string.Join(" ", sps.Select(q => $"({q.Item1:0.00};{q.Item2:0.00})"))}");
     var zc = on.FirstOrDefault(c => c.Kind == "zone");
     Check(zc != null && Math.Abs(zc.transform.position.x - gp.x) < 0.01 && Math.Abs(zc.transform.position.y - gp.y) < 0.01, "Электрозона друга — на союзнике");
+    bg.Obj_ElectricZone.Sr.enabled = false; bg.Obj_ElectricZone.Sr.color = new Color(1, 1, 1, 0.4f); bg.Obj_ElectricZone.Sr.sprite = new Sprite { name = "ElectricZone1B" };
+    for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    Check(zc != null && !zc.Sr.enabled && Math.Abs(zc.Sr.color.a - 0.4f) < 0.01, $"копия зоны мигает вместе с зоной друга (рендер {zc?.Sr.enabled}, α {zc?.Sr.color.a:0.00})");
+    Check(zc?.Sr.sprite?.name == "ElectricZone1B", $"и меняет кадр вместе с ней: «{zc?.Sr.sprite?.name}»");
+    bg.Obj_ElectricZone.Sr.enabled = true;
     Check(shc.Sr.sprite?.name == "Shield2_01", $"у копии Щита картинка друга, хотя у хоста щита нет: «{shc.Sr.sprite?.name}»");
     Check(on.Where(c => c.Kind == "spirit").All(c => c.Sr.sprite?.name == "UnitSpirit1MotionA"), "у копий Духов своя картинка");
     bg.Obj_Shield.Sr.sprite = new Sprite { name = "Shield2_03" };                 // у друга сменился заряд щита
@@ -217,6 +222,27 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     Check(on.Count(c => c.Kind == "satA") == 0 && on.Count(c => c.Kind == "shield") == 0 && on.Count(c => c.Kind == "spirit") == 2, "Спутники и Щит пропали у друга — копии выключены, Духи остались");
     Check(on.Count(c => c.Kind == "zone") == 0, "Электрозона пропала у друга — копия выключена");
     Check(CloneGo.Made.Count == 7, $"новых копий не создаётся: {CloneGo.Made.Count}");
+}
+
+Console.WriteLine("2ж. Армагеддон друга: взрыв виден у хоста (объекты менеджера боя)");
+{
+    var am = new FakeManager(); var bm = new FakeManager();
+    A.Set("_battleMgr", am); B.Set("_battleMgr", bm);
+    void Frames(int n) { for (int fr = 0; fr < n; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); } }
+    Frames(5);
+    bm.IsArmageddonContinue = true;                       // у друга начался взрыв
+    Frames(20);
+    Check(am.Obj_ArmageddonGround_Front.activeSelf && am.Obj_ArmageddonGround_Back.activeSelf, "у хоста включились фон и затемнение Армагеддона");
+    Check(!bm.Obj_ArmageddonGround_Front.activeSelf, "у друга мод свои объекты не трогает (их включает игра)");
+    var sw = System.Diagnostics.Stopwatch.StartNew(); bool flash = false, land = false;
+    while (sw.Elapsed.TotalSeconds < 5.5) { Frames(1); flash |= am.Obj_Armageddon.activeSelf; land |= am.Obj_ArmageddonLand.activeSelf; }
+    Check(flash && land, "вспышка и падение — по порядку разведки");
+    Check(new[] { am.Obj_ArmageddonGround_Front, am.Obj_ArmageddonGround_Back, am.Obj_Armageddon, am.Obj_ArmageddonLand, am.Obj_ArmageddonGround_Destroy }.All(o => !o.activeSelf), "через 5 с всё выключено");
+    Check((int)A.Get("_armaPlayed") == 1 && (int)B.Get("_armaSent") == 1, "один взрыв — одно сообщение и один повтор");
+    bm.IsArmageddonContinue = false; Frames(5);
+    am.IsArmageddonContinue = true; bm.IsArmageddonContinue = true; Frames(20);   // у хоста свой взрыв идёт — повтор не нужен
+    Check((int)A.Get("_armaPlayed") == 1 && (int)A.Get("_armaSkipped") == 1, "свой взрыв идёт — взрыв друга пропущен");
+    am.IsArmageddonContinue = bm.IsArmageddonContinue = false; Frames(5);
 }
 
 B.Combat.Pos = new Vector3(150, 100, 0);
@@ -291,6 +317,7 @@ class Player
         if (method == "SafeActionHostNoWindow") { Call("Host"); return; }
         _session.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance).Invoke(_session, null);
     }
+    public void Set(string field, object v) => _session.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance).SetValue(_session, v);
     public object Get(string field) => _session.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_session);
     public System.Collections.IDictionary Partners() => (System.Collections.IDictionary)_session.GetType().GetField("_partners", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_session);
     public void Disable() { _def.OnDisable(Ctx); foreach (var c in Ctx.Cleanups) c(); }
@@ -409,6 +436,13 @@ class GameHero
         _p.Ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", this, new object[] { src, id, x, y, z, aim, p1, p2, s1, s2, s3, s4, dr });
         Calls.Add((src, id, x, y, dr));
     }
+}
+/// <summary>Менеджер боя (вместо C_Battle_Manager): флаг взрыва Армагеддона и его объекты.</summary>
+class FakeManager
+{
+    public bool IsArmageddonContinue;
+    public CloneGo Obj_ArmageddonGround_Front = new("arma"), Obj_ArmageddonGround_Back = new("arma"), Obj_Armageddon = new("arma", "Armageddon1"),
+                   Obj_ArmageddonLand = new("arma", "ArmageddonLandA"), Obj_ArmageddonGround_Destroy = new("arma");
 }
 class CloneGo : GameObject, ICloneTarget
 {

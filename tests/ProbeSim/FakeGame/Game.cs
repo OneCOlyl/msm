@@ -29,7 +29,9 @@ namespace Il2Cpp
         public int AllEnemyNum { get; set; }
         public static int ApplyBossNum { get; set; }
         public static float Apply_ArmageddonEnemyHpRatio { get; set; } = 1;
+        public static float Apply_ArmageddonDelayNum { get; set; } = 103;
         public GameObject Obj_ArmageddonFlash { get; set; } = new GameObject { name = "ArmageddonFlash", activeSelf = false };
+        public System.Collections.IEnumerator Play_Armageddon() { yield break; }
         public void Update() { }
         public void Create_UnitEnemy_Stop() { StopCalls++; }
         public void Create_UnitEnemyBoss(int id, int num) { ApplyBossNum++; for (int i = 0; i < num; i++) C_Battle_EnemyUnit.Spawn(id, 6, 0); }

@@ -2,6 +2,8 @@ using System; using System.Collections.Generic; using System.IO; using System.Li
 using Il2Cpp; using ModKit; using UnityEngine;
 
 // Проверка разведки героя на ПК: фальшивый герой со Щитом, Спутниками и Духами.
+// Культура как на телефоне (дробные через точку), иначе на русской Windows «50,10 с».
+System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
 int passes = 0, fails = 0;
 void Check(bool ok, string what) { if (ok) { passes++; Console.WriteLine("  PASS " + what); } else { fails++; Console.WriteLine("  FAIL " + what); } }
 
@@ -24,11 +26,14 @@ for (int i = 0; i < 1300; i++)   // 130 с игрового времени, ша
 {
     ctx.GameTime += 0.1; Ctx.Sp.Now = ctx.GameTime;
     if (i % 5 == 0) ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", hero, new object[] { hero.Transform_ObjUnit, 1, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f });
-    if (ctx.GameTime >= 30) { hero.IsArmageddon_P = true; hero.Obj_CooltimeBar_Armageddon.activeSelf = true; }
+    if (ctx.GameTime >= 30) { hero.IsArmageddon_P = true; hero.Obj_CooltimeBar_Armageddon.activeSelf = true;
+                              C_Battle_Manager.Apply_ArmageddonDelayNum = (float)(40 - (ctx.GameTime - 10) % 40); }   // взрывы на 50-й и 90-й секунде
+    if (i == 400) C_Battle_Manager.Apply_ArmageddonDelayNum += 6;   // рост не у нуля — не взрыв
     // взрыв на 50-й секунде: вспышка менеджера на 1 с, новый снаряд 77, вызов метода, счётчик
     bool boom = ctx.GameTime >= 50 && ctx.GameTime < 51;
     mgr.Obj_ArmageddonFlash.activeSelf = boom;
     if (i == 500) { ctx.Fire("Before C_Battle_AllyUnit.Armageddon_Explosion/0", hero, new object[0]); hero.ArmageddonCastNum++;
+                    ctx.Fire("Before C_Battle_Manager.Play_Armageddon/0", mgr, new object[0]);
                     ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", hero, new object[] { hero.Transform_ObjUnit, 77, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f }); }
     ctx.Fire("Before C_Battle_Manager.Update/0", mgr, new object[0]);
     if (i % 2 == 0) { foreach (var f in ctx.Ticks.ToArray()) f(); var bt = (string)boardField.GetValue(probeObj); if (ctx.BoardTexts.Count == 0 || ctx.BoardTexts[^1] != bt) ctx.BoardTexts.Add(bt); }
@@ -49,9 +54,14 @@ Check(txt.Contains("НОВЫЙ снаряд 77"), "новый снаряд по�
 Check(!txt.Contains("НОВЫЙ снаряд 1 "), "старые снаряды не считаются новыми");
 Check(txt.Contains("ВЫЗОВ герой.Armageddon_Explosion(0)"), "вызов метода Армагеддона — с временем");
 Check(txt.Contains("ArmageddonCastNum: 0 → 1"), "изменение счётчика Армагеддона");
-Check(txt.Contains("===== разведка завершена: наблюдение закончено"), "разведка закончилась через 90 с после взятия");
+Check(txt.Contains("ВЫЗОВ менеджер.Play_Armageddon(0)"), "запуск корутины Армагеддона — с временем");
+Check(System.Text.RegularExpressions.Regex.IsMatch(txt, @"\[\s*50\.\d\d с\] ===== ВЗРЫВ №1"), "первый взрыв — по сбросу отсчёта, с временем");
+Check(System.Text.RegularExpressions.Regex.IsMatch(txt, @"\[\s*90\.\d\d с\] ===== ВЗРЫВ №2"), "второй взрыв");
+Check(txt.Contains("вырос не у нуля") && !txt.Contains("ВЗРЫВ №3"), "рост отсчёта не у нуля — не взрыв");
+Check(txt.Contains("] до Армагеддона "), "отсчёт до взрыва в отчёте");
+Check(txt.Contains("===== разведка завершена: пойманы взрывы: 2"), "разведка закончилась после двух взрывов");
 Check(ctx.Logs.Any(l => l.Contains("РАЗВЕДКА АРМАГЕДДОНА ЗАВЕРШЕНА")), "в журнале: что прислать");
-Check(ctx.BoardTexts.Any(b => b.Contains("возьмите Армагеддон")) && ctx.BoardTexts.Any(b => b.Contains("ждите его взрывов")), "табло подсказывает, что делать");
+Check(ctx.BoardTexts.Any(b => b.Contains("возьмите Армагеддон")) && ctx.BoardTexts.Any(b => b.Contains("ждите взрывов: 1/2")), "табло подсказывает, что делать");
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
 

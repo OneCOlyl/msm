@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.4.6";
+        public const string ModVersion = "1.4.8";
 
         public ModDef Define() => new ModDef
         {
@@ -181,7 +181,7 @@ namespace MagicSurvivalCoop
             _flushAction = FlushCasts;
             ctx.Every(50, Tick);
             InstallMagicHook();
-            try { ctx.Before("C_Battle_Manager", "Update", 0, (self, args) => FrameStep()); }
+            try { ctx.Before("C_Battle_Manager", "Update", 0, (self, args) => { if (self != null) _battleMgr = self; FrameStep(); }); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
             ctx.OnCleanup(Shutdown);
             ctx.Log($"кооператив {CoopMod.ModVersion} включён, имя «{_myName}»");
@@ -471,6 +471,9 @@ namespace MagicSurvivalCoop
                 case "casts":
                     if (from != null && _partners.TryGetValue(from, out var cp)) OnRemoteCasts(cp, e);
                     break;
+                case "arma":
+                    OnRemoteArmageddon(who);
+                    break;
             }
         }
 
@@ -486,6 +489,7 @@ namespace MagicSurvivalCoop
             _fpsSince = -1; _fpsFrames = 0; _fpsLogged = false;
             _heroTr = null; _heroTrTried = false; _bestSpellAt = -1;
             ResetMagic();
+            ResetArmageddon();
             foreach (var p in _partners.Values) p.GhostTr = null;
             foreach (var p in _partners.Values) { p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; }
             DestroyBtn(ref _menuBtn);
@@ -495,6 +499,7 @@ namespace MagicSurvivalCoop
         private void OnBattleEnd()
         {
             _ctx.Guard("итог магии", LogMagicSummary);
+            StopArmaReplay();
             _inRun = false;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             DestroyBtn(ref _healBtn);
@@ -625,6 +630,7 @@ namespace MagicSurvivalCoop
                     if (now - _fpsSince >= 5) { _fpsLogged = true; _ctx.Log($"покадровое движение работает: {_fpsFrames / (now - _fpsSince):0} кадров/с"); }
                 }
                 if (_inRun && _client.Connected) MaybeSend();
+                if (_inRun) ArmageddonStep(now);
                 if (!_inRun || _partners.Count == 0 || _spells.Paused) return;
                 if (!HeroPosition(out var hx, out var hy, out var hz)) return;
                 _frameSeenSec = now;

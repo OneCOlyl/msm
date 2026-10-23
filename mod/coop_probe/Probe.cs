@@ -26,7 +26,7 @@ namespace MagicSurvivalCoop.Probe
         {
             Id = "coop_probe",
             Name = "Кооператив: разведка",
-            Version = "0.6.0",
+            Version = "0.6.1",
             Description = "Разведка Армагеддона: что включается в игре при его взрыве — чтобы показать его у друга. Ничего не меняет, только записывает. Потом выключите.",
             Depends = { ["modkit_combat"] = ">=1.0", ["modkit_spells"] = ">=1.0" },
             OnEnable = ctx => _p = new Probe(ctx),
@@ -39,9 +39,11 @@ namespace MagicSurvivalCoop.Probe
     {
         private const BindingFlags Inst = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
         private const BindingFlags Any = Inst | BindingFlags.Static;
-        private static readonly Regex Interesting = new Regex("Armageddon|Apocal|Doom|Judgment|Nuke|Bomb|Explosion", RegexOptions.IgnoreCase);
+        private static readonly Regex Interesting = new Regex("Armageddon|Apocal|Doom|Judgment|Nuke|Bomb|Explosion|Electric", RegexOptions.IgnoreCase);
         private const int ArmaId = 14;
-        private const double WatchSec = 90;
+        private const int BlastsWanted = 2;          // взрывов поймать, потом ещё AfterBlastSec — и конец
+        private const double AfterBlastSec = 10;
+        private const double MaxWatchSec = 330;      // перезарядка на 1-м уровне ~105 с, два взрыва ≈ 3,5 мин
 
         /// <summary>Только для тестов на ПК (через рефлексию).</summary>
         private static string DirOverride;
@@ -66,6 +68,8 @@ namespace MagicSurvivalCoop.Probe
         private sealed class Watched { public string Label; public object Go; public bool? Last; public int Flips; }
         private readonly List<Watched> _watch = new List<Watched>();
         private readonly Dictionary<string, string> _armaValues = new Dictionary<string, string>();
+        private double _delayLast = double.NaN, _lastBlastAt = -1;
+        private int _blasts;
 
         public Probe(ModContext ctx)
         {
@@ -75,7 +79,7 @@ namespace MagicSurvivalCoop.Probe
             string dir = DirOverride;
             if (dir == null) { try { dir = Paths.Dir; } catch { dir = "/sdcard/MelonLoader/com.vkslrzm.Zombix/UserData/ModKit"; } }
             _path = Path.Combine(dir, "coop_probe.txt");
-            W($"=== coop_probe 0.6.0 (разведка Армагеддона), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+            W($"=== coop_probe 0.6.1 (разведка Армагеддона), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
             ctx.Log("разведка Армагеддона включена: начните бой и возьмите Армагеддон (можно читом)");
 
             ctx.Before("C_Battle_AllyUnit", "Bullet_Create", 13, (s, a) => OnBullet(a));
@@ -194,13 +198,34 @@ namespace MagicSurvivalCoop.Probe
             if (t >= _nextScene) { _nextScene = t + 0.5; _ctx.Guard("сцена", SceneScan); }
             if (_armaAt >= 0) _ctx.Guard("значения", () => ArmaValues(false));
             if (_armaAt >= 0 && t - _armaAt >= 5 && _snapAt < 0) { _snapAt = t; _ctx.Guard("снимок", () => Snapshot("через 5 с после взятия")); }
-            if (_armaAt >= 0 && t - _armaAt >= WatchSec) { Finish("наблюдение закончено"); return; }
+            if (_armaAt >= 0) _ctx.Guard("перезарядка", () => DelayStep(t));
+            if (_blasts >= BlastsWanted && t - _lastBlastAt >= AfterBlastSec) { Finish($"пойманы взрывы: {_blasts}"); return; }
+            if (_armaAt >= 0 && t - _armaAt >= MaxWatchSec) { Finish("наблюдение закончено"); return; }
             if (_armaAt < 0)
-                _boardText = "Разведка Армагеддона: возьмите Армагеддон (можно читом «ЧИТ» → Армагеддон) и не умирайте ~1,5 мин";
+                _boardText = "Разведка Армагеддона: возьмите Армагеддон (можно читом «ЧИТ» → Армагеддон) и не умирайте ~4 мин";
             else
-                _boardText = $"Армагеддон есть — ждите его взрывов. Осталось {Math.Max(0, WatchSec - (t - _armaAt)):0} с. Замечено: переключений {_toggles}, новых картинок {_newImages}, снарядов {_newBullets}, вызовов {_calls}";
+                _boardText = $"Армагеддон есть — ждите взрывов: {_blasts}/{BlastsWanted}, до следующего ~{(double.IsNaN(_delayLast) ? "?" : _delayLast.ToString("0"))} с (предел {Math.Max(0, MaxWatchSec - (t - _armaAt)):0} с). Замечено: переключений {_toggles}, картинок {_newImages}, снарядов {_newBullets}, вызовов {_calls}";
             ShowBoard();
             if ((int)(t * 4) % 20 == 0) Flush();
+        }
+
+        /// <summary>Отсчёт до взрыва (менеджер.Apply_ArmageddonDelayNum, ~1 в секунду): каждые 10 — в отчёт, сброс у нуля — взрыв.</summary>
+        private void DelayStep(double t)
+        {
+            var v = Get(_manager, "Apply_ArmageddonDelayNum");
+            if (v == null) return;
+            double d = Convert.ToDouble(v);
+            if (!double.IsNaN(_delayLast))
+            {
+                if (d > _delayLast + 3)
+                {
+                    if (_delayLast <= 5) { _blasts++; _lastBlastAt = t; W($"{Ts} ===== ВЗРЫВ №{_blasts}: отсчёт {_delayLast:0.##} → {d:0.##} ====="); }
+                    else W($"{Ts} отсчёт до Армагеддона вырос не у нуля: {_delayLast:0.##} → {d:0.##}");
+                    Flush();
+                }
+                else if (Math.Floor(d / 10) != Math.Floor(_delayLast / 10)) W($"{Ts} до Армагеддона {d:0.#}");
+            }
+            _delayLast = d;
         }
 
         private int SafeLevel(int id) { try { return _spells.Level(id); } catch { return 0; } }
@@ -248,8 +273,8 @@ namespace MagicSurvivalCoop.Probe
                 if (w.Last.HasValue && w.Last.Value != on && _armaAt >= 0)
                 {
                     w.Flips++; _toggles++;
-                    if (w.Flips <= 6) W($"{Ts} {(on ? "ВКЛ " : "выкл")} {w.Label} «{Get(w.Go, "name")}»{(on ? Where(Get(w.Go, "transform"), _enemies.HeroPos) + Children(Get(w.Go, "transform")) : "")}");
-                    else if (w.Flips == 7) W($"{Ts} {w.Label}: мигает часто, дальше не пишу");
+                    if (w.Flips <= 10) W($"{Ts} {(on ? "ВКЛ " : "выкл")} {w.Label} «{Get(w.Go, "name")}»{(on ? Where(Get(w.Go, "transform"), _enemies.HeroPos) + Children(Get(w.Go, "transform")) : "")}");
+                    else if (w.Flips == 11) W($"{Ts} {w.Label}: мигает часто, дальше не пишу");
                 }
                 w.Last = on;
             }
@@ -304,8 +329,9 @@ namespace MagicSurvivalCoop.Probe
                 foreach (var p in props) W($"  {TypeName(p.PropertyType)} {p.Name}{(p.GetGetMethod(true)?.IsStatic == true ? " [static]" : "")}");
                 foreach (var m in methods) W($"  {TypeName(m.ReturnType)} {m.Name}({string.Join(", ", m.GetParameters().Select(a => TypeName(a.ParameterType) + " " + a.Name))})");
                 if (obj is Type) continue;
-                // вызовы обычных методов (не корутин) — с временем
-                foreach (var m in methods.Where(m => m.ReturnType == typeof(void)).Take(8))
+                // вызовы методов и запуски корутин (IEnumerator создаётся при StartCoroutine) — с временем; Армагеддон первым
+                foreach (var m in methods.Where(m => m.ReturnType == typeof(void) || m.ReturnType.Name == "IEnumerator")
+                                         .OrderBy(m => m.Name.Contains("Armageddon") ? 0 : 1).Take(16))
                 {
                     var name = m.Name; int argc = m.GetParameters().Length; var cls = t.Name; var who = owner;
                     try { _ctx.Before(cls, name, argc, (s, a) => { if (_calls++ < 60) W($"{Ts} ВЫЗОВ {who}.{name}({argc})"); }); W($"  (слежу за вызовами {name})"); }
