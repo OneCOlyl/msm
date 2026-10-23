@@ -28,6 +28,8 @@ namespace Il2Cpp
         public int EnemyCreateNum { get; set; } = 2; public int EnemyCreateNum_Min { get; set; } = 2; public int EnemyCreateNum_Max { get; set; } = 2;
         public int AllEnemyNum { get; set; }
         public static int ApplyBossNum { get; set; }
+        public static float Apply_ArmageddonEnemyHpRatio { get; set; } = 1;
+        public GameObject Obj_ArmageddonFlash { get; set; } = new GameObject { name = "ArmageddonFlash", activeSelf = false };
         public void Update() { }
         public void Create_UnitEnemy_Stop() { StopCalls++; }
         public void Create_UnitEnemyBoss(int id, int num) { ApplyBossNum++; for (int i = 0; i < num; i++) C_Battle_EnemyUnit.Spawn(id, 6, 0); }
@@ -73,6 +75,11 @@ namespace Il2Cpp
         public float UnitApply_ShieldMaxNum { get; set; } = 3;
         public bool IsShield_P { get; set; } = true;
         public int UnitApply_SpiritNum { get; set; } = 2;
+        public bool IsArmageddon_P { get; set; }
+        public int ArmageddonCastNum { get; set; }
+        public float UnitApply_ArmageddonPSpeed { get; set; } = 30;
+        public GameObject Obj_CooltimeBar_Armageddon { get; set; }
+        public void Armageddon_Explosion() { }
         public C_Battle_AllyUnit()
         {
             Obj_UnitShield = Make("Obj_UnitShield", 0, 0, true, 3);
@@ -80,6 +87,7 @@ namespace Il2Cpp
             List_ObjSpirit.Add(null);
             Array_Obj_UnitSatellitesA = new[] { Make("SatA01", 2, 0, true, 0), Make("SatA02", -2, 0, true, 0), Make("SatA03", 0, 2, false, 0) };
             List_ObjSpirit.Add(Make("Spirit01", 1, 1, true, 1));
+            Obj_CooltimeBar_Armageddon = Make("CooltimeBar_Armageddon", 0, -1, false, 2);
         }
         public static readonly List<GameObject> Clones = new List<GameObject>();
         public class FakeGO : GameObject, ICloneTarget
