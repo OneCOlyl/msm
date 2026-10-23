@@ -156,8 +156,9 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     double ang0 = 0.7;
     bg.Array_Transform_ObjSatellitesA[0].position = new Vector3((float)(bp.x + Math.Cos(ang0) * 2.25), (float)(bp.y + Math.Sin(ang0) * 2.25), 0);
     for (int i = 1; i <= 2; i++) { bg.List_IsSpirit_P[i] = true; bg.List_ObjSpirit[i].activeSelf = true; bg.List_ObjSpirit[i].transform.position = new Vector3(bp.x + (i == 1 ? -0.4f : 0.4f), bp.y + 0.55f, 0); }
-    bg.Obj_ElectricZone.activeSelf = true;
-    bg.Obj_Shield.activeSelf = true;
+    bg.Obj_ElectricZone.activeSelf = true; bg.IsElectricZone_P = true;
+    bg.IsShield_P = true;
+    bg.Obj_Shield.transform.position = new Vector3(bp.x, bp.y + 0.03f, 0); bg.Obj_Shield.transform.localScale = new Vector3(1, 1, 1);
     bg.Obj_Shield.Sr.sprite = new Sprite { name = "Shield2_01" };                 // у друга щит есть, у хоста — нет: картинку найдём среди картинок игры
     Resources.TestAll.AddRange(new UnityEngine.Object[] { new Sprite { name = "Shield2_01" }, new Sprite { name = "Shield2_03" }, new Sprite { name = "Fireball" } });
     for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
@@ -209,7 +210,7 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
         Check(worst < 1.2, $"вращение ровное, без рывков (наибольшее отклонение скорости за кадр {worst:0.00} рад/с)");
     }
     for (int i = 0; i < 3; i++) bg.Array_IsSatelliteA_P[i] = false;
-    bg.Obj_Shield.activeSelf = false;
+    bg.IsShield_P = false;
     bg.Obj_ElectricZone.activeSelf = false;
     for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
     on = CloneGo.Made.Where(c => c.activeSelf).ToList();
@@ -401,6 +402,8 @@ class GameHero
     public List<Transform> List_Transform_ObjSpirit => List_ObjSpirit.Select(g => g?.transform).ToList();
     public CloneGo Obj_ElectricZone = new CloneGo("zone", "ElectricZone01");
     public CloneGo Obj_Shield = new CloneGo("shield");          // картинки нет, пока нет заклинания (как в игре)
+    public bool IsShield_P, IsElectricZone_P;
+    public SpriteRenderer SpriteRenderer_Shield => Obj_Shield.Sr;
     public void Bullet_Create(Transform src, int id, float x, float y, float z, float aim, float p1, float p2, float s1, float s2, float s3, float s4, float dr)
     {
         _p.Ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", this, new object[] { src, id, x, y, z, aim, p1, p2, s1, s2, s3, s4, dr });
@@ -411,7 +414,7 @@ class CloneGo : GameObject, ICloneTarget
 {
     public static readonly List<CloneGo> Made = new();
     public readonly string Kind;
-    public CloneGo(string kind, string img = null) { Kind = kind; TestComponent = new SpriteRenderer { sprite = img == null ? null : new Sprite { name = img } }; }
+    public CloneGo(string kind, string img = null) { Kind = kind; TestComponent = new SpriteRenderer { sprite = img == null ? null : new Sprite { name = img }, gameObject = this }; }
     public SpriteRenderer Sr => (SpriteRenderer)TestComponent;
     public UnityEngine.Object CloneForTest() { var c = new CloneGo(Kind) { activeSelf = true }; c.Sr.sprite = Sr.sprite; Made.Add(c); return c; }
 }

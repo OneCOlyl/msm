@@ -37,7 +37,8 @@ namespace MagicSurvivalCoop
             public int ShownSatA, ShownSatB;
             public double[] SpiritOff;                                // смещения духов от героя друга (x, y парами), null — старая версия
             public double[] SpiritDisp;                               // что рисуем: смещения плавно догоняют присланные
-            public bool Zone;                                         // Электрозона
+            public bool Zone, ZoneOn;                                 // Электрозона: есть / сейчас видна
+            public double ShieldDx, ShieldDy = 0.03, ShieldSx = 1, ShieldSy = 1;
             public double ZoneSx = 1, ZoneSy = 1;
         }
 
@@ -57,7 +58,8 @@ namespace MagicSurvivalCoop
             public bool Logged, ShieldLogged, ZoneScaleFailed;
             public double ZoneSx = double.NaN, ZoneSy = double.NaN;
             public (int, int, int, bool, bool, string, string, string) LastKey;
-            public bool HasKey, Hidden;
+            public bool HasKey, Hidden, ShieldFailed;
+            public double ShieldSx = double.NaN, ShieldSy = double.NaN;
             public IEnumerable<OrbClone> All => SatA.Concat(SatB).Concat(Spirits).Concat(new[] { Shield, Zone }.Where(c => c != null));
         }
 
@@ -68,12 +70,15 @@ namespace MagicSurvivalCoop
         private bool _myOrbShield;
         private double _myOrbAngA, _myOrbAngB;
         private string _myImgShield, _myImgSatA, _myImgSatB, _myImgSpirit;
+        private double _myShieldDx, _myShieldDy = 0.03, _myShieldSx = 1, _myShieldSy = 1;
+        private bool _myShieldLogged;
         private int _orbFails, _orbStateLogs;
         private string _myOrbState;
         private int _myOrbLogs;
         private readonly List<Transform> _mySpiritTr = new List<Transform>();   // включённые духи (их объекты) — смещения шлём при каждой отправке
         private readonly List<double> _mySpiritOff = new List<double>();
-        private bool _myZone;
+        private bool _myZone, _myZoneOn;      // заклинание есть / объект зоны сейчас включён (зона вспыхивает — читаем при каждой отправке)
+        private object _myZoneObj;
         private double _myZoneSx = 1, _myZoneSy = 1;
 
         /// <summary>Своё состояние «орбит»: угол спутников — при каждой отправке (он вместе со временем «t» в том же сообщении),
@@ -92,6 +97,7 @@ namespace MagicSurvivalCoop
                 }
                 catch { }
             }
+            try { _myZoneOn = _myZoneObj != null && Convert.ToBoolean(GetMember(_myZoneObj, "activeSelf") ?? false); } catch { _myZoneOn = false; }
             _mySpiritOff.Clear();
             if (_mySpiritTr.Count > 0 && HeroPosition(out var sx, out var sy, out _))
             {
@@ -128,23 +134,44 @@ namespace MagicSurvivalCoop
                 _myOrbSpirits = _mySpiritTr.Count;
                 // Электрозона: объект на герое, включён, пока заклинание есть; размер — масштаб объекта
                 var ez = GetMember(hero, "Obj_ElectricZone");
-                _myZone = ez != null && Convert.ToBoolean(GetMember(ez, "activeSelf") ?? false);
+                _myZone = GetMember(hero, "IsElectricZone_P") is bool ezp ? ezp : ez != null && Convert.ToBoolean(GetMember(ez, "activeSelf") ?? false);
+                _myZoneObj = _myZone ? ez : null;
                 if (_myZone)
                 {
-                    try { if (GetMember(GetMember(ez, "transform"), "localScale") is Vector3 ls) { _myZoneSx = ls.x; _myZoneSy = ls.y; } }
+                    try { if (GetMember(GetMember(ez, "transform"), "localScale") is Vector3 ls && Math.Abs(ls.x) > 0.01 && Math.Abs(ls.y) > 0.01) { _myZoneSx = ls.x; _myZoneSy = ls.y; } }
                     catch { }
                 }
-                var sh = GetMember(hero, "Obj_Shield");
-                _myOrbShield = sh != null && Convert.ToBoolean(GetMember(sh, "activeSelf") ?? false);
-                _myImgShield = _myOrbShield ? ImageOf(sh) : null;
+                // Щит: картинку рисует SpriteRenderer_Shield (не внутри Obj_Shield — тот «1100» без картинки, разведка и журнал 1.4.5);
+                // включён, пока заклинание есть (IsShield_P) и у рендера есть картинка (она меняется с зарядами: Shield2_01…04)
+                var shSr = GetMember(hero, "SpriteRenderer_Shield");
+                bool shOn = GetMember(hero, "IsShield_P") is bool isSh && isSh;
+                _myImgShield = shOn ? NameOf(SpriteOf(shSr)) : null;
+                _myOrbShield = _myImgShield != null;
+                if (_myOrbShield)
+                {
+                    try
+                    {
+                        var shTr = GetMember(shSr, "transform") as Transform;
+                        if (shTr != null && HeroPosition(out var shx, out var shy, out _)) { var q = shTr.position; _myShieldDx = q.x - shx; _myShieldDy = q.y - shy; }
+                        if (GetMember(shTr, "localScale") is Vector3 ls && Math.Abs(ls.x) > 0.01 && Math.Abs(ls.y) > 0.01) { _myShieldSx = ls.x; _myShieldSy = ls.y; }
+                        if (!_myShieldLogged)
+                        {
+                            _myShieldLogged = true;
+                            var sgo = GetMember(shSr, "gameObject");
+                            _ctx.Log($"орбиты (свои): Щит рисует «{NameOf(sgo)}» (родитель «{NameOf(GetMember(GetMember(shTr, "parent"), "gameObject"))}», детей {GetMember(shTr, "childCount")}), смещение ({_myShieldDx:0.00}; {_myShieldDy:0.00}), масштаб {_myShieldSx:0.##}");
+                        }
+                    }
+                    catch (Exception e) { if (++_orbFails <= 6) _ctx.Log("орбиты: щит: " + Inner(e).Message); }
+                }
                 _myImgSatA = _myOrbSatA > 0 ? ImageOf(ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesA"), 0)) : null;
                 _myImgSatB = _myOrbSatB > 0 ? ImageOf(ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesB"), 0)) : null;
                 _myImgSpirit = _myOrbSpirits > 0 ? ImageOf(ItemAt(GetMember(hero, "List_ObjSpirit"), 1)) : null;
-                string state = $"щит {(_myOrbShield ? "есть" : "нет")} «{_myImgShield}», спутники {_myOrbSatA}+{_myOrbSatB} «{_myImgSatA}», духи {_myOrbSpirits} «{_myImgSpirit}», электрозона {(_myZone ? $"есть ×{_myZoneSx:0.##}" : "нет")}";
+                // в журнал — только при смене числа или включения (картинки Спутников и Духов — кадры анимации, меняются постоянно)
+                string state = $"щит {(_myOrbShield ? "есть" : "нет")}, спутники {_myOrbSatA}+{_myOrbSatB}, духи {_myOrbSpirits}, электрозона {(_myZone ? $"есть ×{_myZoneSx:0.##}" : "нет")}";
                 if (state != _myOrbState && (_myOrbShield || _myZone || _myOrbSatA + _myOrbSatB + _myOrbSpirits > 0))
                 {
                     _myOrbState = state;
-                    if (_myOrbLogs++ < 12) _ctx.Log("орбиты (свои): " + state);
+                    if (_myOrbLogs++ < 12) _ctx.Log($"орбиты (свои): {state}; картинки: щит «{_myImgShield}», спутник «{_myImgSatA}», дух «{_myImgSpirit}»");
                 }
             }
             catch (Exception e) { if (++_orbFails <= 3) _ctx.Log("орбиты: " + Inner(e).Message); }
@@ -156,7 +183,12 @@ namespace MagicSurvivalCoop
             w.WriteStartObject("orb");
             w.WriteNumber("sa", _myOrbSatA); w.WriteNumber("sb", _myOrbSatB); w.WriteNumber("sp", _myOrbSpirits); w.WriteNumber("sh", _myOrbShield ? 1 : 0);
             w.WriteNumber("aa", Math.Round(_myOrbAngA, 3)); w.WriteNumber("ab", Math.Round(_myOrbAngB, 3));
-            if (_myImgShield != null) w.WriteString("ish", _myImgShield);
+            if (_myImgShield != null)
+            {
+                w.WriteString("ish", _myImgShield);
+                w.WriteNumber("shx", Math.Round(_myShieldDx, 3)); w.WriteNumber("shy", Math.Round(_myShieldDy, 3));
+                w.WriteNumber("shs", Math.Round(_myShieldSx, 3)); w.WriteNumber("sht", Math.Round(_myShieldSy, 3));
+            }
             if (_myImgSatA != null) w.WriteString("isa", _myImgSatA);
             if (_myImgSatB != null) w.WriteString("isb", _myImgSatB);
             if (_myImgSpirit != null) w.WriteString("isp", _myImgSpirit);
@@ -166,7 +198,7 @@ namespace MagicSurvivalCoop
                 foreach (var v in _mySpiritOff) w.WriteNumberValue(v);
                 w.WriteEndArray();
             }
-            if (_myZone) { w.WriteNumber("ez", 1); w.WriteNumber("ezx", Math.Round(_myZoneSx, 3)); w.WriteNumber("ezy", Math.Round(_myZoneSy, 3)); }
+            if (_myZone) { w.WriteNumber("ez", 1); w.WriteNumber("eza", _myZoneOn ? 1 : 0); w.WriteNumber("ezx", Math.Round(_myZoneSx, 3)); w.WriteNumber("ezy", Math.Round(_myZoneSy, 3)); }
             w.WriteEndObject();
         }
 
@@ -231,7 +263,26 @@ namespace MagicSurvivalCoop
                     ?.MakeGenericMethod(typeof(SpriteRenderer));
                 _rendererGetters[t] = m;
             }
-            return m?.Invoke(go, new object[] { true });
+            object r = null;
+            // сначала свой компонент (обычный GetComponent<T>), потом дети — GetComponentInChildren(true) на телефоне иногда пуст
+            var own = GetComponentOf(go);
+            if (own != null) return own;
+            r = m?.Invoke(go, new object[] { true });
+            return r;
+        }
+
+        private readonly Dictionary<Type, MethodInfo> _componentGetters = new Dictionary<Type, MethodInfo>();
+        private object GetComponentOf(object go)
+        {
+            var t = go.GetType();
+            if (!_componentGetters.TryGetValue(t, out var m))
+            {
+                m = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(x => x.Name == "GetComponent" && x.IsGenericMethodDefinition && x.GetParameters().Length == 0)
+                    ?.MakeGenericMethod(typeof(SpriteRenderer));
+                _componentGetters[t] = m;
+            }
+            try { return m?.Invoke(go, null); } catch { return null; }
         }
         // Картинки — только по указателям: обёртка UnityEngine.Sprite из Il2CppInterop роняет игру под Mono (MS_KIT, MELONLOADER.md).
         // «Картинка» ниже — либо IntPtr (на телефоне), либо объект-заглушка Sprite (в тестах без Unity).
@@ -442,7 +493,7 @@ namespace MagicSurvivalCoop
                 if (hero != null)
                 {
                     Remember(SpriteOf(GetMember(hero, "SpriteRenderer_Shield")));
-                    Remember(SpriteOf(RendererOf(GetMember(hero, "Obj_Shield"))));
+
                     Remember(SpriteOf(RendererOf(ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesA"), 0))));
                     Remember(SpriteOf(RendererOf(ItemAt(GetMember(hero, "Array_Obj_UnitSatellitesB"), 0))));
                     Remember(SpriteOf(RendererOf(ItemAt(GetMember(hero, "List_ObjSpirit"), 1))));
@@ -507,6 +558,7 @@ namespace MagicSurvivalCoop
             st.Spirits = Clamp((int)Protocol.Num(o, "sp"), 0, 14);
             st.Shield = Protocol.Bool(o, "sh");
             st.Zone = Protocol.Bool(o, "ez");
+            st.ZoneOn = st.Zone && Protocol.Num(o, "eza", 1) != 0;          // без «eza» (1.4.4–1.4.5) — показывать всё время
             if (st.Zone) { st.ZoneSx = Protocol.Num(o, "ezx", 1); st.ZoneSy = Protocol.Num(o, "ezy", 1); }
             if (o.TryGetProperty("so", out var so) && so.ValueKind == JsonValueKind.Array)
             {
@@ -518,6 +570,11 @@ namespace MagicSurvivalCoop
             }
             else st.SpiritOff = null;
             st.ImgShield = Protocol.Str(o, "ish") ?? st.ImgShield;
+            if (o.TryGetProperty("shx", out _))
+            {
+                st.ShieldDx = Protocol.Num(o, "shx"); st.ShieldDy = Protocol.Num(o, "shy", 0.03);
+                st.ShieldSx = Protocol.Num(o, "shs", 1); st.ShieldSy = Protocol.Num(o, "sht", 1);
+            }
             st.ImgSatA = Protocol.Str(o, "isa") ?? st.ImgSatA;
             st.ImgSatB = Protocol.Str(o, "isb") ?? st.ImgSatB;
             st.ImgSpirit = Protocol.Str(o, "isp") ?? st.ImgSpirit;
@@ -630,16 +687,23 @@ namespace MagicSurvivalCoop
                 EnsureCount(v.SatA, st.SatA, hero, "Array_Obj_UnitSatellitesA", 0, st.ImgSatA, now, "спутник");
                 EnsureCount(v.SatB, st.SatB, hero, "Array_Obj_UnitSatellitesB", 0, st.ImgSatB, now, "спутник B");
                 EnsureCount(v.Spirits, st.Spirits, hero, "List_ObjSpirit", 1, st.ImgSpirit, now, "дух");
-                if (st.Shield && v.Shield == null) v.Shield = MakeClone(GetMember(hero, "Obj_Shield"));
+                if (st.Shield && v.Shield == null && !v.ShieldFailed)
+                {
+                    // шаблон — объект с рендером Щита (SpriteRenderer_Shield.gameObject); если это что-то крупное — не копируем
+                    var tpl = GetMember(GetMember(hero, "SpriteRenderer_Shield"), "gameObject");
+                    int kids = Convert.ToInt32(GetMember(GetMember(tpl, "transform"), "childCount") ?? 0);
+                    if (tpl == null || kids > 4) { v.ShieldFailed = true; _ctx.Log($"орбиты: шаблон Щита не подходит («{NameOf(tpl)}», детей {kids})"); }
+                    else v.Shield = MakeClone(tpl);
+                }
                 if (v.Shield != null)
                 {
                     if (st.Shield) ApplyImage(v.Shield, st.ImgShield, now, "щит");
                     Show(v.Shield, st.Shield);
                 }
                 if (st.Zone && v.Zone == null) v.Zone = MakeClone(GetMember(hero, "Obj_ElectricZone"));
-                if (v.Zone != null) Show(v.Zone, st.Zone);
+                if (v.Zone != null) Show(v.Zone, st.ZoneOn);
                 // строку для журнала собираем, только когда что-то изменилось (не каждый кадр)
-                var key = (st.SatA, st.SatB, st.Spirits, st.Shield, st.Zone, st.ImgSatA, st.ImgSpirit, st.ImgShield);
+                var key = (st.SatA, st.SatB, st.Spirits, st.Shield, st.Zone, "", "", "");
                 if (!v.HasKey || !key.Equals(v.LastKey))
                 {
                     v.HasKey = true; v.LastKey = key;
@@ -667,8 +731,16 @@ namespace MagicSurvivalCoop
             Ring(v.SatB, st.SatB, g, SatRadius, st.DispB);
             if (st.SpiritOff != null && st.SpiritOff.Length > 0) PlaceSpirits(v.Spirits, st, g, fdt);
             else Ring(v.Spirits, st.Spirits, g, SpiritRadius, now * 0.8);          // друг на старой версии — смещений нет
-            if (v.Shield != null && st.Shield) v.Shield.Tr.position = new Vector3(g.x, g.y + 0.03f, g.z);
-            if (v.Zone != null && st.Zone)
+            if (v.Shield != null && st.Shield)
+            {
+                v.Shield.Tr.position = new Vector3((float)(g.x + st.ShieldDx), (float)(g.y + st.ShieldDy), g.z);
+                if (st.ShieldSx != v.ShieldSx || st.ShieldSy != v.ShieldSy)
+                {
+                    v.ShieldSx = st.ShieldSx; v.ShieldSy = st.ShieldSy;
+                    try { v.Shield.Tr.GetType().GetProperty("localScale")?.SetValue(v.Shield.Tr, new Vector3((float)st.ShieldSx, (float)st.ShieldSy, 1f)); } catch { }
+                }
+            }
+            if (v.Zone != null && st.ZoneOn)
             {
                 v.Zone.Tr.position = new Vector3(g.x, g.y, g.z);
                 if (!v.ZoneScaleFailed && (st.ZoneSx != v.ZoneSx || st.ZoneSy != v.ZoneSy))
@@ -722,6 +794,7 @@ namespace MagicSurvivalCoop
         /// <summary>Конец боя: картинки и объекты прошлого боя больше не годятся.</summary>
         private void ResetOrbits()
         {
+            _myShieldLogged = false;
             _sprites.Clear(); _spriteScanDone = false; _spriteHarvestAt = -1; _myOrbState = null; _myOrbLogs = 0; _orbStateLogs = 0; _mySpiritTr.Clear(); _mySpiritOff.Clear();
         }
     }
