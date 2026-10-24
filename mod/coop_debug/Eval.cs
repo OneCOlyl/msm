@@ -58,8 +58,8 @@ namespace MagicSurvivalCoop.Debug
 
         public const string Help =
             "команды: get <путь> | ls <путь> [regex] (простые значения) | lsall <путь> [regex] (все члены) | methods <путь> [regex] | " +
-            "nested <путь> [regex] (вложенные типы, корутины) | set <путь> <значение> | call <путь.Метод> [арг…] | hook <Тип> <regex вложенного> | iters. " +
-            "Корни: hero, mgr, abil, db (Z_Database), T:<Тип> (статические члены), iter:<имя> (пойманная корутина), last. Путь: корень.Член.Член[0]";
+            "nested <путь> [regex] (вложенные типы, корутины) | set <путь> <значение> | call <путь.Метод> [арг…] | hook <Тип> <regex вложенного> | iters | find <regex> (объекты сцены → found[i]). " +
+            "Корни: hero, mgr, abil, db (Z_Database), T:<Тип игры>, U:<Тип Unity> (статические члены), iter:<имя>, found, last. Путь: корень.Член.Член[0]";
 
         private static void Need(string[] a, int n) { if (a.Length < n) throw new ArgumentException("мало аргументов"); }
 

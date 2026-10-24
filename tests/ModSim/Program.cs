@@ -307,30 +307,140 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     var e1 = new FakeEnemy(A, 1); A.Combat.Enemies.Add(e1);
     Frames(30);
     Check(B.Combat.Enemies.OfType<FakeEnemy>().Count(e => e.Puppet && e.Unit_IsLive && e.UnitID == 1) == 2, "новый враг хоста появился у гостя (рядом с копией врага из сферы гостя)");
+    var buffed = new FakeEnemy(A, 16) { UnitCreateID = 3, ApplyCreateEffectID = 1, LineColorR = 0.95f, LineColorG = 0.05f, LineColorB = 0.12f };
+    A.Combat.Enemies.Add(buffed); buffed.Fire(1, 0);                       // усиленный моб хоста: тип 16, varA 1, «переход», красная обводка
+    Frames(30);
+    var bc = B.Combat.Enemies.OfType<FakeEnemy>().FirstOrDefault(e => e.Puppet && e.UnitID == 16);
+    Check(bc != null && bc.VarA == 1, $"копия усиленного моба создана с varA 1 (Start_Unit как у игры): {bc?.VarA}");
+    Check(bc != null && bc.UnitCreateID == 3 && bc.ApplyCreateEffectID == 1 && Math.Abs(bc.LineColorR - 0.95f) < 0.01f,
+          $"и как «переход» с красной обводкой: создание {bc?.UnitCreateID}, обводка {bc?.LineColorR}");
     Check(FakeManager.List_BattleUnitEnemy_Empty.Count < 30, $"пул боссов кончился — пополнен из обычного пула (статического; там осталось {FakeManager.List_BattleUnitEnemy_Empty.Count})");
-    am.Time_Min = 2; am.Time_Sec = 30; bm.Time_Min = 2; bm.Time_Sec = 21;   // у гостя была своя пауза — часы отстали
+    am.Time_Min = 2; am.Time_Sec = 30; am.EnemyLevelNum = 150; am.EnemyWaveID = 5;
+    bm.Time_Min = 2; bm.Time_Sec = 21; bm.EnemyLevelNum = 141; bm.EnemyWaveID = 4;   // у гостя была своя пауза — отстал
     Frames(30);
-    Check(bm.Time_Min == 2 && Math.Abs(bm.Time_Sec - 30) <= 1, $"часы гостя подстроены под хоста: {bm.Time_Min}:{bm.Time_Sec:00}");
-    {   // счётчик секунд — переменная корутины Play_Time (как на телефоне: Time_* игра пишет из неё)
-        var pt = new FakePlayTime { Counter = 140, Other = 7, __1__state = 140 };
-        var iters = (System.Collections.IDictionary)B.Get("_timeIters"); iters["_Play_Time_d__1"] = pt;
-        var fix = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session").GetMethod("FixPlayTime", BindingFlags.NonPublic | BindingFlags.Instance);
-        int n = (int)fix.Invoke(B.Session, new object[] { 140, 150 });
-        Check(n == 1 && pt.Counter == 150 && pt.Other == 7, $"в корутине переписан счётчик секунд (140 → {pt.Counter}), прочее не тронуто");
-        Check(pt.__1__state == 140, "служебное состояние корутины (__1__state) не тронуто — иначе часы встают (1.5.10)");
-        iters.Clear();
-    }
-    am.Time_Min = 3; am.Time_Sec = 0; am.Battle_ClearWaveON = 1;
+    Check(bm.EnemyWaveID == 4, $"номер волны гостю не подставляется (EnemyWaveID 5 → 6 начинает босс-волну — она повторялась): {bm.EnemyWaveID}");
+    am.Time_Min = 3; am.Time_Sec = 0; am.Battle_ClearWaveON = 1; am.EnemyLevelNum = 180;
     Frames(15);                                                          // состояние хоста с босс-волной дошло до гостя
-    bm.Time_Min = 2; bm.Time_Sec = 50;
+    bm.Time_Min = 2; bm.Time_Sec = 50; bm.EnemyLevelNum = 170;
     Frames(30);
-    Check(bm.Time_Min == 2 && bm.Time_Sec == 50, "во время босс-волны часы не трогаем");
+    Check(bm.EnemyLevelNum == 170, "во время босс-волны часы не трогаем");
     am.Battle_ClearWaveON = 0;
+    {   // своя босс-волна гостя: его босс прячется (не убирается без смерти), хост победил своего — убит уроном
+        am.Battle_ClearWaveON = 1; bm.Battle_ClearWaveON = 1;
+        Frames(15);
+        var boss = new FakeEnemy(B, 50); boss.Transform_ObjUnit.position = B.Combat.Pos; B.Combat.Enemies.Add(boss); boss.Fire();
+        Frames(20);
+        Check(!boss.DestroyedSimple && boss.Unit_IsLive && boss.CoroutinesStopped, "свой босс гостя не убран, а спрятан (без ИИ)");
+        Check(Math.Abs(boss.Transform_ObjUnit.position.x - B.Combat.Pos.x) > 100, "и стоит далеко от героя");
+        am.Battle_ClearWaveON = 0;                                          // хост победил своего босса
+        Frames(30);
+        Check(!boss.Unit_IsLive && !boss.DestroyedSimple, "хост победил — свой босс гостя убит уроном (игра засчитает победу)");
+        bm.Battle_ClearWaveON = 0;
+    }
     B.Ctx.Set["world"] = 0;
     Frames(10);
     Check(!B.Combat.Enemies.OfType<FakeEnemy>().Any(e => e.Puppet && e.Unit_IsLive), "общие враги выключены — копии убраны");
     Check(bm.EnemyCreateNum == 2 && bm.EnemyCreateNum_Max == 300, $"и свой спавн гостя вернулся: {bm.EnemyCreateNum}/{bm.EnemyCreateNum_Min}/{bm.EnemyCreateNum_Max}");
     A.Ctx.Set["world"] = 0; A.Combat.Enemies.Clear(); B.Combat.Enemies.Clear();
+}
+
+Console.WriteLine("2и. общая пауза: друг выбирает умение — пауза и у хоста");
+{
+    A.Set("_battleStartSec", -1000.0); B.Set("_battleStartSec", -1000.0);   // старт боя давно — ожидание на старте не мешает
+    var own = new HashSet<ModContext>();
+    var sess = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session");
+    sess.GetField("OwnPauseOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, (Func<ModContext, bool>)(c => own.Contains(c)));
+    void Frames(int n) { for (int fr = 0; fr < n; fr++) { A.Call("FrameStep"); A.Tick(); B.Tick(); B.Call("FrameStep"); Thread.Sleep(16); } }
+    Time.timeScale = 1;
+    A.Set("_battleMgr", new FakeManager { Owner = A }); B.Set("_battleMgr", new FakeManager { Owner = B });   // часы равны — ждать некому
+    Frames(10);
+    own.Add(B.Ctx); Time.timeScale = 0;                                   // друг открыл окно выбора умения — игра друга встала
+    Frames(20);
+    Check(A.Toasts.Any(t => t.Contains("выбирает умение")) && (bool)A.Get("_pauseForced"), "у хоста — пауза и подпись «Друг выбирает умение»");
+    Check(!(bool)B.Get("_pauseForced"), "у самого друга мод паузу не держит (иначе паузы держали бы друг друга)");
+    Time.timeScale = 0.8f;                                                // где-то игра поменяла скорость — мод снова ставит 0
+    Frames(5);
+    Check(Time.timeScale == 0, "пока друг выбирает, скорость держится на 0");
+    own.Remove(B.Ctx);                                                    // друг выбрал умение
+    Frames(20);
+    Check(!(bool)A.Get("_pauseForced") && Time.timeScale > 0.5f, $"друг выбрал — пауза снята, скорость вернулась: {Time.timeScale}");
+    // друг вышел из игры прямо в окне выбора: состояние больше не приходит — пауза не должна висеть вечно (1.6.0 висела)
+    own.Add(B.Ctx); Frames(20);
+    Check((bool)A.Get("_pauseForced"), "друг снова выбирает — пауза");
+    var swGone = System.Diagnostics.Stopwatch.StartNew();
+    while (swGone.Elapsed.TotalSeconds < 4) { A.Call("FrameStep"); Thread.Sleep(16); }   // таймер хоста стоит (пауза), от друга ничего
+    Check(!(bool)A.Get("_pauseForced") && Time.timeScale > 0.5f, "друг пропал (3 с без состояния) — пауза снята, хотя таймер мода стоял");
+    own.Remove(B.Ctx); Frames(20);
+    // хост погиб, пока стоял на паузе из-за друга: пауза снимается, скорость возвращается (иначе экран смерти не появится)
+    own.Add(B.Ctx); Frames(20);
+    Check((bool)A.Get("_pauseForced"), "пауза из-за друга");
+    A.Hero.Hp = 0; Frames(5);
+    Check(!(bool)A.Get("_pauseForced") && Time.timeScale > 0.5f, "свой герой погиб — пауза снята, время идёт (экран смерти)");
+    A.Hero.Hp = 100; own.Remove(B.Ctx); Frames(20);
+    // часы хоста впереди на 4 с (друг вошёл в бой позже) — хост ждёт
+    var am2 = new FakeManager { Owner = A, Time_Min = 0, Time_Sec = 14 }; var bm2 = new FakeManager { Owner = B, Time_Min = 0, Time_Sec = 14 };
+    A.Set("_battleMgr", am2); B.Set("_battleMgr", bm2);
+    Time.timeScale = 1;
+    Frames(15); bm2.Time_Sec = 11;                                       // часы были равны — друг отстал на 3 с
+    Frames(20);
+    Check(!(bool)A.Get("_pauseForced") && !(bool)B.Get("_pauseForced"), "часы хоста впереди на 3 с — никто не стоит на паузе");
+    Check((bool)B.Get("_catchUp") && Math.Abs(Time.timeScale - 1.25f) < 0.01f, $"отставший друг ускоряется ×1,25: {Time.timeScale}");
+    bm2.Time_Sec = 14; Frames(20);                                        // друг догнал
+    Check(!(bool)B.Get("_catchUp") && Time.timeScale == 1, $"друг догнал — обычная скорость: {Time.timeScale}");
+    bm2.Time_Sec = 11; Time.timeScale = 0.5f; Frames(20);                // игра друга сама замедлилась — ускоряем от её скорости
+    Check(Math.Abs(Time.timeScale - 0.625f) < 0.01f, $"игра замедлена до 0,5 — ускорение ×1,25 от неё: {Time.timeScale}");
+    bm2.Time_Sec = 14; Frames(20);
+    Check(Math.Abs(Time.timeScale - 0.5f) < 0.01f, $"догнал — вернулась скорость игры 0,5: {Time.timeScale}");
+    bm2.Time_Sec = 14; Time.timeScale = 1; Frames(10);
+    {   // старт боя: хост вошёл в бой раньше на 5 с — ждёт друга («Ждём …»), потом продолжает
+        var clk = (System.Diagnostics.Stopwatch)sess.GetField("Clock", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+        A.Set("_battleStartSec", clk.Elapsed.TotalSeconds); A.Set("_startWaitSince", 0.0);
+        var am3 = new FakeManager { Owner = A, Time_Sec = 8 }; var bm3 = new FakeManager { Owner = B, Time_Sec = 3 };
+        A.Set("_battleMgr", am3); B.Set("_battleMgr", bm3); Time.timeScale = 1;
+        Frames(20);
+        Check((bool)A.Get("_pauseForced") && A.Toasts.Any(x => x.Contains("Ждём")), "старт: хост впереди на 5 с — ждёт друга («Ждём …»)");
+        bm3.Time_Sec = 8; Frames(20);
+        Check(!(bool)A.Get("_pauseForced") && Time.timeScale > 0.5f, "друг догнал — хост продолжил");
+        A.Set("_battleStartSec", -1000.0);
+    }
+    {   // после босса: у хоста бой кончился (поднял обелиск), у друга ещё идёт — хост ждёт
+        // начало: у хоста босс-волна началась раньше — друг (часы ещё не 3:00) НЕ ждёт (1.6.14 вставал — взаимная блокировка)
+        var am5 = new FakeManager { Owner = A, Time_Min = 3, Time_Sec = 0, Battle_ClearWaveON = 1 }; var bm5 = new FakeManager { Owner = B, Time_Min = 2, Time_Sec = 58 };
+        A.Set("_battleMgr", am5); B.Set("_battleMgr", bm5); Time.timeScale = 1;
+        Frames(20);
+        Check(!(bool)B.Get("_pauseForced"), "у хоста босс-волна началась раньше — друг не ждёт (его часам надо дойти до 3:00)");
+        var am4 = new FakeManager { Owner = A, Time_Min = 3, Time_Sec = 5, AreaChangeNum = 1 }; var bm4 = new FakeManager { Owner = B, Time_Min = 3, Time_Sec = 0, Battle_ClearWaveON = 1 };
+        A.Set("_battleMgr", am4); B.Set("_battleMgr", bm4); Time.timeScale = 1;
+        Frames(20);
+        Check(!(bool)A.Get("_pauseForced"), "у друга ещё бой с боссом — хост не стоит на паузе (1.6.15 вставал, пока его обелиск лежал не поднятым)");
+        bm4.Battle_ClearWaveON = 0; bm4.Time_Sec = 5; bm4.AreaChangeNum = 1; Frames(20);
+        // большое расхождение (10 с, у друга была замедлена игра) — хост ждёт; разница 2 с — продолжает
+        am4.Time_Sec = 30; bm4.Time_Sec = 20; Frames(20);
+        Check((bool)A.Get("_pauseForced") && A.Toasts.Any(x => x.Contains("(часы)")), "часы хоста впереди на 10 с — хост ждёт");
+        bm4.Time_Sec = 28; Frames(20);
+        Check(!(bool)A.Get("_pauseForced"), "разница 2 с — хост продолжил (дальше догоняет ускорение)");
+        Time.timeScale = 1;
+    }
+    sess.GetField("OwnPauseOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+    {   // своя пауза — по скорости игры (флаг окна выбора залипает в True, сундук флагов не трогает)
+        var upd = sess.GetMethod("UpdateOwnPause", BindingFlags.NonPublic | BindingFlags.Instance);
+        var own0 = sess.GetMethod("OwnPause", BindingFlags.NonPublic | BindingFlags.Instance);
+        bool Own() => (bool)own0.Invoke(A.Session, null);
+        A.Set("_pauseForced", false);
+        upd.Invoke(A.Session, new object[] { 0f });
+        Check(Own(), "игра встала сама (сундук, окно выбора) — своя пауза");
+        upd.Invoke(A.Session, new object[] { 1f });
+        Check(!Own(), "игра пошла — своей паузы нет (флаг окна может залипнуть — не смотрим на него)");
+        upd.Invoke(A.Session, new object[] { 0f }); A.Set("_pauseForced", true);
+        upd.Invoke(A.Session, new object[] { 0f });
+        Check(Own(), "мод держит паузу из-за друга, а своё окно ещё открыто — своя пауза помнится");
+        upd.Invoke(A.Session, new object[] { 1f });
+        Check(!Own(), "игра попробовала продолжить (окно закрыли) — своей паузы больше нет");
+        upd.Invoke(A.Session, new object[] { 0f });
+        Check(!Own(), "пауза мода — не своя (иначе паузы держали бы друг друга)");
+        A.Set("_pauseForced", false);
+    }
+    Time.timeScale = 1;
 }
 
 B.Combat.Pos = new Vector3(150, 100, 0);
@@ -516,7 +626,10 @@ class FakeEnemy : MonoBehaviour, IEnemy
     public double DamageTaken;
     public Transform Transform_ObjUnitSprite = new Transform { localScale = new Vector3(1, 1, 1) };
     public void Unit_Destroy_Simple() { DestroyedSimple = true; Unit_IsLive = false; _p.Combat.Enemies.Remove(this); }
-    public void Fire() => _p.Ctx.Fire("After C_Battle_EnemyUnit.Start_Unit/3", this, new object[] { UnitID, 0f, 0f });   // как хук Harmony
+    public void Fire(float a = 0, float b = 0) => _p.Ctx.Fire("After C_Battle_EnemyUnit.Start_Unit/3", this, new object[] { UnitID, a, b });   // как хук Harmony
+    public float VarA, VarB;
+    public int UnitCreateID = 1, ApplyCreateEffectID; public float LineColorR, LineColorG, LineColorB;
+    public void Start_Unit(int id, float a, float b) { UnitID = id; VarA = a; VarB = b; Fire(a, b); }
     int IEnemy.Id => UnitID; double IEnemy.Hp => 20; Vector3 IEnemy.Pos => Transform_ObjUnit.position; bool IEnemy.Alive => Unit_IsLive; object IEnemy.Raw => this;
 }
 class StillEnemy : IEnemy { public Vector3 P; public int Id => 1; public double Hp => 20; public Vector3 Pos => P; public bool Alive => true; public object Raw => this; }
@@ -561,7 +674,13 @@ class FakeManager
 {
     public Player Owner;
     public int EnemyCreateNum = 2, EnemyCreateNum_Min = 0, EnemyCreateNum_Max = 300;
-    public int Time_Min, Time_Sec, Battle_ClearWaveON, EnemyWaveID = 1;
+    public int Time_Min, Time_Sec, Battle_ClearWaveON, EnemyWaveID = 1, EnemyLevelNum, AreaChangeNum;
+    public readonly List<string> Coroutines = new();
+    public void StartCoroutine(string name)
+    {
+        if (name.StartsWith("Play_Armageddon")) throw new MissingMethodException(name);   // проверки Армагеддона — по таблице объектов
+        Coroutines.Add(name); if (name == "Play_AreaChange") { AreaChangeNum++; Battle_ClearWaveON = 0; }
+    }
     public static int ApplyBossNum { get; set; }
     // как в игре: статические пулы; Create_UnitEnemyBoss берёт из пула боссов (маленький; при 1 заготовке уже не создаёт),
     // погибшие уходят в обычный пул

@@ -40,4 +40,5 @@ namespace UnityEngine
     public class Behaviour : Component { }
     public class MonoBehaviour : Behaviour { public bool CoroutinesStopped; public void StopAllCoroutines() => CoroutinesStopped = true; }
     public class Rigidbody : Component { public bool isKinematic { get; set; } }
+    public static class Time { public static float timeScale { get; set; } = 1; }
 }

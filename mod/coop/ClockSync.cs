@@ -20,80 +20,26 @@ namespace MagicSurvivalCoop
     {
         private const int ClockTolerance = 2;
 
-        // Time_Min/Time_Sec и EnemyLevelNum игра каждую секунду пишет из своего счётчика (журнал 1.5.8: «подстроил 0:00 → 0:05»,
-        // через секунду снова 0:01). 1.5.10 искал его в корутине Play_Time — там только служебное __1__state, и мод по ошибке писал
-        // в него секунды: корутина ломалась, часы на экране вставали. 1.5.11: служебные переменные не трогаем никогда; хуки на все
-        // корутины менеджера со словом Time — их переменные в журнал, счётчик правим там, где он найдётся.
-        private readonly Dictionary<string, object> _timeIters = new Dictionary<string, object>();
-        private readonly HashSet<string> _timeItersLogged = new HashSet<string>();
-        private bool _ptHooked;
-        private int _ptFixLogs;
-
-        private void InstallPlayTimeHook()
-        {
-            try
-            {
-                var mgr = Hooks.FindType("C_Battle_Manager");
-                var nested = mgr?.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic).Where(t => t.Name.Contains("Time")).ToList() ?? new List<Type>();
-                foreach (var t in nested)
-                {
-                    var mi = t.GetMethod("MoveNext", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (mi == null) continue;
-                    string name = t.Name;
-                    try
-                    {
-                        var unhook = Hooks.HookBefore(_ctx.Id, mi, (self, a) => { if (self != null) _timeIters[name] = self; });
-                        _ctx.OnCleanup(() => { try { unhook?.Invoke(); } catch { } });
-                        _ptHooked = true;
-                    }
-                    catch (Exception e) { _ctx.Log($"часы боя: хук на {name} не поставлен: {Inner(e).Message}"); }
-                }
-                _ctx.Log($"часы боя: хуки на корутины: {string.Join(", ", nested.Select(t => t.Name))}");
-            }
-            catch (Exception e) { _ctx.Log("часы боя: хуки на корутины не поставлены: " + Inner(e).Message); }
-        }
-
-        /// <summary>Служебные переменные корутины (состояние, ссылка на менеджер) — не трогать.</summary>
-        private static bool ServiceVar(string n) => n.IndexOf("state", StringComparison.OrdinalIgnoreCase) >= 0 || n.StartsWith("__") || n.StartsWith("<>")
-                                                   || n.IndexOf("this", StringComparison.OrdinalIgnoreCase) >= 0 || n.StartsWith("Native");
-
-        private static List<PropertyInfo> IterVars(object it, bool withService = false)
-        {
-            if (it == null) return new List<PropertyInfo>();
-            return it.GetType().GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                .Where(p => p.GetIndexParameters().Length == 0 && p.CanWrite && (withService || !ServiceVar(p.Name))
-                            && (p.PropertyType == typeof(int) || p.PropertyType == typeof(float) || p.PropertyType == typeof(double)))
-                .ToList();
-        }
-
-        private static string IterDump(object it) => string.Join(", ", IterVars(it, true).Select(p => { try { return p.Name + "=" + Convert.ToString(p.GetValue(it), CultureInfo.InvariantCulture); } catch { return p.Name + "=?"; } }));
-
-        /// <summary>Переписать в корутинах «Time» несервисные переменные, равные нашим секундам, на секунды хоста. Сколько переписано.</summary>
-        private int FixPlayTime(int mine, int host)
-        {
-            int n = 0;
-            foreach (var it in _timeIters.Values)
-                foreach (var p in IterVars(it))
-                {
-                    double v;
-                    try { v = Convert.ToDouble(p.GetValue(it)); } catch { continue; }
-                    if (Math.Abs(v - mine) >= 0.999) continue;
-                    try { p.SetValue(it, Convert.ChangeType(host + (v - Math.Floor(v)), p.PropertyType, CultureInfo.InvariantCulture)); n++; } catch { }
-                }
-            return n;
-        }
-
+        // Часы боя игра выводит из часов сцены Unity (Time.timeSinceLevelLoad − ~3 с; консоль 23.10) — своего счётчика нет,
+        // подставленные Time_Min/Time_Sec она сразу пересчитывает. Поэтому часы держит общая пауза (SharedPause.cs), а здесь —
+        // только то, что игра хранит сама: счётчик усиления врагов EnemyLevelNum, номер волны и конец босс-волны.
         private int _hostClock = -1, _hostBossWave, _hostLevel = -1, _hostWave = -1, _hostBwPrev;
         private double _forceEndAt = -1;
+        // 1.6.9: смена области после победы над боссом. У гостя своя босс-волна сама не кончается (его босс — копия, гибнет вслед
+        // за хостом), часы стоят. Консоль 24.10: StartCoroutine("Play_AreaChange") у гостя заканчивает босс-волну и пускает часы,
+        // как у хоста после его обелиска (AreaChangeNum 0 → 1). Обелиск — только награда (выбор артефакта), с часами не связан.
+        private int _hostAreaChange = -1, _areaChangesStarted, _areaChangeDoneFor;
+        private bool _hostBossEnded;
+        private double _areaChangeWaitFrom = -1;
         private double _hostClockAt = -100;
         private int _clockFixes, _clockFixLogs;
         private double _clockCheckAt;
         private readonly Dictionary<string, string> _clockEvents = new Dictionary<string, string>();
-        private static readonly string[] ClockEventFields = { "EnemyWaveID", "Battle_ClearWaveON", "BossWave_VisionRatio" };
+        private static readonly string[] ClockEventFields = { "EnemyWaveID", "Battle_ClearWaveON", "BossWave_VisionRatio", "Transition_EnemyMax", "Transition_EnemyNum",
+                                                                    "ApplyBossNum", "ApplyBossGround_Size", "ApplyObeliskON", "AreaChangeNum", "AreaChangeID", "Battle_ClearON" };
 
         private void ResetClock()
         {
-            _timeIters.Clear(); _timeItersLogged.Clear(); _ptFixLogs = 0;     // корутины — новые в каждом бою
             _hostClock = -1; _hostBossWave = 0; _hostClockAt = -100; _hostLevel = -1; _hostWave = -1; _hostBwPrev = 0; _forceEndAt = -1;
             _clockFixes = _clockFixLogs = 0; _clockCheckAt = 0; _clockEvents.Clear();
         }
@@ -116,6 +62,7 @@ namespace MagicSurvivalCoop
             if (c < 0) return;
             w.WriteNumber("tm", c);
             w.WriteNumber("bw", MyBossWave());
+            int ac = MyAreaChange(); if (ac >= 0) w.WriteNumber("ac", ac);
             try { w.WriteNumber("lv", Convert.ToInt32(GetAny(_battleMgr, "EnemyLevelNum"))); w.WriteNumber("ew", Convert.ToInt32(GetAny(_battleMgr, "EnemyWaveID"))); } catch { }
         }
 
@@ -128,8 +75,11 @@ namespace MagicSurvivalCoop
             _hostLevel = (int)Protocol.Num(s, "lv", -1);
             _hostWave = (int)Protocol.Num(s, "ew", -1);
             _hostClockAt = Clock.Elapsed.TotalSeconds;
-            if (_hostBwPrev == 1 && _hostBossWave == 0) _forceEndAt = _hostClockAt + 1.5;   // у хоста босс-волна кончилась
+            // 1.6.8: босс-волну у гостя вслед за хостом больше не завершаем — у друга выпадал второй обелиск, а часы всё равно
+            // стояли до его подбора (часы идут после смены области: AreaChangeNum, наблюдатель 24.10).
+            if (_hostBwPrev == 1 && _hostBossWave == 0) _hostBossEnded = true;   // хост победил своего босса — пора убить своего
             _hostBwPrev = _hostBossWave;
+            _hostAreaChange = (int)Protocol.Num(s, "ac", -1);
         }
 
         /// <summary>4 раза в секунду: события часов в журнал (обе стороны); гость — подстройка часов под хоста.</summary>
@@ -139,10 +89,6 @@ namespace MagicSurvivalCoop
             _clockCheckAt = now + 0.25;
             int mine = MyClock();
             if (mine < 0) return;
-            if (mine >= 7)
-                foreach (var kv in _timeIters)
-                    if (_timeItersLogged.Add(kv.Key))
-                        _ctx.Log($"часы боя: переменные {kv.Key} в {mine / 60}:{mine % 60:00} (EnemyLevelNum {GetAny(_battleMgr, "EnemyLevelNum")}): {IterDump(kv.Value)}");
             foreach (var f in ClockEventFields)
             {
                 string v;
@@ -155,7 +101,7 @@ namespace MagicSurvivalCoop
             // у хоста босс-волна кончилась, а у гостя идёт (своего босса у гостя нет — его убрала чистка): закончить и у гостя
             if (_forceEndAt > 0 && now >= _forceEndAt)
             {
-                _forceEndAt = -1;
+                _forceEndAt = -1; _hostAreaChange = -1; _areaChangeWaitFrom = -1; _areaChangesStarted = 0; _areaChangeDoneFor = 0;
                 if (MyBossWave() != 0 && _hostBossWave == 0)
                 {
                     try
@@ -168,25 +114,40 @@ namespace MagicSurvivalCoop
                 }
             }
             if (_hostBossWave != 0 || MyBossWave() != 0) return;                 // босс-волну не трогаем
-            int diff = _hostClock - mine;
-            if (Math.Abs(diff) < ClockTolerance) return;
-            try
-            {
-                // журнал 1.5.7: Time_Min/Time_Sec игра выводит из своего счётчика секунд EnemyLevelNum (до 3:00 совпадает с ним),
-                // поэтому одни Time_* она сразу возвращала назад — ставим и счётчик, и номер волны
-                int fixedVars = FixPlayTime(mine, _hostClock);
-                if (fixedVars == 0 && _ptFixLogs++ < 3) _ctx.Log($"часы боя: в корутинах нет переменной, равной {mine} с: {string.Join(" | ", _timeIters.Select(kv => kv.Key + ": " + IterDump(kv.Value)))}");
-                if (_hostLevel >= 0) SetMember(_battleMgr, "EnemyLevelNum", _hostLevel);
-                if (_hostWave >= 0) SetMember(_battleMgr, "EnemyWaveID", _hostWave);
-                SetMember(_battleMgr, "Time_Min", _hostClock / 60);
-                SetMember(_battleMgr, "Time_Sec", _hostClock % 60);
-                _clockFixes++;
-                if (_clockFixLogs++ < 15)
-                    _ctx.Log($"часы боя: подстроил под хоста {mine / 60}:{mine % 60:00} → {_hostClock / 60}:{_hostClock % 60:00} ({(diff > 0 ? "+" : "")}{diff} с), переменных в корутинах {fixedVars}; волна {GetAny(_battleMgr, "EnemyWaveID")}, уровень врагов {GetAny(_battleMgr, "EnemyLevelNum")}, погода {GetAny(_battleMgr, "WeatherNum")}");
-            }
-            catch (Exception e) { if (_clockFixLogs++ < 15) _ctx.Log("часы боя: не подстроить: " + Inner(e).Message); }
+            // 1.6.7: номер волны и уровень врагов больше не подставляем. EnemyWaveID 5 → 6 у игры начинает босс-волну: друг
+            // поднимал свой обелиск, мод снова ставил ему волну хоста 6 — босс-файт начинался повторно. Часы держат общая
+            // пауза и догоняющее ускорение (SharedPause.cs).
         }
 
-        private string ClockSummary() => _hosting || _clockFixes == 0 ? "" : $"; часы подстроены под хоста {_clockFixes} раз (хук Play_Time {(_ptHooked ? "есть" : "нет")})";
+        private int MyAreaChange()
+        {
+            try { return Convert.ToInt32(GetAny(_battleMgr, "AreaChangeNum") ?? -1); } catch { return -1; }
+        }
+
+        /// <summary>Гость: у хоста прошла смена области, а у нас нет — через 1 с запустить её у себя (один раз на каждую).</summary>
+        /// <remarks>
+        /// 1.6.12: вызывается каждый кадр и на паузе — в 1.6.11 проверка шла только без паузы, а хост в это время выбирал артефакт
+        /// из обелиска (общая пауза держала гостя ~30 с), смена области запускалась на 34 с позже и повторно (сбивая первую,
+        /// пока корутина шла на паузе) — часы гостя так и стояли. Теперь — сразу и ровно один раз на каждую смену области хоста.
+        /// </remarks>
+        private void AreaChangeStep(double now)
+        {
+            if (_hosting || !_inRun || _battleMgr == null || _hostAreaChange < 0) return;
+            if (_hostAreaChange <= _areaChangeDoneFor) return;                    // эту смену области уже запускали
+            int mine = MyAreaChange();
+            if (mine < 0) return;
+            if (mine >= _hostAreaChange) { _areaChangeDoneFor = _hostAreaChange; return; }   // своя уже прошла (подняли обелиск сами)
+            if (MyBossWave() == 0 && _hostBossWave == 0 && mine + 1 < _hostAreaChange) { _areaChangeDoneFor = _hostAreaChange; return; }   // давно разошлись — не догоняем
+            _areaChangeDoneFor = _hostAreaChange;
+            try
+            {
+                _battleMgr.GetType().GetMethod("StartCoroutine", new[] { typeof(string) })?.Invoke(_battleMgr, new object[] { "Play_AreaChange" });
+                _areaChangesStarted++;
+                _ctx.Log($"часы боя: у хоста смена области ({_hostAreaChange}), у меня {mine} — запустил Play_AreaChange");
+            }
+            catch (Exception e) { _ctx.Log("часы боя: Play_AreaChange не запустить: " + Inner(e).Message); }
+        }
+
+        private string ClockSummary() => _hosting || _clockFixes == 0 ? "" : $"; уровень врагов и волна подтянуты к хосту {_clockFixes} раз";
     }
 }

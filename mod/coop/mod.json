@@ -2,7 +2,7 @@
   "id": "coop",
   "name": "Кооператив",
   "description": "Игра с друзьями (2–4) через Anywherelan/Tailscale/ZeroTier: друзья — союзники в вашем бою, их здоровье на экране, лечение друга.",
-  "version": "1.5.11",
+  "version": "1.6.17",
   "author": "coop",
   "main": "coop.dll",
   "depends": {

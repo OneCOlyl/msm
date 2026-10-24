@@ -2,7 +2,7 @@
   "id": "coop_debug",
   "name": "Кооператив: отладка",
   "description": "Для разработки: консоль на порту 8770 (только через USB/adb) — читать и менять поля игры во время боя. Игрокам не нужна.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "coop",
   "main": "coop_debug.dll",
   "icon": "icon.png"

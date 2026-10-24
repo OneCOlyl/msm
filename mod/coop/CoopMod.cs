@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.5.11";
+        public const string ModVersion = "1.6.17";
 
         public ModDef Define() => new ModDef
         {
@@ -43,6 +43,7 @@ namespace MagicSurvivalCoop
                 new ModOption { Key = "healCd", Label = "Перезарядка лечения, с", Default = 40, Min = 10, Max = 120, Step = 5 },
                 new ModOption { Key = "mirrorDmg", Label = "Урон магии друга у вас, % (0 — только эффект)", Default = 100, Min = 0, Max = 200, Step = 25 },
                 new ModOption { Key = "orbitals", Label = "Показывать Щит, Спутников и Духов друга (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
+                new ModOption { Key = "sharedPause", Label = "Общая пауза: пока друг выбирает умение, пауза у всех (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "world", Label = "Общие враги: у всех враги хоста (1 — да, 0 — нет; включить у всех игроков)", Default = 0, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "clockSync", Label = "Общие враги: часы боя гостя по хосту (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
                 new ModOption { Key = "puppetAi", Label = "Копии врагов: анимация и атаки игры (1) или замершие (0)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
@@ -146,6 +147,12 @@ namespace MagicSurvivalCoop
             public double ClockOff;
             public bool HasClock;
             public Transform GhostTr;          // объект союзника — берётся один раз, а не каждый кадр
+            public bool OwnPause;              // у друга своя пауза (окно выбора умения, меню) — общая пауза (1.6.0)
+            public int BattleClock = -1;       // часы боя друга, с (1.6.1: кто впереди — ждёт)
+            public bool BossWave;              // у друга идёт босс-волна (часы стоят до подбора его обелиска)
+            public int AreaChange = -1;        // сколько раз у друга прошла смена области (после каждого босса)
+            public double StateReal;           // Clock (реальные секунды) последнего состояния: таймер мода на паузе стоит (1.6.2)
+            public double OwnPauseSince = -1;  // с какого момента (Clock) у друга своя пауза; -1 — паузы нет
             public bool WorldGuest;            // друг играет в наших общих врагах и сам шлёт свой урон (1.5.5) — повтор его магии без урона
             public bool Mirror;                // друг пересылает свою магию (1.3+): союзник не стреляет сам, повторяет касты друга
             public readonly Queue<Cast> Casts = new Queue<Cast>();
@@ -187,7 +194,7 @@ namespace MagicSurvivalCoop
             InstallMagicHook();
             InstallWorldHooks();
             InstallTimeDiag();
-            InstallPlayTimeHook();
+            InstallItemDiag();
             try { ctx.Before("C_Battle_Manager", "Update", 0, (self, args) => { if (self != null) _battleMgr = self; FrameStep(); }); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
             ctx.OnCleanup(Shutdown);
@@ -276,6 +283,7 @@ namespace MagicSurvivalCoop
             while (_bgLog.TryDequeue(out var line)) _ctx.Log(line);
 
             _ctx.Guard("сеть", Pump);
+            _ctx.Guard("общая пауза", SharedPauseStep);
 
             MaybeSend();
 
@@ -299,6 +307,7 @@ namespace MagicSurvivalCoop
 
         private void Pump()
         {
+            _lastPumpSec = Clock.Elapsed.TotalSeconds;
             int n = 0;
             while (n++ < 200 && _client.Incoming.TryDequeue(out var m))
             {
@@ -418,6 +427,14 @@ namespace MagicSurvivalCoop
             p.Spell = (int)Protocol.Num(s, "spell");
             if (Protocol.Bool(s, "mirror")) p.Mirror = true;
             p.WorldGuest = Protocol.Bool(s, "wg");
+            bool op = Protocol.Bool(s, "op");
+            if (op && !p.OwnPause) p.OwnPauseSince = Clock.Elapsed.TotalSeconds;
+            if (!op) p.OwnPauseSince = -1;
+            p.OwnPause = op;
+            p.BattleClock = (int)Protocol.Num(s, "tm", -1);
+            p.BossWave = Protocol.Bool(s, "bw");
+            p.AreaChange = (int)Protocol.Num(s, "ac", -1);
+            p.StateReal = Clock.Elapsed.TotalSeconds;
             ReadOrbits(p, s, Clock.Elapsed.TotalSeconds);
             ReadEnemies(p, s);
             ReadClock(p, s);
@@ -516,6 +533,7 @@ namespace MagicSurvivalCoop
         {
             _ctx.Guard("итог магии", LogMagicSummary);
             StopArmaReplay();
+            ReleaseSharedPause();
             _ctx.Guard("итог общих врагов", LogWorldSummary);
             ResetWorld();
             _inRun = false;
@@ -588,7 +606,8 @@ namespace MagicSurvivalCoop
                 if (_inRun) WriteMyOrbits(w);
                 if (_inRun && _hosting && WorldOn) WriteEnemies(w);
                 if (_worldActive) w.WriteNumber("wg", 1);
-                if (_inRun) WriteClock(w);                    // мы пересылаем свою магию — пусть наш союзник у друзей не стреляет сам
+                if (_inRun) WriteClock(w);
+                if (_inRun && OwnPause()) w.WriteNumber("op", 1);                    // мы пересылаем свою магию — пусть наш союзник у друзей не стреляет сам
                 w.WriteNumber("t", Math.Round(Clock.Elapsed.TotalSeconds, 4));   // время снятия позиции — для интерполяции у друзей
             }));
         }
@@ -650,6 +669,8 @@ namespace MagicSurvivalCoop
                     _fpsFrames++;
                     if (now - _fpsSince >= 5) { _fpsLogged = true; _ctx.Log($"покадровое движение работает: {_fpsFrames / (now - _fpsSince):0} кадров/с"); }
                 }
+                // на паузе (timeScale 0) таймер мода может стоять — сеть и общую паузу ведём и отсюда, иначе не узнать, что друг продолжил
+                if (now - _lastPumpSec > 0.1) { _ctx.Guard("сеть", Pump); _ctx.Guard("общая пауза", SharedPauseStep); }
                 if (_inRun && _client.Connected) MaybeSend();
                 if (_inRun) ArmageddonStep(now);
                 if (_inRun && !_spells.Paused) WorldStep(now);

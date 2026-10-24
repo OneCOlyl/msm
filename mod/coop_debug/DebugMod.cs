@@ -24,7 +24,7 @@ namespace MagicSurvivalCoop.Debug
         {
             Id = "coop_debug",
             Name = "Кооператив: отладка",
-            Version = "0.1.0",
+            Version = "0.1.1",
             Description = "Для разработки: консоль на порту 8770 (только через USB/adb) — читать и менять поля игры во время боя. Игрокам не нужна.",
             OnEnable = ctx => _c = new DebugConsole(ctx),
             OnDisable = ctx => { _c?.Stop(); _c = null; },
@@ -43,6 +43,46 @@ namespace MagicSurvivalCoop.Debug
         private object _mgr, _abil;
         private readonly Dictionary<string, object> _iters = new Dictionary<string, object>();
         private readonly List<Action> _unhooks = new List<Action>();
+        private readonly List<object> _found = new List<object>();
+        private MethodInfo _findAll; private object _goType; private bool _findFailed;
+
+        /// <summary>Класс Unity по короткому имени (GameObject, Transform, Time…): UnityEngine.&lt;имя&gt; из загруженных сборок.</summary>
+        private static Type UnityType(string n) =>
+            AppDomain.CurrentDomain.GetAssemblies().Select(a => { try { return a.GetType("UnityEngine." + n); } catch { return null; } }).FirstOrDefault(t => t != null);
+
+        /// <summary>find &lt;regex&gt;: объекты сцены (активные) с подходящим именем — в found[i].</summary>
+        private string Find(string pattern)
+        {
+            if (_findFailed) return "поиск по сцене недоступен";
+            if (_findAll == null)
+            {
+                var ofType = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Il2CppInterop.Runtime.Il2CppType")).FirstOrDefault(t => t != null);
+                var of = ofType?.GetMethods(BindingFlags.Public | BindingFlags.Static).FirstOrDefault(m => m.Name == "Of" && m.IsGenericMethodDefinition && m.GetParameters().Length == 0);
+                var go = UnityType("GameObject");
+                var objT = UnityType("Object");
+                _findAll = objT?.GetMethods(BindingFlags.Public | BindingFlags.Static).FirstOrDefault(m => m.Name == "FindObjectsOfType" && !m.IsGenericMethod && m.GetParameters().Length == 1);
+                if (of == null || go == null || _findAll == null) { _findFailed = true; return "поиск по сцене недоступен (нет Il2CppType.Of / FindObjectsOfType)"; }
+                _goType = of.MakeGenericMethod(go).Invoke(null, null);
+            }
+            var arr = _findAll.Invoke(null, new[] { _goType });
+            int n = Convert.ToInt32(arr.GetType().GetProperty("Length")?.GetValue(arr) ?? 0);
+            var item = arr.GetType().GetMethod("get_Item", new[] { typeof(int) });
+            var rx = new Regex(pattern, RegexOptions.IgnoreCase);
+            _found.Clear();
+            var lines = new List<string>();
+            for (int i = 0; i < n; i++)
+            {
+                var o = item.Invoke(arr, new object[] { i });
+                string nm = null;
+                try { nm = _ev.Member(o, "name") as string; } catch { }
+                if (nm == null || !rx.IsMatch(nm)) continue;
+                if (_found.Count >= 200) break;
+                lines.Add($"found[{_found.Count}] {_ev.Describe(o, 1)}; {_ev.Describe(SafeGet(() => _ev.Member(_ev.Member(o, "transform"), "position")), 1)}");
+                _found.Add(o);
+            }
+            return $"объектов на сцене {n}, подходит {_found.Count}" + (lines.Count > 0 ? "\n" + string.Join("\n", lines) : "");
+        }
+        private static object SafeGet(Func<object> f) { try { return f(); } catch { return null; } }
 
         public DebugConsole(ModContext ctx)
         {
@@ -134,6 +174,8 @@ namespace MagicSurvivalCoop.Debug
                 case "db": return Hooks.FindType("Z_Database");
             }
             if (name.StartsWith("T:")) return Hooks.FindType(name.Substring(2));
+            if (name.StartsWith("U:")) return UnityType(name.Substring(2));
+            if (name == "found") return _found;
             if (name.StartsWith("iter:")) return _iters.TryGetValue(name.Substring(5), out var it) ? it : null;
             return null;
         }
@@ -143,6 +185,7 @@ namespace MagicSurvivalCoop.Debug
         {
             if (cmd == "iters")
                 return _iters.Count == 0 ? "корутины не пойманы (hook <Тип> <regex>)" : string.Join("\n", _iters.Keys.Select(k => "iter:" + k));
+            if (cmd == "find") return a.Length < 1 ? "find <regex имени>, например: find Clone" : Find(a[0]);
             if (cmd != "hook") return null;
             if (a.Length < 2) return "hook <Тип> <regex вложенного типа>, например: hook C_Battle_Manager Play_Time";
             var t = Hooks.FindType(a[0]);
