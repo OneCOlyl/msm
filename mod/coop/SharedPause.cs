@@ -221,7 +221,7 @@ namespace MagicSurvivalCoop
         private Partner StartWait(double nowR, ref string why)
         {
             int mine = MyClock();
-            if (mine < 0 || mine > 40 || nowR - Math.Max(_battleStartSec, _entryDoneSec) > 60) return null;   // окно — от конца ожидания входа
+            if (mine < 0 || mine > 40 || nowR - (_entryDoneSec > 0 ? Math.Max(_battleStartSec, _entryDoneSec) : _battleStartSec) > 60) return null;   // ждали входа — окно от конца ожидания
             if (_startWaitSince > 0 && nowR - _startWaitSince > 20) return null;
             var late = _partners.Values.Where(p => p.Battle && !p.Dead && p.BattleClock >= 0 && nowR - p.StateReal < 1.5 && mine - p.BattleClock >= (_pauseWhy == "старт" ? 1 : 2))
                                        .OrderBy(p => p.BattleClock).FirstOrDefault();
