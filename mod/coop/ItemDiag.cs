@@ -19,16 +19,15 @@ namespace MagicSurvivalCoop
 
         private void InstallItemDiag()
         {
-            try { _ctx.Before("C_Battle_Item", "Obtain_Item", 0, (self, a) => _ctx.Guard("предмет", () => { _obeliskBefore = ObeliskFlag(); OnItemObtain(self); })); }
+            try { _ctx.Before("C_Battle_Item", "Obtain_Item", 0, Hook("предмет: журнал", (self, a) => { _obeliskBefore = ObeliskFlag(); OnItemObtain(self); })); }
             catch (Exception e) { _ctx.Log("предметы: хук Obtain_Item недоступен: " + e.Message); }
-            try { _ctx.After("C_Battle_Item", "Obtain_Item", 0, (self, a) => _ctx.Guard("предмет", () => OnItemObtained(self))); }
+            try { _ctx.After("C_Battle_Item", "Obtain_Item", 0, Hook("предмет: журнал", (self, a) => OnItemObtained(self))); }
             catch (Exception e) { _ctx.Log("предметы: хук после Obtain_Item недоступен: " + e.Message); }
-            // 1.6.17: кто и когда запускает смену области и конец босс-волны
-            foreach (var m in new[] { "Start_AreaChange" })
-                try { var name = m; _ctx.Before("C_Battle_Manager", name, 0, (self, a) => _ctx.Guard("обелиск", () => LogBossState("игра вызвала " + name))); }
-                catch (Exception e) { _ctx.Log($"обелиск: хук {m} недоступен: " + e.Message); }
+            // 1.6.17: кто и когда запускает смену области и конец босс-волны. Смена области — событие ModKit (после Start_AreaChange);
+            // Obtain_Item остаётся хуком: событию itemPickup не передаётся сам предмет, а нужен ещё флаг обелиска до подбора
+            _ctx.Events.On("areaChange", _ => { if (!_shutdown) LogBossState("игра запустила смену области (Start_AreaChange)"); });
             foreach (var m in new[] { "Start_ItemType", "CreateItem_Field", "Start_Transition", "DestroyItem" })
-                try { var name = m; _ctx.Before("C_Battle_Item", name, 0, (self, a) => _ctx.Guard("обелиск", () => { if (_inRun && ObeliskFlag() == 1 && _itemCalls++ < 60) LogBossState($"предмет «{NameOf(GetMember(self, "gameObject"))}» {name}"); })); }
+                try { var name = m; _ctx.Before("C_Battle_Item", name, 0, Hook("обелиск: предмет", (self, a) => { if (_inRun && ObeliskFlag() == 1 && _itemCalls++ < 60) LogBossState($"предмет «{NameOf(GetMember(self, "gameObject"))}» {name}"); })); }
                 catch (Exception e) { _ctx.Log($"обелиск: хук {m} недоступен: " + e.Message); }
 
             // корутины: первый шаг каждой — в журнал
@@ -45,14 +44,15 @@ namespace MagicSurvivalCoop
                     var key = nt.Name;
                     try
                     {
-                        Hooks.HookBefore(_ctx.Id, mi, (self, args) => _ctx.Guard("обелиск", () =>
+                        // хук не через контекст — ModKit сам его не снимет: снятие отдаём в OnCleanup, иначе он жил бы после выключения мода
+                        _ctx.OnCleanup(Hooks.HookBefore(_ctx.Id, mi, Hook("обелиск: корутина", (self, args) =>
                         {
                             if (self == null || !_inRun || _coSeen.Count > 200) return;
-                            var id = (self.GetType().GetProperty("Pointer")?.GetValue(self) as IntPtr?) ?? IntPtr.Zero;
+                            var id = PtrOf(self);
                             if (!_coSeen.Add(key + id)) return;
                             if (key.Contains("ItemAllObtain") && _coPull++ > 3) return;
                             LogBossState("корутина " + key);
-                        }));
+                        })));
                     }
                     catch (Exception e) { _ctx.Log($"обелиск: хук {key} недоступен: " + e.Message); }
                 }
@@ -61,7 +61,7 @@ namespace MagicSurvivalCoop
         private readonly HashSet<string> _coSeen = new HashSet<string>();
         private int _coPull;
 
-        private int _obeliskBefore = -1, _itemCalls;
+        private int _obeliskBefore = -1, _itemCalls, _obeliskItemDumps;
 
         private int ObeliskFlag()
         {
@@ -91,13 +91,18 @@ namespace MagicSurvivalCoop
         private void OnItemObtain(object item)
         {
             if (!_inRun || item == null || _itemLogs >= 40) return;
-            var fields = ItemFields(item, out string kind);
-            int area = MyAreaChange(), obelisk = -1;
-            try { obelisk = Convert.ToInt32(GetAny(_battleMgr, "ApplyObeliskON") ?? -1); } catch { }
+            int obelisk = _obeliskBefore;
+            // вид — два поля (как в событии itemPickup). Все поля предмета — только при обелиске: перебор свойств предмета
+            // через игру на телефоне друга занимал до 387 мс за подбор (1.6.18, Pixel 3a)
+            string kind;
+            try { kind = $"ObtainItemType={GetMember(item, "ObtainItemType")},Type_ObjItem={GetMember(item, "Type_ObjItem")}"; } catch { kind = "?"; }
             // один раз на каждый вид предмета; обелиск (флаг ApplyObeliskON = 1) — всегда
             if (!_itemKinds.Add(kind) && obelisk != 1) return;
             _itemLogs++;
-            _ctx.Log($"предмет подобран: «{NameOf(GetMember(item, "gameObject"))}», вид {kind}, обелиск {obelisk}, смен области {area}, часы {MyClock()}: {fields}");
+            // все поля — только у первых трёх подборов при лежащем обелиске: у гостя обелиск лежит долго, и на каждую ману шёл
+            // перебор свойств через игру (медленно на слабом телефоне, журнал засорялся — 1.6.35)
+            var fields = obelisk == 1 && _obeliskItemDumps++ < 3 ? ": " + ItemFields(item, out _) : "";
+            _ctx.Log($"предмет подобран: «{NameOf(GetMember(item, "gameObject"))}», вид {kind}, обелиск {obelisk}, смен области {MyAreaChange()}, часы {MyClock()}{fields}");
         }
 
         /// <summary>Простые поля предмета; вид — поля с ID/Type/Kind в имени.</summary>

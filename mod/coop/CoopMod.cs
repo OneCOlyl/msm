@@ -27,7 +27,13 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.6.17";
+        public const string ModVersion = "1.6.44";
+        /// <summary>
+        /// Версии библиотек ModKit: в MS_KIT 2.0 все четыре — 1.0, и мод написан под их интерфейсы 1.x. Верхняя граница — чтобы
+        /// с несовместимой 2.x ModKit не запускал мод, а писал «нужен … >=1.0 &lt;2, установлена …». Те же строки — в mod.json
+        /// (ModKit берёт depends оттуда), совпадение проверяет ModSim.
+        /// </summary>
+        public const string LibRange = ">=1.0 <2";
 
         public ModDef Define() => new ModDef
         {
@@ -35,7 +41,7 @@ namespace MagicSurvivalCoop
             Name = "Кооператив",
             Version = ModVersion,
             Description = "Игра с друзьями (2–4) через Anywherelan/Tailscale/ZeroTier: друзья — союзники в вашем бою, их здоровье на экране, лечение друга.",
-            Depends = { ["modkit_combat"] = ">=1.0", ["modkit_hero"] = ">=1.0", ["modkit_spells"] = ">=1.0", ["modkit_companions"] = ">=1.0" },
+            Depends = { ["modkit_combat"] = LibRange, ["modkit_hero"] = LibRange, ["modkit_spells"] = LibRange, ["modkit_companions"] = LibRange },
             Options =
             {
                 new ModOption { Key = "ghostDist", Label = "Дальность призрака друга", Default = 6, Min = 2, Max = 12, Step = 1 },
@@ -55,7 +61,9 @@ namespace MagicSurvivalCoop
                 new ModOption { Key = "port", Label = "Порт", Default = Protocol.DefaultPort, Min = 1024, Max = 65535, Hidden = true },
             },
             OnEnable = ctx => _session = new Session(ctx),
-            OnDisable = ctx => { _session?.Shutdown(); _session = null; },
+            // очистка — одна: Session.Shutdown через ctx.OnCleanup. ModKit вызывает её после OnDisable, а также когда включение
+            // упало посреди конструктора (тогда _session ещё null и OnDisable до неё не дотянулся бы)
+            OnDisable = ctx => { _session = null; },
             OpenSettings = ctx => _session?.OpenWindow(),
         };
 
@@ -95,6 +103,8 @@ namespace MagicSurvivalCoop
         private bool _hosting;
         private int _hostPort;
         private string _lastError, _notice;        // показываются в окне «Кооп»: подписи-тосты в главном меню не видны
+        private string _hostNotice;                // «Игра создана…» — показать, когда сервер подтвердит комнату (ROOM_CREATED)
+        private bool _shutdown;                    // мод выключен: хуки и таймеры, если ещё вызовутся, ничего не делают
 
         // свой бой
         private bool _inRun;
@@ -167,6 +177,7 @@ namespace MagicSurvivalCoop
         public Session(ModContext ctx)
         {
             _ctx = ctx;
+            ctx.OnCleanup(Shutdown);   // первой: если дальше что-то упадёт, ModKit всё равно вызовет очистку
             _enemies = ctx.Use<IEnemies>("modkit_combat");
             _hero = ctx.Use<IHero>("modkit_hero");
             _spells = ctx.Use<ISpells>("modkit_spells");
@@ -190,28 +201,101 @@ namespace MagicSurvivalCoop
 
             _sendAction = SendState;
             _flushAction = FlushCasts;
-            ctx.Every(50, Tick);
+            _tickAction = Tick;
+            _pumpAction = Pump;
+            _pauseAction = SharedPauseStep;
+            _timeDiagAction = TimeDiagStepNow;
+            _clockAction = ClockStepNow;
+            ctx.Every(50, () => Safe("таймер", _tickAction));
             InstallMagicHook();
             InstallWorldHooks();
             InstallTimeDiag();
             InstallItemDiag();
-            try { ctx.Before("C_Battle_Manager", "Update", 0, (self, args) => { if (self != null) _battleMgr = self; FrameStep(); }); }
+            try { ctx.Before("C_Battle_Manager", "Update", 0, Hook("кадр боя", (self, args) => { if (self != null) _battleMgr = self; FrameStep(); })); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
-            ctx.OnCleanup(Shutdown);
             ctx.Log($"кооператив {CoopMod.ModVersion} включён, имя «{_myName}»");
             ctx.Guard("кнопка в меню", ShowMenuButton);   // если мод включили прямо в главном меню
         }
 
+        // ============================================================ защита обработчиков
+
+        private Action _tickAction, _timeDiagAction, _clockAction, _pumpAction, _pauseAction;
+        private readonly Dictionary<string, int> _hookErrors = new Dictionary<string, int>();
+        private const int ReportedErrorsPerHook = 3;
+
+        /// <summary>
+        /// Обработчик хука игры с понятной подписью. ModKit сам ловит исключения хуков, но подписывает их только именем метода
+        /// и после 5 ошибок за 10 с выключает мод целиком. Хуки на каждого врага, снаряд или кадр от одного сбоя синхронизации
+        /// набрали бы это за секунду — поэтому в журнал ModKit (через ctx.Guard, со счётом ошибок) уходят первые
+        /// ReportedErrorsPerHook ошибок обработчика за бой, а дальше они только считаются и попадают в итог боя.
+        /// На обычном пути — без выделений памяти.
+        /// </summary>
+        private Action<object, object[]> Hook(string what, Action<object, object[]> fn) => (self, args) =>
+        {
+            if (_shutdown) return;
+            try { fn(self, args); }
+            catch (Exception e) { Report(what, e); }
+        };
+
+        /// <summary>То же для действий таймера и кадра: fn — заранее созданный делегат, без замыканий на каждый вызов.</summary>
+        private void Safe(string what, Action fn)
+        {
+            if (_shutdown) return;
+            try { fn(); }
+            catch (Exception e) { Report(what, e); }
+        }
+
+        private void Report(string what, Exception e)
+        {
+            int n = _hookErrors.TryGetValue(what, out var k) ? k + 1 : 1;
+            _hookErrors[what] = n;
+            if (n <= ReportedErrorsPerHook) _ctx.Guard(what, () => System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e).Throw());
+            else if (n % 100 == 0) _ctx.Log($"{what}: ошибок уже {n} (последняя: {e.Message})");
+        }
+
+        /// <summary>Ошибки обработчиков за бой — в журнал (если были) и обнулить счёт.</summary>
+        private void LogHookErrors()
+        {
+            if (_hookErrors.Count == 0) return;
+            _ctx.Log("ошибки обработчиков за бой: " + string.Join(", ", _hookErrors.Select(kv => $"{kv.Key} {kv.Value}")));
+            _hookErrors.Clear();
+        }
+
+        /// <summary>Выключение мода (OnDisable и OnCleanup — может прийти дважды): вернуть игре всё, что мод поменял, и закрыть сеть.</summary>
         public void Shutdown()
         {
+            _shutdown = true;
+            RestoreGame("мод выключен", battleOver: false);
             try { _client.Stop(); } catch { }
             try { _server?.Stop(); } catch { }
             _server = null;
+            _hosting = false; _hostNotice = null;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             _partners.Clear();
             DestroyBtn(ref _menuBtn);
             DestroyBtn(ref _healBtn);
             _windowOpen = false;
+        }
+
+        /// <summary>
+        /// Вернуть игре временно изменённое модом: скорость игры (общая пауза, догоняющее ускорение), свой спавн врагов и копии
+        /// врагов хоста (общие враги), спрятанного своего босса, объекты повтора Армагеддона. Повторный вызов ничего не делает.
+        /// Общий путь для конца боя и выключения мода. battleOver — бой кончился и сцена уходит: копии врагов и спрятанного босса
+        /// не трогаем (уйдут вместе со сценой), а выключение посреди боя убирает их, чтобы бой продолжился как обычный.
+        /// </summary>
+        private void RestoreGame(string why, bool battleOver)
+        {
+            _ctx.Mark("возврат игры: " + why);
+            if (_inRun) _ctx.Guard("возврат: Армагеддон", StopArmaReplay);   // вне боя менеджер боя устарел — его объекты не трогаем
+            _ctx.Guard("возврат: скорость игры", ReleaseSharedPause);
+            _ctx.Guard("возврат: счётчик боссов", () => ReleaseBossHold(why));
+            _ctx.Guard("возврат: общие враги", () =>
+            {
+                // спавн возвращаем до ResetWorld: он стирает сохранённые значения (_savedSpawn)
+                if (_worldActive) StopWorld(why, touchObjects: !battleOver);
+                else { if (!battleOver) ReleaseHeld(); RestoreSpawn(); }
+            });
+            ResetWorld();
         }
 
         // ============================================================ подключение
@@ -247,12 +331,14 @@ namespace MagicSurvivalCoop
                 return;
             }
             _hosting = true;
-            _client.Start("127.0.0.1", _hostPort, _myName, clientId: _clientId);
-            _notice = _hostPort == Port
+            _server.AutoCreateRoom = false;   // комнату создаёт только хост: гость, успевший раньше, подождёт её, а не займёт слот 1
+            // create: хост сам создаёт комнату (CREATE_ROOM) и получает слот 1; после обрыва клиент возвращается в неё по коду
+            _client.Start("127.0.0.1", _hostPort, _myName, create: true, clientId: _clientId);
+            _hostNotice = _hostPort == Port
                 ? "Игра создана. Сообщите друзьям IP, отмеченный «← VPN»."
                 : $"Порт {Port} занят другой программой, игра создана на порту {_hostPort}. Друзья с портом {Port} найдут её сами.";
+            _notice = "Создаю игру…";
             _ctx.Log($"хост: сервер на порту {_hostPort}");
-            _ctx.Toast(_notice, 4);
         }
 
         private void Join()
@@ -269,7 +355,7 @@ namespace MagicSurvivalCoop
             _client.Stop();
             _server?.Stop();
             _server = null;
-            _hosting = false;
+            _hosting = false; _hostNotice = null;
             _myId = null; _roomCode = null; _mySlot = 0;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             _partners.Clear();
@@ -279,11 +365,12 @@ namespace MagicSurvivalCoop
 
         private void Tick()
         {
+            if (_shutdown) return;
             _clockMs += 50;
             while (_bgLog.TryDequeue(out var line)) _ctx.Log(line);
 
-            _ctx.Guard("сеть", Pump);
-            _ctx.Guard("общая пауза", SharedPauseStep);
+            Safe("сеть", _pumpAction);
+            Safe("общая пауза", _pauseAction);
 
             MaybeSend();
 
@@ -301,8 +388,10 @@ namespace MagicSurvivalCoop
             double interval = 1.0 / Math.Max(1, _ctx.Setting("sendHz"));
             _nextSend = Math.Max(now, _nextSend + interval);                // ровный шаг без накопления сдвига
             if (_nextSend - now > interval) _nextSend = now + interval;
-            _ctx.Guard("отправка состояния", _sendAction);
-            _ctx.Guard("отправка магии", _flushAction);
+            Safe("отправка состояния", _sendAction);
+            _send.Start();
+            Safe("отправка магии", _flushAction);
+            _send.Lap(5);
         }
 
         private void Pump()
@@ -333,7 +422,13 @@ namespace MagicSurvivalCoop
                                 }
                             foreach (var gone in _partners.Keys.Where(k => !seen.Contains(k)).ToList()) RemovePartner(gone);
                             _ctx.Log($"в комнате {_roomCode}: слот {_mySlot}, друзей {_partners.Count}");
-                            _ctx.Toast(_partners.Count == 0 ? "Подключено. Ждём друзей…" : $"Подключено! Друзей в игре: {_partners.Count}", 3);
+                            if (_hostNotice != null)
+                            {
+                                // сервер подтвердил комнату — только теперь «Игра создана»
+                                _notice = _hostNotice; _hostNotice = null;
+                                _ctx.Toast(_notice, 4);
+                            }
+                            else _ctx.Toast(_partners.Count == 0 ? "Подключено. Ждём друзей…" : $"Подключено! Друзей в игре: {_partners.Count}", 3);
                         }
                         break;
 
@@ -402,6 +497,7 @@ namespace MagicSurvivalCoop
 
         private void DropPartnerVisuals(Partner p)
         {
+            if (p.Ghost != null || p.Bar != null || p.OrbVis != null) _ctx.Mark("союзник: удаление");
             try { if (p.Ghost != null && p.Ghost.Alive) p.Ghost.Remove(); } catch { }
             p.Ghost = null;
             try { p.Bar?.Destroy(); } catch { }
@@ -511,6 +607,7 @@ namespace MagicSurvivalCoop
 
         private void OnBattleStart()
         {
+            if (_shutdown) return;
             _inRun = true;
             _kills = 0;
             _startX = null; _startY = null;
@@ -523,6 +620,8 @@ namespace MagicSurvivalCoop
             ResetWorld();
             ResetTimeDiag();
             ResetClock();
+            ResetFrameProfile();
+            _hookErrors.Clear();
             foreach (var p in _partners.Values) p.GhostTr = null;
             foreach (var p in _partners.Values) { p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; }
             DestroyBtn(ref _menuBtn);
@@ -532,10 +631,10 @@ namespace MagicSurvivalCoop
         private void OnBattleEnd()
         {
             _ctx.Guard("итог магии", LogMagicSummary);
-            StopArmaReplay();
-            ReleaseSharedPause();
             _ctx.Guard("итог общих врагов", LogWorldSummary);
-            ResetWorld();
+            _ctx.Guard("итог кадра", LogFrameProfile);
+            LogHookErrors();
+            RestoreGame("конец боя", battleOver: true);
             _inRun = false;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             DestroyBtn(ref _healBtn);
@@ -545,6 +644,7 @@ namespace MagicSurvivalCoop
         private void SendState()
         {
             if (!_client.Connected) return;
+            _send.Start();
             bool battle = _spells.InBattle;
             double hp = 0, hpMax = 1;
             try { hp = _hero.Hp; hpMax = Math.Max(1, _hero.HpMax); } catch { }
@@ -575,6 +675,7 @@ namespace MagicSurvivalCoop
                 for (int id = 1; id <= 21; id++) { int l = _spells.Level(id); if (l > 0) _levels[id] = l; }
             }
             int spell = _bestSpell;
+            _send.Lap(0);
 
             if (dead && !_wasDead) _ctx.Log("герой погиб");
             _wasDead = dead;
@@ -587,6 +688,7 @@ namespace MagicSurvivalCoop
             }
 
             if (_inRun) RefreshMyOrbits();
+            _send.Lap(1);
             _client.SendState(Protocol.Build(w =>
             {
                 w.WriteString("name", _myName);
@@ -604,12 +706,17 @@ namespace MagicSurvivalCoop
                 w.WriteNumber("spell", spell);
                 if (_magicHooked) w.WriteNumber("mirror", 1);
                 if (_inRun) WriteMyOrbits(w);
+                _send.Lap(1);
                 if (_inRun && _hosting && WorldOn) WriteEnemies(w);
+                _send.Lap(2);
                 if (_worldActive) w.WriteNumber("wg", 1);
                 if (_inRun) WriteClock(w);
+                _send.Lap(3);
                 if (_inRun && OwnPause()) w.WriteNumber("op", 1);                    // мы пересылаем свою магию — пусть наш союзник у друзей не стреляет сам
                 w.WriteNumber("t", Math.Round(Clock.Elapsed.TotalSeconds, 4));   // время снятия позиции — для интерполяции у друзей
             }));
+            _send.Lap(4);
+            _send.Count++;
         }
 
         // ============================================================ союзники-призраки
@@ -657,10 +764,13 @@ namespace MagicSurvivalCoop
         /// <summary>Каждый кадр боя (хук C_Battle_Manager.Update): плавно ведём союзников.</summary>
         private void FrameStep()
         {
+            if (_shutdown) return;
             double frameStart = Clock.Elapsed.TotalMilliseconds;
+            FrameLapStart();
             try
             {
                 double now = Clock.Elapsed.TotalSeconds;
+                _frameNow = now;
                 double dt = _lastFrameSec < 0 ? 0.016 : Math.Min(0.1, Math.Max(0, now - _lastFrameSec));
                 _lastFrameSec = now;
                 if (_inRun && !_fpsLogged)                        // одна строка в журнал: работает ли покадровое движение на этом телефоне
@@ -670,12 +780,17 @@ namespace MagicSurvivalCoop
                     if (now - _fpsSince >= 5) { _fpsLogged = true; _ctx.Log($"покадровое движение работает: {_fpsFrames / (now - _fpsSince):0} кадров/с"); }
                 }
                 // на паузе (timeScale 0) таймер мода может стоять — сеть и общую паузу ведём и отсюда, иначе не узнать, что друг продолжил
-                if (now - _lastPumpSec > 0.1) { _ctx.Guard("сеть", Pump); _ctx.Guard("общая пауза", SharedPauseStep); }
+                if (now - _lastPumpSec > 0.1) { Safe("сеть", _pumpAction); Safe("общая пауза", _pauseAction); }
+                Lap(0);
                 if (_inRun && _client.Connected) MaybeSend();
+                Lap(1);
                 if (_inRun) ArmageddonStep(now);
+                Lap(2);
                 if (_inRun && !_spells.Paused) WorldStep(now);
-                if (_inRun) _ctx.Guard("время боя", () => TimeDiagStep(now));
-                if (_inRun && !_spells.Paused) _ctx.Guard("часы боя", () => ClockStep(now));
+                Lap(3);
+                if (_inRun) Safe("время боя", _timeDiagAction);
+                if (_inRun && !_spells.Paused) Safe("часы боя", _clockAction);
+                Lap(4);
                 if (!_inRun || _partners.Count == 0 || _spells.Paused) return;
                 if (!HeroPosition(out var hx, out var hy, out var hz)) return;
                 _frameSeenSec = now;
@@ -693,7 +808,61 @@ namespace MagicSurvivalCoop
             {
                 if (++_writeFails == 1 || _writeFails % 500 == 0) _ctx.Log("кадр: " + e.Message);
             }
-            if (_inRun) EndFrame(Clock.Elapsed.TotalMilliseconds - frameStart);
+            Lap(5);
+            if (_inRun) { double ms = Clock.Elapsed.TotalMilliseconds - frameStart; EndFrame(ms); ProfileFrame(ms); }
+        }
+
+        private double _frameNow;
+        private void TimeDiagStepNow() => TimeDiagStep(_frameNow);
+        private void ClockStepNow() => ClockStep(_frameNow);
+
+        // ------------------------------------------------------------ замер кадра по частям (журнал: медленные кадры и итог боя)
+
+        private readonly Laps _frame = new Laps("сеть и пауза", "отправка", "Армагеддон", "общие враги", "часы и журнал", "союзники и магия");
+        // внутри «отправки»: уровни, свои орбиты, враги (хост), часы, сборка и очередь, магия
+        private readonly Laps _send = new Laps("здоровье и уровни", "свои орбиты", "враги", "часы", "сборка и очередь", "магия");
+        // внутри «общих врагов» (гость): чистка и спавн, уборка своих, свой босс, создание копий, здоровье копий, движение копий, убийство копий, урон хосту
+        private readonly Laps _world = new Laps("чистка и спавн", "уборка своих", "свой босс", "создание копий", "здоровье копий", "движение копий", "убийство копий", "урон хосту");
+        private readonly int[] _partSlow = new int[6];
+        private int _slowLogged;
+
+        private void FrameLapStart() { _frame.NewFrame(); _send.NewFrame(); _world.NewFrame(); _frame.Start(); }
+        private void Lap(int i) => _frame.Lap(i);
+
+        /// <summary>
+        /// Кадр боя: максимумы и суммы по частям. Медленный кадр (больше 8 мс — порог «медленного хука» ModKit): чья часть больше,
+        /// первые 5 таких — в журнал с раскладкой (и внутри отправки или общих врагов, если дорогие они) и числом врагов и копий.
+        /// </summary>
+        private void ProfileFrame(double totalMs)
+        {
+            _frame.Count++;
+            var ms = _frame.Now;
+            int dom = 0;
+            for (int i = 1; i < ms.Length; i++) if (ms[i] > ms[dom]) dom = i;
+            if (totalMs <= 8) return;
+            _partSlow[dom]++;
+            if (_slowLogged >= 5) return;
+            _slowLogged++;
+            int alive; try { alive = AliveNow().Count; } catch { alive = -1; }
+            _ctx.Log($"медленный кадр {totalMs:0.0} мс: {_frame.Line(ms)}" +
+                     (dom == 1 ? $" (отправка: {_send.Line(_send.Now)})" : dom == 3 ? $" (общие враги: {_world.Line(_world.Now)})" : "") +
+                     $"; врагов {alive}, копий врагов хоста {_puppets.Count}, друзей {_partners.Count}");
+        }
+
+        private void ResetFrameProfile()
+        {
+            _frame.Reset(); _send.Reset(); _world.Reset();
+            Array.Clear(_partSlow, 0, _partSlow.Length);
+            _slowLogged = 0;
+        }
+
+        private void LogFrameProfile()
+        {
+            if (_frame.Count == 0) return;
+            _ctx.Log($"кадр за бой ({_frame.Count} кадров), {_frame.Summary()}" +
+                     (_partSlow.Sum() > 0 ? "; медленных кадров по частям: " + string.Join(", ", _frame.Names.Select((n, i) => (n, c: _partSlow[i])).Where(x => x.c > 0).Select(x => $"{x.n} {x.c}")) : ""));
+            if (_send.Count > 0) _ctx.Log($"отправка за бой ({_send.Count} раз), на одну отправку {_send.Summary()}");
+            if (_world.Count > 0) _ctx.Log($"общие враги за бой по частям ({_world.Count} шагов), на шаг {_world.Summary()}");
         }
 
         /// <summary>Позиция героя: объект героя берётся один раз за бой, дальше — одно чтение position без лишних объектов.</summary>
@@ -912,9 +1081,11 @@ namespace MagicSurvivalCoop
 
         private void ShowMenuButton()
         {
-            if (_spells.InBattle || _inRun) return;
+            if (_shutdown || _spells.InBattle || _inRun) return;
             DestroyBtn(ref _menuBtn);
-            _menuBtn = UiKit.AddHudButton("coop_menu", "Кооп", 560, 110, 150, 60, 26, BtnBlue, () => _ctx.Guard("окно", OpenWindow));
+            // верх по центру: кнопка видна до боя и на экранах выбора класса и локации — справа (560, 110) она закрывала стрелку
+            // «следующая локация» (1.6.39, скриншоты 24.10); между монетами и крестиком свободно на всех трёх экранах
+            _menuBtn = UiKit.AddHudButton("coop_menu", "Кооп", 285, 30, 150, 60, 26, BtnBlue, () => _ctx.Guard("окно", OpenWindow));
         }
 
         private static void DestroyBtn(ref UiKit.HudButton b)

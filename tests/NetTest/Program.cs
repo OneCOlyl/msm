@@ -9,7 +9,8 @@ using System.Threading;
 using MagicSurvivalCoop.Net;
 
 // Использование: NetTest embedded            — поднять встроенный сервер мода и проверить
-//                NetTest external <host> <port> — проверить внешний сервер (например, coop_server.py)
+//                NetTest external <host> <port> [<порт с пределами>] — проверить внешний сервер (например, coop_server.py);
+//                  третий порт — второй coop_server.py с --max-per-ip 3 --max-connections 10 --room-ops-per-minute 4 --join-timeout 2
 int fails = 0, passes = 0;
 void Check(bool ok, string what) { if (ok) { passes++; Console.WriteLine("  PASS " + what); } else { fails++; Console.WriteLine("  FAIL " + what); } }
 
@@ -206,6 +207,257 @@ Console.WriteLine("12. тот же игрок переподключился р�
 }
 
 foreach (var cl in new[] { a, b, c3, d, e5 }) cl.Stop();
+Thread.Sleep(500);
+
+// ---- дальше — общие проверки совместимости: одни и те же ответы и коды ошибок у встроенного сервера и coop_server.py
+// для встроенного — свой свежий сервер (у основного остались комнаты прошлых проверок), для внешнего — тот же
+CoopServer fresh = null; string fh = host; int fp = port;
+if (server != null) { fresh = new CoopServer { Log = s => Console.WriteLine("    [srv2] " + s) }; fresh.Start(0); fh = "127.0.0.1"; fp = fresh.Port; }
+
+Console.WriteLine("13. хост явно создаёт комнату (create): слот 1, гость входит к нему; обрыв хоста — возврат в ту же комнату");
+{
+    using var proxy = new Proxy(fh, fp);
+    var hc = new CoopClient { RetrySec = 0.3 }; var bh = new List<JsonElement>();
+    hc.Start("127.0.0.1", proxy.Port, "Хост", create: true, clientId: "host-13");
+    var created = WaitFor(hc, Protocol.RoomCreated, bh);
+    Check(created.HasValue && Protocol.Num(created.Value, "slot") == 1, "хост получил ROOM_CREATED и слот 1");
+    string code13 = created.HasValue ? Protocol.Str(created.Value, "roomCode") : null;
+    var gc = new CoopClient(); var bg = new List<JsonElement>();
+    gc.Start(fh, fp, "Гость", clientId: "guest-13");
+    var gj = WaitFor(gc, Protocol.RoomJoined, bg);
+    Check(gj.HasValue && Protocol.Str(gj.Value, "roomCode") == code13 && Protocol.Num(gj.Value, "slot") == 2, "гость без кода вошёл в комнату хоста, слот 2");
+    proxy.Cut();                                                   // обрыв связи хоста (мобильная сеть)
+    var back = WaitFor(hc, Protocol.RoomJoined, bh, 8000);
+    Check(back.HasValue && Protocol.Str(back.Value, "roomCode") == code13, $"хост вернулся в ту же комнату {code13}, а не создал новую ({(back.HasValue ? Protocol.Str(back.Value, "roomCode") : "нет ответа")})");
+    Check(back.HasValue && Protocol.Num(back.Value, "slot") == 1 && back.Value.GetProperty("players").GetArrayLength() == 2, "у хоста снова слот 1, в комнате два игрока — без двойника");
+    Check(!bh.Any(m => Protocol.TypeOf(m) == Protocol.RoomCreated), "второй комнаты не создано");
+    hc.Stop(); gc.Stop();
+    Thread.Sleep(300);
+}
+
+Console.WriteLine("14. clientId сохраняется и при CREATE_ROOM: переподключение хоста раньше, чем сервер заметил обрыв");
+{
+    var (t1, r1, w1) = Raw(fh, fp);
+    SendLine(w1, "{\"type\":\"CREATE_ROOM\",\"name\":\"Хост\",\"clientId\":\"host-14\",\"protocol\":2}");
+    var cr = ReadType(r1, Protocol.RoomCreated);
+    string code14 = cr.HasValue ? Protocol.Str(cr.Value, "roomCode") : "";
+    var (t2, r2, w2) = Raw(fh, fp);
+    SendLine(w2, "{\"type\":\"JOIN_ROOM\",\"roomCode\":\"" + code14 + "\",\"name\":\"Гость\",\"clientId\":\"guest-14\",\"protocol\":2}");
+    ReadType(r2, Protocol.RoomJoined);
+    // тот же хост с нового соединения (старое ещё открыто — сервер обрыва не видел)
+    var (t3, r3, w3) = Raw(fh, fp);
+    SendLine(w3, "{\"type\":\"JOIN_ROOM\",\"roomCode\":\"" + code14 + "\",\"name\":\"Хост\",\"clientId\":\"host-14\",\"protocol\":2}");
+    var again = ReadType(r3, Protocol.RoomJoined);
+    Check(again.HasValue && Protocol.Num(again.Value, "slot") == 1, $"хост получил прежний слот 1 (вышло {(again.HasValue ? Protocol.Num(again.Value, "slot") : -1)})");
+    Check(again.HasValue && again.Value.GetProperty("players").GetArrayLength() == 2, "в комнате два игрока: старое соединение хоста убрано");
+    Check(ClosedBy(r1, 3000), "старое соединение хоста закрыто сервером");
+    // снова CREATE_ROOM с тем же clientId — двойник в прежней комнате тоже убирается
+    var (t4, r4, w4) = Raw(fh, fp);
+    SendLine(w4, "{\"type\":\"CREATE_ROOM\",\"name\":\"Хост\",\"clientId\":\"host-14\",\"protocol\":2}");
+    ReadType(r4, Protocol.RoomCreated);
+    string id3 = again.HasValue ? Protocol.Str(again.Value, "playerId") : "?";
+    var leftMsg = ReadWhere(r2, m => Protocol.TypeOf(m) == Protocol.PlayerLeft && Protocol.Str(m, "playerId") == id3);
+    Check(leftMsg.HasValue, "CREATE_ROOM с тем же clientId: гость прежней комнаты получил PLAYER_LEFT за двойника");
+    foreach (var t in new[] { t1, t2, t3, t4 }) t.Close();
+    Thread.Sleep(300);
+}
+
+Console.WriteLine("15. поле protocol: одинаковая проверка у обоих серверов, без падений");
+{
+    var (t, r, s) = Raw(fh, fp);
+    foreach (var (pv, ok) in new[] { ("", true), ("null", true), ("2", true), ("1", false), ("3", false), ("2.0", false), ("2.5", false), ("\"2\"", false),
+                                      ("true", false), ("99999999999999999999999", false), ("1e400", false), ("-2", false), ("[2]", false), ("{\"v\":2}", false) })
+    {
+        var field = pv.Length == 0 ? "" : ",\"protocol\":" + pv;
+        SendLine(s, "{\"type\":\"JOIN_ROOM\",\"roomCode\":\"\",\"name\":\"Проверка\"" + field + "}");
+        var resp = ReadType(r, Protocol.RoomJoined, Protocol.Error);
+        bool joined = resp.HasValue && Protocol.TypeOf(resp.Value) == Protocol.RoomJoined;
+        bool mismatch = resp.HasValue && Protocol.Str(resp.Value, "code") == "protocol_mismatch";
+        Check(ok ? joined : mismatch, $"protocol {(pv.Length == 0 ? "нет" : pv)} → {(ok ? "вход" : "protocol_mismatch")} (ответ: {(resp.HasValue ? resp.Value.GetRawText() : "нет")})");
+        if (joined) SendLine(s, "{\"type\":\"LEAVE_ROOM\"}");
+    }
+    SendLine(s, "{\"type\":\"PING\",\"t\":5}");
+    Check(ReadType(r, Protocol.Pong).HasValue, "после всех вариантов соединение живо (PONG)");
+    t.Close();
+}
+fresh?.Stop();
+
+// ограничения: отдельный сервер с маленькими пределами (внешний — второй coop_server.py, его порт — 4-й аргумент)
+int limPort = -1; CoopServer lim = null;
+if (server != null)
+{
+    lim = new CoopServer { MaxConnectionsPerIp = 3, MaxConnections = 10, RoomOpsPerMinute = 4, JoinTimeoutSec = 2, Log = s => Console.WriteLine("    [lim] " + s) };
+    lim.Start(0); limPort = lim.Port;
+}
+else if (args.Length > 3) limPort = int.Parse(args[3]);
+if (limPort > 0)
+{
+    Console.WriteLine("16. защита сервера: соединений с адреса, входов в минуту, ожидание входа (пределы 3 / 4 / 2 с)");
+    var held = new List<TcpClient>();
+    for (int i = 0; i < 3; i++) { var (t, r, _) = Raw(host, limPort); held.Add(t); ReadType(r, Protocol.Welcome); }
+    var (tx, rx, _) = Raw(host, limPort);
+    var busy = ReadType(rx, Protocol.Error, Protocol.Welcome);
+    Check(busy.HasValue && Protocol.Str(busy.Value, "code") == "server_busy", $"четвёртое соединение с адреса → server_busy ({(busy.HasValue ? busy.Value.GetRawText() : "нет ответа")})");
+    Check(ClosedBy(rx, 3000), "лишнее соединение закрыто");
+    tx.Close();
+    // клиент мода на переполненном сервере: понятная причина, повтор позже
+    var cb = new CoopClient { RetrySec = 0.5 };
+    cb.Start(host, limPort, "Лишний");
+    var swb = Stopwatch.StartNew();
+    while (swb.ElapsedMilliseconds < 3000 && cb.LastError == null) Thread.Sleep(50);
+    Check((cb.LastError ?? "").Contains("адреса"), $"клиент показывает причину отказа: «{cb.LastError}»");
+    held[0].Close();
+    // соединения без комнаты закрываются через JoinTimeout (2 с; чистка раз в 2 с)
+    Check(held.Skip(1).All(h => ClosedBy(new LineReader(h.GetStream()), 7000)), "соединения, не вошедшие в комнату, закрыты по таймауту");
+    swb.Restart();
+    while (swb.ElapsedMilliseconds < 6000 && !cb.Connected) Thread.Sleep(100);
+    Check(cb.Connected, "место освободилось — клиент вошёл сам");
+    cb.Stop();
+    foreach (var h in held) h.Close();
+    Thread.Sleep(300);
+    // входов в минуту с адреса — 4 (один уже у клиента выше): дальше rate_limited и закрытие
+    var (t1, r1, w1) = Raw(host, limPort);
+    int okJoins = 0; JsonElement? rl = null;
+    for (int i = 0; i < 6 && rl == null; i++)
+    {
+        SendLine(w1, "{\"type\":\"JOIN_ROOM\",\"roomCode\":\"\",\"name\":\"Частый\",\"protocol\":2}");
+        var resp = ReadType(r1, Protocol.Error, Protocol.RoomJoined);
+        if (resp.HasValue && Protocol.TypeOf(resp.Value) == Protocol.RoomJoined) okJoins++; else rl = resp ?? default(JsonElement);
+    }
+    Check(okJoins == 3 && rl.HasValue && rl.Value.ValueKind == JsonValueKind.Object && Protocol.Str(rl.Value, "code") == "rate_limited",
+          $"пятый вход за минуту → rate_limited (до него прошло {okJoins}, ответ {(rl.HasValue && rl.Value.ValueKind == JsonValueKind.Object ? rl.Value.GetRawText() : "нет")})");
+    Check(ClosedBy(r1, 3000), "после rate_limited соединение закрыто");
+    t1.Close();
+    lim?.Stop();
+}
+else Console.WriteLine("16. защита сервера: пропущено (нет порта сервера с пределами)");
+
+if (server != null)
+{
+    Console.WriteLine("17. сервер в игре хоста: гость раньше хоста не создаёт комнату и не занимает слот 1");
+    var hs = new CoopServer { AutoCreateRoom = false }; hs.Start(0);
+    var early = new CoopClient { RetrySec = 0.3 }; var be = new List<JsonElement>();
+    early.Start("127.0.0.1", hs.Port, "Ранний гость", clientId: "early");
+    var nf = WaitFor(early, Protocol.Error, be, 3000);
+    Check(nf.HasValue && Protocol.Str(nf.Value, "code") == "room_not_found", "гость получил «хост ещё не создал игру»");
+    Check(!early.Connected, "гость не в комнате");
+    var hc = new CoopClient(); var bh = new List<JsonElement>();
+    hc.Start("127.0.0.1", hs.Port, "Хост", create: true, clientId: "host-17");
+    var hcr = WaitFor(hc, Protocol.RoomCreated, bh);
+    var ej = WaitFor(early, Protocol.RoomJoined, be, 5000);
+    Check(hcr.HasValue && Protocol.Num(hcr.Value, "slot") == 1, "хост — слот 1");
+    Check(ej.HasValue && Protocol.Num(ej.Value, "slot") == 2 && Protocol.Str(ej.Value, "roomCode") == Protocol.Str(hcr.Value, "roomCode"), "гость сам переподключился и вошёл в комнату хоста, слот 2");
+    early.Stop(); hc.Stop(); hs.Stop();
+
+    Console.WriteLine("18. быстрые Start/Stop: без лишних соединений и потоков, после — всё работает");
+    var ss = new CoopServer(); ss.Start(0);
+    var peer = new CoopClient(); var bp = new List<JsonElement>();
+    peer.Start("127.0.0.1", ss.Port, "Друг", clientId: "peer-18");
+    WaitFor(peer, Protocol.RoomJoined, bp);
+    var cl = new CoopClient { RetrySec = 0.2 }; var bc = new List<JsonElement>();
+    var rnd = new Random(18);
+    for (int i = 0; i < 40; i++)
+    {
+        cl.Start("127.0.0.1", ss.Port, "Дёрганый", clientId: "jumpy-18");
+        if (i % 5 == 0) WaitFor(cl, Protocol.RoomJoined, bc, 2000); else Thread.Sleep(rnd.Next(0, 25));
+        cl.Stop();
+    }
+    var sws = Stopwatch.StartNew();
+    while (sws.ElapsedMilliseconds < 3000 && (ss.ConnectionCount > 1 || CoopClient.LiveThreads > 2)) Thread.Sleep(50);
+    Check(CoopClient.LiveThreads == 2, $"после 40 Start/Stop живы только потоки друга: {CoopClient.LiveThreads} (ждём 2)");
+    Check(ss.ConnectionCount == 1, $"на сервере только соединение друга: {ss.ConnectionCount}");
+    while (cl.Incoming.TryDequeue(out _)) { }
+    bc.Clear();
+    cl.Start("127.0.0.1", ss.Port, "Дёрганый", clientId: "jumpy-18");
+    var fin = WaitFor(cl, Protocol.RoomJoined, bc);
+    Check(fin.HasValue && fin.Value.GetProperty("players").GetArrayLength() == 2, "последний Start вошёл в комнату, в ней два игрока — без двойников");
+    Check(ss.ConnectionCount == 2, $"соединений на сервере ровно два: {ss.ConnectionCount}");
+    bp.Clear(); Drain(peer);
+    cl.SendState("{\"x\":18}");
+    var st18 = WaitFor(peer, Protocol.RemotePlayerState, bp);
+    Check(st18.HasValue && Protocol.Num(Protocol.Obj(st18.Value, "state"), "x") == 18, "состояние доходит");
+    cl.SendEvent("{\"kind\":\"sos\"}");
+    Check(WaitFor(peer, Protocol.RemoteEvent, bp).HasValue, "события доходят");
+    Thread.Sleep(2300);
+    Check(cl.PingMs >= 0, $"пинг измерен: {cl.PingMs} мс");
+    cl.Stop(); peer.Stop(); ss.Stop();
+    sws.Restart();
+    while (sws.ElapsedMilliseconds < 3000 && CoopClient.LiveThreads > 0) Thread.Sleep(50);
+    Check(CoopClient.LiveThreads == 0, $"после Stop потоков клиентов не осталось: {CoopClient.LiveThreads}");
+}
+
 server?.Stop();
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
+
+// ---- сырые соединения для проверок протокола
+static (TcpClient, LineReader, NetworkStream) Raw(string h, int p)
+{
+    var t = new TcpClient(h, p) { NoDelay = true };
+    var s = t.GetStream(); s.ReadTimeout = 4000;
+    return (t, new LineReader(s), s);
+}
+static void SendLine(NetworkStream s, string line) { var b = Encoding.UTF8.GetBytes(line + "\n"); try { s.Write(b, 0, b.Length); } catch { } }
+/// <summary>Следующее сообщение одного из типов (остальные пропускаются); null — соединение закрыто или тишина 4 с.</summary>
+static JsonElement? ReadType(LineReader r, params string[] types) => ReadWhere(r, el => types.Contains(Protocol.TypeOf(el)));
+static JsonElement? ReadWhere(LineReader r, Func<JsonElement, bool> want)
+{
+    try
+    {
+        string line;
+        while ((line = r.ReadLine()) != null)
+        {
+            if (line.Length == 0) continue;
+            JsonElement el;
+            try { using var doc = JsonDocument.Parse(line); el = doc.RootElement.Clone(); } catch (JsonException) { continue; }
+            if (want(el)) return el;
+        }
+    }
+    catch { }
+    return null;
+}
+/// <summary>Сервер закрыл соединение за ms (всё, что было до закрытия, пропускается).</summary>
+static bool ClosedBy(LineReader r, int ms)
+{
+    var sw = Stopwatch.StartNew();
+    try { while (sw.ElapsedMilliseconds < ms) { if (r.ReadLine() == null) return true; } }
+    catch (System.IO.IOException e) when (e.InnerException is SocketException se && se.SocketErrorCode == SocketError.TimedOut) { return false; }
+    catch { return true; }
+    return false;
+}
+
+/// <summary>TCP-посредник между клиентом и сервером: Cut() рвёт все текущие соединения, как обрыв мобильной сети.</summary>
+sealed class Proxy : IDisposable
+{
+    private readonly TcpListener _l = new TcpListener(System.Net.IPAddress.Loopback, 0);
+    private readonly List<TcpClient> _open = new List<TcpClient>();
+    private volatile bool _stop;
+    public int Port { get; }
+    public Proxy(string host, int port)
+    {
+        _l.Start(); Port = ((System.Net.IPEndPoint)_l.LocalEndpoint).Port;
+        new Thread(() =>
+        {
+            while (!_stop)
+            {
+                TcpClient a;
+                try { a = _l.AcceptTcpClient(); } catch { return; }
+                try
+                {
+                    var b = new TcpClient(host, port) { NoDelay = true };
+                    lock (_open) { _open.Add(a); _open.Add(b); }
+                    Pipe(a, b); Pipe(b, a);
+                }
+                catch { a.Close(); }
+            }
+        }) { IsBackground = true }.Start();
+    }
+    private static void Pipe(TcpClient from, TcpClient to) => new Thread(() =>
+    {
+        var buf = new byte[8192];
+        try { int n; var fs = from.GetStream(); var ts = to.GetStream(); while ((n = fs.Read(buf, 0, buf.Length)) > 0) ts.Write(buf, 0, n); } catch { }
+        try { from.Close(); } catch { } try { to.Close(); } catch { }
+    }) { IsBackground = true }.Start();
+    public void Cut() { lock (_open) { foreach (var c in _open) try { c.Close(); } catch { } _open.Clear(); } }
+    public void Dispose() { _stop = true; try { _l.Stop(); } catch { } Cut(); }
+}

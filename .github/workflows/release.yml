@@ -1,6 +1,7 @@
 # Публикация релиза: GitHub → Actions → release → Run workflow.
 # Версия берётся из mod/coop/mod.json; GitHub собирает мод, прогоняет тесты,
-# создаёт метку v<версия> и релиз с coop.zip.
+# создаёт метку v<версия> и релиз с coop.zip. Нужны результаты проверки на телефонах:
+# docs/device-tests/<версия>.md (docs/RELEASE_CHECKLIST.md).
 name: release
 
 on:
@@ -31,6 +32,14 @@ jobs:
             echo "::error::метка $GITHUB_REF_NAME, а в mod.json версия $VER"; exit 1
           fi
 
+      - name: Проверка на телефонах
+        run: |
+          F="docs/device-tests/${{ steps.ver.outputs.ver }}.md"
+          if [ ! -f "$F" ]; then
+            echo "::error::нет $F — сначала проверьте релиз на двух или более телефонах по docs/RELEASE_CHECKLIST.md"; exit 1
+          fi
+          { cat .github/release_notes.md; echo; echo "---"; echo; cat "$F"; } > release_notes_full.md
+
       - name: Сборка и тесты
         run: |
           set -o pipefail
@@ -46,4 +55,4 @@ jobs:
           gh release create "${{ steps.ver.outputs.tag }}" dist/coop.zip \
             --target "$GITHUB_SHA" \
             --title "Кооператив ${{ steps.ver.outputs.ver }}" \
-            --notes-file .github/release_notes.md
+            --notes-file release_notes_full.md

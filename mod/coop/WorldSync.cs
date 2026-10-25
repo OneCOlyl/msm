@@ -24,7 +24,13 @@ namespace MagicSurvivalCoop
     {
         private const int MaxSentEnemies = 250;          // ~20 байт на врага: строка состояния остаётся меньше 16 КБ
         private const double EnemySendInterval = 0.09;
-        private const int MaxPuppetSpawnsPerFrame = 4;
+        // 1.6.19: было 4 и 4 мс — бой 24.10 (1.6.18, Pixel 3a): 14 345 копий по 1,13 мс в среднем, кадры с 3–4 созданиями — медленные.
+        // Нужно в среднем ~20 копий/с, 2 за кадр при 37 кадрах/с — до 74/с: волна догоняется за пару секунд, без рывков
+        private const int MaxPuppetSpawnsPerFrame = 2;
+        private const double PuppetSpawnBudgetMs = 2.5;
+        private const int MaxPuppetKillsPerFrame = 4;
+        private const double PuppetKillBudgetMs = 2;
+        private readonly Queue<Puppet> _dying = new Queue<Puppet>();
 
         private ICombat _combat;
         private bool WorldOn => _ctx.Setting("world") > 0;
@@ -79,15 +85,15 @@ namespace MagicSurvivalCoop
         private void InstallWorldHooks()
         {
             try { _combat = _ctx.Use<ICombat>("modkit_combat"); } catch (Exception e) { _ctx.Log("общие враги: нет ICombat — копии будут убираться без награды: " + e.Message); }
-            try { _ctx.After("C_Battle_EnemyUnit", "Start_Unit", 3, (self, a) => OnEnemyStart(self, a)); }
+            try { _ctx.After("C_Battle_EnemyUnit", "Start_Unit", 3, Hook("синхронизация спавна врага", (self, a) => OnEnemyStart(self, a))); }
             catch (Exception e) { _ctx.Log("общие враги: хук Start_Unit недоступен (свой спавн гасится только чисткой): " + e.Message); }
         }
 
         private void ResetWorld()
         {
-            _coSeen.Clear(); _coPull = 0; _itemKinds.Clear(); _itemLogs = 0; _itemCalls = 0;
+            _coSeen.Clear(); _coPull = 0; _itemKinds.Clear(); _itemLogs = 0; _itemCalls = 0; _obeliskItemDumps = 0;
             _enIds.Clear(); _enIdsNext.Clear(); _enById.Clear(); _dmgIn = 0; _dmgInMiss = 0; _dmgOut.Clear(); _dmgSent = 0; _dmgFlushAt = 0; _enSentAt = -1; _enSentMax = 0; _enHostLogged = false;
-            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _savedSpawn = null;
+            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _savedSpawn = null;
             _worldHost = null; _enSnap = 0; _enSnapAt = -100; _worldActive = false; _spawningPuppet = false; _justCreated = null;
             _wCreated = _wKilled = _wLocalDead = _wDestroyed = _wFails = _wMax = _wRespawned = _wSpecial = 0;
             _enVars.Clear(); _enVarsNext.Clear();
@@ -100,6 +106,23 @@ namespace MagicSurvivalCoop
 
         private static object KeyOf(object o) { var p = PtrOf(o); return p != IntPtr.Zero ? (object)p : o; }
 
+        /// <summary>
+        /// Живые враги — один снимок на кадр. Библиотека на каждое обращение к Alive строит новый список и для каждого врага
+        /// зовёт игру (activeInHierarchy, Unit_Hp); а им пользуются отправка (хост), чистка, повтор магии, убийство копий.
+        /// </summary>
+        private IReadOnlyList<IEnemy> AliveNow()
+        {
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_aliveSnap == null || now - _aliveSnapAt > System.Diagnostics.Stopwatch.Frequency / 200)   // 5 мс — в пределах кадра
+            {
+                _aliveSnap = _enemies.Alive;
+                _aliveSnapAt = now;
+            }
+            return _aliveSnap;
+        }
+        private IReadOnlyList<IEnemy> _aliveSnap;
+        private long _aliveSnapAt;
+
         // ============================================================ хост: отправка
 
         private void WriteEnemies(Utf8JsonWriter w)
@@ -108,20 +131,20 @@ namespace MagicSurvivalCoop
             double now = Clock.Elapsed.TotalSeconds;
             if (now - _enSentAt < EnemySendInterval) return;
             _enSentAt = now;
-            if (!_enHostLogged && _enemies.Alive.Count > 0)
+            var alive = AliveNow();
+            if (!_enHostLogged && alive.Count > 0)
             {
                 _enHostLogged = true;
-                var r0 = _enemies.Alive[0].Raw;
+                var r0 = alive[0].Raw;
                 _ctx.Log($"общие враги: отправляю своих врагов друзьям; мой враг — размер {GetMember(r0, "UnitApply_UnitSize")}, масштаб {GetMember(GetMember(r0, "transform"), "localScale")}, спрайт-масштаб {GetMember(GetMember(r0, "Transform_ObjUnitSprite"), "localScale")}");
             }
             double sx = _startX ?? 0, sy = _startY ?? 0;
             int n = 0;
             _enById.Clear();
             w.WriteStartArray("en");
-            foreach (var e in _enemies.Alive)
+            foreach (var e in alive)                 // список уже только из живых — e.Alive повторил бы те же вызовы игры
             {
                 if (n >= MaxSentEnemies) break;
-                if (!e.Alive) continue;
                 var raw = e.Raw; var key = KeyOf(raw);
                 if (key == null) continue;
                 if (!_enIds.TryGetValue(key, out var v))
@@ -186,9 +209,8 @@ namespace MagicSurvivalCoop
             if (!_worldActive || self == null) return;
             if (MyBossWave() != 0)
             {
-                // своя босс-волна гостя: её босса не убираем, а прячем до победы хоста — тогда убиваем уроном, и игра сама
-                // заканчивает бой с боссом: обелиск (при подборе — мана и смена области, часы идут). 1.6.12: босс убирался
-                // без смерти — арена (ApplyBossGround_Size 145) и красный череп оставались, часы стояли на 3:00.
+                // своя босс-волна гостя: её босса прячем, пока хост не поднимет обелиск, — тогда мод сам снимает волну
+                // и убирает босса без смерти (ObeliskSync.cs)
                 var hk = KeyOf(self);
                 if (hk != null && !_heldKeys.Contains(hk)) { _heldKeys.Add(hk); _held.Add(self); _heldNew.Enqueue(self); }
                 return;
@@ -316,27 +338,38 @@ namespace MagicSurvivalCoop
                 _ctx.Toast($"Общие враги: играем в мире «{host.Name}»", 3);
             }
             _worldFrame++;
+            _world.Start();
             if (now >= _sweepAt)
             {
-                _sweepAt = now + 0.5; SuppressSpawn(mgr); Sweep();
+                _sweepAt = now + 0.5;
+                _ctx.Mark("общие враги: гашу свой спавн и скорость копий");
+                SuppressSpawn(mgr); Sweep();
                 if (_ctx.Setting("puppetAi") > 0)                                // игра пересчитывает скорость (усиления волн) — гасим снова
                     foreach (var pp in _puppets.Values) if (pp.Obj != null && !pp.LocalDead) try { ZeroSpeed(pp.Obj); } catch { }
             }
+            _world.Lap(0);
             while (_toForward.Count > 0)
             {
                 var f = _toForward.Dequeue();
                 try { var q = (GetMember(f.obj, "Transform_ObjUnit") as Transform).position; _spawnOut.Add((f.type, f.a, f.b, q.x - _startX.Value, q.y - (_startY ?? 0))); }
                 catch { }
             }
-            while (_toDestroy.Count > 0) DestroySimple(_toDestroy.Dequeue());
+            if (_toDestroy.Count > 0)
+            {
+                _ctx.Mark("общие враги: убираю своих врагов гостя (Unit_Destroy_Simple)");
+                while (_toDestroy.Count > 0) DestroySimple(_toDestroy.Dequeue());
+            }
 
+            _world.Lap(1);
             double rt = now - host.ClockOff - RenderDelay(host);
             double ox = _startX.Value, oy = _startY ?? 0;
             if (HeroPosition(out var hhx, out var hhy, out _)) HeldStep(hhx, hhy);
+            _world.Lap(2);
             int made = 0, live = 0;
             double createMs = 0;
             _worldWatch.Restart();
             _gone.Clear();
+            _ctx.Mark("общие враги: перемещение копий");
             foreach (var pp in _puppets.Values)
             {
                 if (pp.Seen != _enSnap) { _gone.Add(pp.Id); continue; }
@@ -350,12 +383,15 @@ namespace MagicSurvivalCoop
                     if (pp.Obj == null)
                     {
                         // бюджет кадра: создание копии — работа самой игры (журнал 1.5.7: у гостя лагало в начале волны)
-                        if (made >= MaxPuppetSpawnsPerFrame || createMs > 4) continue;
+                        if (made >= MaxPuppetSpawnsPerFrame || createMs > PuppetSpawnBudgetMs) continue;
                         made++;
+                        _ctx.Mark($"общие враги: создание копии врага (тип {pp.Type})");
                         double t0 = _worldWatch.Elapsed.TotalMilliseconds;
                         bool ok = CreatePuppet(mgr, pp);
                         double ms = _worldWatch.Elapsed.TotalMilliseconds - t0;
                         createMs += ms; _createMsSum += ms; _createN++; if (ms > _createMsMax) _createMsMax = ms;
+                        _world.Lap(3);
+                        _ctx.Mark("общие враги: перемещение копий");
                         if (!ok) continue;
                     }
                     else if ((_worldFrame + pp.Id) % 6 == 0)
@@ -369,23 +405,42 @@ namespace MagicSurvivalCoop
                         double hp = Convert.ToDouble(GetMember(pp.Obj, "Unit_Hp") ?? PuppetHp);
                         if (hp < PuppetHp - 0.01)
                         {
+                            _ctx.Mark("общие враги: здоровье копии");
                             _dmgOut[pp.Id] = (_dmgOut.TryGetValue(pp.Id, out var d0) ? d0 : 0) + (PuppetHp - hp);
                             Invulnerable(pp.Obj);
+                            _ctx.Mark("общие враги: перемещение копий");
                         }
+                        _world.Lap(4);
                     }
                     if (pp.Tr == null || !PuppetPos(pp, rt, out var x, out var y)) continue;
                     var cur = pp.Tr.position;
                     pp.Tr.position = new Vector3((float)(ox + x), (float)(oy + y), cur.z);
                     live++;
+                    _world.Lap(5);
                 }
                 catch (Exception e) { pp.LocalDead = true; if (++_wFails <= 5) _ctx.Log($"общие враги: копия {pp.Id}: {Inner(e).Message}"); }
             }
+            _world.Lap(5);
             if (live > _wMax) _wMax = live;
             if ((_dmgOut.Count > 0 || _spawnOut.Count > 0) && now >= _dmgFlushAt) FlushDamage(now);
+            _world.Lap(7);
             if (_specialCopy != null && now >= _specialCopyAt) { _ctx.Log("особая копия у гостя: " + EnemyFields(_specialCopy)); _specialCopy = null; _specialCopyAt = double.MaxValue; }
             double stepMs = _worldWatch.Elapsed.TotalMilliseconds;
             if (stepMs > _stepMsMax) _stepMsMax = stepMs;
-            foreach (var id in _gone) { KillPuppet(_puppets[id]); _puppets.Remove(id); }
+            // враг погиб у хоста — копию из списка сразу (её больше не двигаем и не создаём заново), а убиваем по очереди: смерть
+            // врага — работа игры (награда, эффекты), и пачка смертей в одном кадре давала у гостя кадр до 72 мс (1.6.19, телефоны)
+            foreach (var id in _gone) { _dying.Enqueue(_puppets[id]); _puppets.Remove(id); }
+            if (_dying.Count > 0)
+            {
+                _ctx.Mark("общие враги: убиваю копии (враг погиб у хоста)");
+                FillAliveByKey();
+                double t0 = _worldWatch.Elapsed.TotalMilliseconds;
+                for (int k = 0; k < MaxPuppetKillsPerFrame && _dying.Count > 0 && _worldWatch.Elapsed.TotalMilliseconds - t0 < PuppetKillBudgetMs; k++)
+                    KillPuppet(_dying.Dequeue());
+                _aliveByKey.Clear();
+            }
+            _world.Lap(6);
+            _world.Count++;
         }
 
         private void FlushDamage(double now)
@@ -419,8 +474,9 @@ namespace MagicSurvivalCoop
             {
                 if (!s[i].TryGetInt32(out int type) || type < 0) continue;
                 double x = s[i + 3].GetDouble(), y = s[i + 4].GetDouble();
-                var bossProp = _battleMgr.GetType().GetProperty("ApplyBossNum", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                var bossProp = FindAny(_battleMgr.GetType(), "ApplyBossNum")?.Prop;
                 object bossNum = null;
+                _ctx.Mark($"общие враги: создаю врага от гостя (тип {type})");
                 _spawningPuppet = true; _justCreated = null;
                 try
                 {
@@ -497,7 +553,7 @@ namespace MagicSurvivalCoop
         private bool CreatePuppet(object mgr, Puppet pp)
         {
             if (pp.Type < 0) { pp.LocalDead = true; return false; }
-            var bossProp = mgr.GetType().GetProperty("ApplyBossNum", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            var bossProp = FindAny(mgr.GetType(), "ApplyBossNum")?.Prop;
             object bossNum = null;
             _spawningPuppet = true; _justCreated = null;
             try
@@ -531,6 +587,7 @@ namespace MagicSurvivalCoop
                 // особый враг (усиленный): игра создаёт его «переходом» (UnitCreateID 3) и Start_Unit(тип, varA, varB) — повторяем
                 // на копии; способ создания — до Start_Unit (от него игра выставляет вид), эффект и обводку — после
                 _spawningPuppet = true;
+                _ctx.Mark($"общие враги: особая копия — Start_Unit (тип {pp.Type})");
                 try
                 {
                     if (pp.CreateId > 0) SetMember(obj, "UnitCreateID", pp.CreateId);
@@ -547,6 +604,7 @@ namespace MagicSurvivalCoop
             pp.Tr = GetMember(obj, "Transform_ObjUnit") as Transform;
             // 1.5.0 останавливал все корутины — вместе с ИИ вставали кадры ходьбы (их меняет Unit_Move). Теперь ИИ работает
             // (анимация, поворот, атаки), но скорость нулевая — двигает только мод. «puppetAi» = 0 — по-старому.
+            _ctx.Mark("общие враги: настройка копии (здоровье, скорость, тело)");
             FixSpriteScale(obj);
             Invulnerable(obj);
             if (_ctx.Setting("puppetAi") > 0) ZeroSpeed(obj);
@@ -557,15 +615,36 @@ namespace MagicSurvivalCoop
         }
 
         private static readonly string[] SpeedFields = { "UnitBase_MoveSpeed", "UnitApply_MoveSpeed", "BUnitApply_MoveSpeed", "UnitApply_MoveSpeed_Bonus", "UnitApply_MoveSpeed_Buff", "ApplyMoveSpeedBonus" };
-        /// <summary>Поле или свойство — обычное или статическое.</summary>
+        /// <summary>Свойство или поле (обычное или статическое) по имени — поиск один раз на тип и имя, как у CallMethod.</summary>
+        private sealed class AnyMember
+        {
+            public PropertyInfo Prop; public FieldInfo Field; public bool Static; public Type ValueType;
+            public FieldInfo SetField;                     // свойство только для чтения — запись в одноимённое поле (как раньше)
+        }
+        private static readonly Dictionary<(Type, string), AnyMember> AnyCache = new Dictionary<(Type, string), AnyMember>();
+        private static AnyMember FindAny(Type t, string name)
+        {
+            lock (AnyCache)
+            {
+                if (AnyCache.TryGetValue((t, name), out var m)) return m;
+                const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+                var p = t.GetProperty(name, any);
+                if (p != null && p.GetIndexParameters().Length == 0)
+                    m = new AnyMember { Prop = p, Static = (p.GetGetMethod(true) ?? p.GetSetMethod(true))?.IsStatic == true, ValueType = p.PropertyType,
+                                        SetField = p.CanWrite ? null : t.GetField(name, any) };
+                else if (t.GetField(name, any) is FieldInfo f)
+                    m = new AnyMember { Field = f, Static = f.IsStatic, ValueType = f.FieldType };
+                AnyCache[(t, name)] = m;   // null — нет такого члена (тоже запоминаем)
+                return m;
+            }
+        }
+
         private static object GetAny(object o, string name)
         {
-            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
-            var t = o.GetType();
-            var p = t.GetProperty(name, any);
-            if (p != null && p.GetIndexParameters().Length == 0) return p.GetValue(p.GetGetMethod(true)?.IsStatic == true ? null : o);
-            var f = t.GetField(name, any);
-            return f?.GetValue(f.IsStatic ? null : o);
+            var m = FindAny(o.GetType(), name);
+            if (m == null) return null;
+            var target = m.Static ? null : o;
+            return m.Prop != null ? m.Prop.GetValue(target) : m.Field.GetValue(target);
         }
 
         /// <summary>У копии из пула боссов картинка 1,00, у обычного врага — как размер (1,25) (журнал 1.5.2).</summary>
@@ -614,15 +693,21 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>Враг пропал у хоста — копию убить уроном (гостю — убийство и выпадения); не вышло — убрать без награды.</summary>
+        /// <summary>Живые враги по адресу — один раз на кадр, когда есть кого убить (раньше — перебор всех врагов на каждую копию).</summary>
+        private readonly Dictionary<object, IEnemy> _aliveByKey = new Dictionary<object, IEnemy>();
+        private void FillAliveByKey()
+        {
+            _aliveByKey.Clear();
+            foreach (var e in AliveNow()) { var k = KeyOf(e.Raw); if (k != null) _aliveByKey[k] = e; }
+        }
+
         private void KillPuppet(Puppet pp)
         {
             if (pp.Obj == null || pp.LocalDead) return;
             try
             {
                 try { SetMember(pp.Obj, "Unit_Hp", 1); } catch { }                 // снять неуязвимость, иначе удар не убьёт
-                if (_combat != null)
-                    foreach (var e in _enemies.Alive)
-                        if (Equals(KeyOf(e.Raw), pp.Key)) { if (e.Alive && _combat.Damage(e, 1e9)) { _wKilled++; return; } break; }
+                if (_combat != null && pp.Key != null && _aliveByKey.TryGetValue(pp.Key, out var e) && e.Alive && _combat.Damage(e, 1e9)) { _wKilled++; return; }
                 DestroySimple(pp.Obj, own: false);
             }
             catch (Exception e) { if (++_wFails <= 5) _ctx.Log($"общие враги: убить копию {pp.Id}: {Inner(e).Message}"); }
@@ -649,7 +734,7 @@ namespace MagicSurvivalCoop
         /// <summary>Чистка: все живые враги гостя, которые не копии, — убрать без награды (разведка D).</summary>
         private void Sweep()
         {
-            foreach (var e in _enemies.Alive)
+            foreach (var e in AliveNow())
             {
                 var key = KeyOf(e.Raw);
                 if (key != null && !_puppetKeys.Contains(key) && !_heldKeys.Contains(key)) _toDestroy.Enqueue(e.Raw);
@@ -668,37 +753,51 @@ namespace MagicSurvivalCoop
         {
             while (_heldNew.Count > 0)
             {
+                _ctx.Mark("общие враги: прячу своего босса гостя");
                 var e = _heldNew.Dequeue();
                 try { CallMethod(e, "StopAllCoroutines"); } catch { }
                 try { SetMember(GetMember(e, "Rigidbody_ObjUnit"), "isKinematic", true); } catch { }
                 Invulnerable(e);
                 _ctx.Log($"общие враги: своя босс-волна — прячу своего врага «{NameOf(e)}» тип {GetMember(e, "UnitID")} до победы хоста");
             }
+            // 1.6.42: хост победил — не убиваем: смерть босса закончила бы этап у гостя и положила обелиск. Убираем без смерти,
+            // когда хост поднимет обелиск (CatchUpBoss)
             if (_held.Count == 0) return;
-            if (_hostBossWave == 0 && _hostBwPrev == 0 && _hostBossEnded)
-            {
-                foreach (var e in _held)
-                {
-                    try
-                    {
-                        if (!(GetMember(e, "Unit_IsLive") is bool live && live)) continue;
-                        SetMember(e, "Unit_Hp", 1);
-                        var key = KeyOf(e);
-                        bool done = false;
-                        if (_combat != null)
-                            foreach (var en in _enemies.Alive)
-                                if (Equals(KeyOf(en.Raw), key)) { done = _combat.Damage(en, 1e9); break; }
-                        if (!done) CallMethod(e, "Unit_Destroy");
-                        _heldKilled++;
-                        _ctx.Log($"общие враги: хост победил босса — свой враг «{NameOf(e)}» убит (бой с боссом у меня закончит игра)");
-                    }
-                    catch (Exception ex) { if (++_wFails <= 5) _ctx.Log("общие враги: убить своего босса: " + Inner(ex).Message); }
-                }
-                _held.Clear(); _heldKeys.Clear(); _hostBossEnded = false;
-                return;
-            }
             foreach (var e in _held)
                 try { if (GetMember(e, "Transform_ObjUnit") is Transform tr) { var z = tr.position.z; tr.position = new Vector3((float)hx + 400f, (float)hy + 400f, z); } } catch { }
+        }
+
+        /// <summary>
+        /// Общие враги выключились посреди босс-волны (мод выключен, хост пропал): спрятанный свой босс неуязвим и без ИИ — бой
+        /// с боссом не кончился бы никогда. Убиваем его, как после победы хоста.
+        /// </summary>
+        private void ReleaseHeld()
+        {
+            _heldNew.Clear();
+            if (_held.Count > 0) KillHeld("общие враги выключены");
+        }
+
+        private void KillHeld(string why)
+        {
+            _ctx.Mark("общие враги: убиваю своего босса гостя");
+            foreach (var e in _held)
+            {
+                try
+                {
+                    if (!(GetMember(e, "Unit_IsLive") is bool live && live)) continue;
+                    SetMember(e, "Unit_Hp", 1);
+                    var key = KeyOf(e);
+                    bool done = false;
+                    if (_combat != null)
+                        foreach (var en in _enemies.Alive)
+                            if (Equals(KeyOf(en.Raw), key)) { done = _combat.Damage(en, 1e9); break; }
+                    if (!done) CallMethod(e, "Unit_Destroy");
+                    _heldKilled++;
+                    _ctx.Log($"общие враги: {why} — свой враг «{NameOf(e)}» убит (бой с боссом у меня закончит игра)");
+                }
+                catch (Exception ex) { if (++_wFails <= 5) _ctx.Log("общие враги: убить своего босса: " + Inner(ex).Message); }
+            }
+            _held.Clear(); _heldKeys.Clear();
         }
 
         private void DestroySimple(object enemy, bool own = true)
@@ -707,12 +806,18 @@ namespace MagicSurvivalCoop
             catch (Exception e) { if (++_wFails <= 5) _ctx.Log("общие враги: Unit_Destroy_Simple: " + Inner(e).Message); }
         }
 
-        private void StopWorld(string why)
+        private void StopWorld(string why, bool touchObjects = true)
         {
-            foreach (var pp in _puppets.Values) if (pp.Obj != null && !pp.LocalDead) DestroySimple(pp.Obj, own: false);
+            _ctx.Mark("общие враги: выключение — уборка копий, возврат спавна");
+            if (touchObjects) ReleaseBossHold("общие враги выключены");   // дальше боссы гостя — его собственные
+            if (touchObjects)
+            {
+                foreach (var pp in _puppets.Values.Concat(_dying)) if (pp.Obj != null && !pp.LocalDead) DestroySimple(pp.Obj, own: false);
+                ReleaseHeld();
+            }
             RestoreSpawn();
             _ctx.Log($"общие враги: выключено ({why}); {WorldSummary()}");
-            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear();
+            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear();
             _worldActive = false; _worldHost = null;
         }
 
@@ -799,12 +904,12 @@ namespace MagicSurvivalCoop
         private static void SetMember(object o, string name, object value)
         {
             if (o == null) return;
-            var t = o.GetType();
-            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
-            var p = t.GetProperty(name, any);
-            if (p != null && p.CanWrite) { p.SetValue(p.GetSetMethod(true)?.IsStatic == true ? null : o, Convert.ChangeType(value, p.PropertyType)); return; }
-            var f = t.GetField(name, any);
-            if (f != null) f.SetValue(f.IsStatic ? null : o, Convert.ChangeType(value, f.FieldType));
+            var m = FindAny(o.GetType(), name);
+            if (m == null) return;
+            if (m.Prop != null && m.Prop.CanWrite)
+                m.Prop.SetValue(m.Static ? null : o, value != null && value.GetType() == m.ValueType ? value : Convert.ChangeType(value, m.ValueType));
+            else if ((m.Field ?? m.SetField) is FieldInfo f)
+                f.SetValue(f.IsStatic ? null : o, value != null && value.GetType() == f.FieldType ? value : Convert.ChangeType(value, f.FieldType));
         }
     }
 }

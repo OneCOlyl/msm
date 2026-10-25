@@ -78,9 +78,11 @@ if [ "${SKIP_TESTS:-}" != "1" ]; then
   run_test dotnet "$NET" embedded
   echo "== тест сети: Python-сервер"
   python3 server/coop_server.py --port 18766 >/dev/null 2>&1 & PY=$!
+  # второй — с маленькими пределами, для проверок защиты (те же, что у встроенного в NetTest)
+  python3 server/coop_server.py --port 18767 --max-per-ip 3 --max-connections 10 --room-ops-per-minute 4 --join-timeout 2 >/dev/null 2>&1 & PY2=$!
   sleep 1
-  run_test dotnet "$NET" external 127.0.0.1 18766
-  kill $PY 2>/dev/null || true
+  run_test dotnet "$NET" external 127.0.0.1 18766 18767
+  kill $PY $PY2 2>/dev/null || true
   echo "== имитация игры: два мода (хост и друг)"
   run_test dotnet tests/ModSim/bin/Release/net8.0/ModSim.dll
   echo "== отладочная консоль: разбор команд"

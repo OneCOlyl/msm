@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using ModKit;
 using System.Text.RegularExpressions;
 
 namespace MagicSurvivalCoop
@@ -21,17 +22,16 @@ namespace MagicSurvivalCoop
 
         private void InstallTimeDiag()
         {
-            try { _ctx.Before("C_Battle_Manager", "Create_UnitEnemyBoss", 2, (self, a) => OnBossCreate(a)); }
-            catch (Exception e) { _ctx.Log("время боя: хук Create_UnitEnemyBoss недоступен: " + e.Message); }
+            // только журнал — хватает события ModKit (тот же Create_UnitEnemyBoss, до вызова, синхронно: копии отсекает _spawningPuppet)
+            _ctx.Events.On("bossSpawn", e => OnBossCreate(e as EventData));
         }
 
         private void ResetTimeDiag() { _timeDiagAt = 0; _timeDiags = 0; _battleStartSec = Clock.Elapsed.TotalSeconds; }
 
-        private void OnBossCreate(object[] a)
+        private void OnBossCreate(EventData d)
         {
-            if (_spawningPuppet || !_inRun) return;                       // наши копии — не в счёт
-            try { _ctx.Log($"время боя: игра создаёт босса — тип {a?[0]}, число {a?[1]}, через {Clock.Elapsed.TotalSeconds - _battleStartSec:0.0} с от начала боя (реальных)"); }
-            catch { }
+            if (_shutdown || _spawningPuppet || !_inRun || d == null) return;   // наши копии — не в счёт
+            _ctx.Log($"время боя: игра создаёт босса — тип {d.Get<int>("unitId")}, число {d.Get<int>("count")}, через {Clock.Elapsed.TotalSeconds - _battleStartSec:0.0} с от начала боя (реальных)");
         }
 
         private void TimeDiagStep(double now)

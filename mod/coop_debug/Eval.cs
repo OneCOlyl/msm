@@ -272,6 +272,10 @@ namespace MagicSurvivalCoop.Debug
             if (t == typeof(string)) return s;
             if (t == typeof(bool)) return s == "1" || s.Equals("true", StringComparison.OrdinalIgnoreCase);
             if (t.IsEnum) return Enum.Parse(t, s, true);
+            // ObscuredFloat/ObscuredInt и т.п. — через неявное приведение из числа
+            var imp = t.IsPrimitive ? null : t.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .FirstOrDefault(m => m.Name == "op_Implicit" && m.ReturnType == t && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType.IsPrimitive);
+            if (imp != null) return imp.Invoke(null, new[] { Convert.ChangeType(double.Parse(s, CultureInfo.InvariantCulture), imp.GetParameters()[0].ParameterType, CultureInfo.InvariantCulture) });
             return Convert.ChangeType(double.Parse(s, CultureInfo.InvariantCulture), t, CultureInfo.InvariantCulture);
         }
 

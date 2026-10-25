@@ -24,13 +24,9 @@ namespace MagicSurvivalCoop
         // подставленные Time_Min/Time_Sec она сразу пересчитывает. Поэтому часы держит общая пауза (SharedPause.cs), а здесь —
         // только то, что игра хранит сама: счётчик усиления врагов EnemyLevelNum, номер волны и конец босс-волны.
         private int _hostClock = -1, _hostBossWave, _hostLevel = -1, _hostWave = -1, _hostBwPrev;
-        private double _forceEndAt = -1;
-        // 1.6.9: смена области после победы над боссом. У гостя своя босс-волна сама не кончается (его босс — копия, гибнет вслед
-        // за хостом), часы стоят. Консоль 24.10: StartCoroutine("Play_AreaChange") у гостя заканчивает босс-волну и пускает часы,
-        // как у хоста после его обелиска (AreaChangeNum 0 → 1). Обелиск — только награда (выбор артефакта), с часами не связан.
-        private int _hostAreaChange = -1, _areaChangesStarted, _areaChangeDoneFor;
-        private bool _hostBossEnded;
-        private double _areaChangeWaitFrom = -1;
+        private int _hostAreaChange = -1;                // смены области у хоста (AreaChangeNum; растёт при смерти его босса)
+        private int _hostObelisk = -1, _hostObPrev = -1; // обелиск хоста (ApplyObeliskON): 1 → 0 — хост его поднял
+        private bool _hostPicked;                        // хост поднял обелиск этого босса — гостю сразу то же (ObeliskSync.cs)
         private double _hostClockAt = -100;
         private int _clockFixes, _clockFixLogs;
         private double _clockCheckAt;
@@ -40,8 +36,9 @@ namespace MagicSurvivalCoop
 
         private void ResetClock()
         {
-            _hostClock = -1; _hostBossWave = 0; _hostClockAt = -100; _hostLevel = -1; _hostWave = -1; _hostBwPrev = 0; _forceEndAt = -1;
+            _hostClock = -1; _hostBossWave = 0; _hostClockAt = -100; _hostLevel = -1; _hostWave = -1; _hostBwPrev = 0;
             _clockFixes = _clockFixLogs = 0; _clockCheckAt = 0; _clockEvents.Clear();
+            _hostObelisk = _hostObPrev = -1; _hostPicked = false; _bossHold = false; _clockColor = null;
         }
 
         /// <summary>Часы боя в секундах (-1 — не прочитать).</summary>
@@ -62,6 +59,7 @@ namespace MagicSurvivalCoop
             if (c < 0) return;
             w.WriteNumber("tm", c);
             w.WriteNumber("bw", MyBossWave());
+            int ob = MyObelisk(); if (ob >= 0) w.WriteNumber("ob", ob);
             int ac = MyAreaChange(); if (ac >= 0) w.WriteNumber("ac", ac);
             try { w.WriteNumber("lv", Convert.ToInt32(GetAny(_battleMgr, "EnemyLevelNum"))); w.WriteNumber("ew", Convert.ToInt32(GetAny(_battleMgr, "EnemyWaveID"))); } catch { }
         }
@@ -75,11 +73,12 @@ namespace MagicSurvivalCoop
             _hostLevel = (int)Protocol.Num(s, "lv", -1);
             _hostWave = (int)Protocol.Num(s, "ew", -1);
             _hostClockAt = Clock.Elapsed.TotalSeconds;
-            // 1.6.8: босс-волну у гостя вслед за хостом больше не завершаем — у друга выпадал второй обелиск, а часы всё равно
-            // стояли до его подбора (часы идут после смены области: AreaChangeNum, наблюдатель 24.10).
-            if (_hostBwPrev == 1 && _hostBossWave == 0) _hostBossEnded = true;   // хост победил своего босса — пора убить своего
+            if (_hostBwPrev == 0 && _hostBossWave == 1) _hostPicked = false;   // новый босс у хоста — прошлый подбор не в счёт
             _hostBwPrev = _hostBossWave;
             _hostAreaChange = (int)Protocol.Num(s, "ac", -1);
+            _hostObelisk = (int)Protocol.Num(s, "ob", -1);
+            if (_hostObPrev == 1 && _hostObelisk == 0) _hostPicked = true;             // хост поднял обелиск
+            _hostObPrev = _hostObelisk;
         }
 
         /// <summary>4 раза в секунду: события часов в журнал (обе стороны); гость — подстройка часов под хоста.</summary>
@@ -98,21 +97,7 @@ namespace MagicSurvivalCoop
                 _clockEvents[f] = v;
             }
             if (_hosting || !_worldActive || _ctx.Setting("clockSync") <= 0 || _hostClock < 0 || now - _hostClockAt > 1.5) return;
-            // у хоста босс-волна кончилась, а у гостя идёт (своего босса у гостя нет — его убрала чистка): закончить и у гостя
-            if (_forceEndAt > 0 && now >= _forceEndAt)
-            {
-                _forceEndAt = -1; _hostAreaChange = -1; _areaChangeWaitFrom = -1; _areaChangesStarted = 0; _areaChangeDoneFor = 0;
-                if (MyBossWave() != 0 && _hostBossWave == 0)
-                {
-                    try
-                    {
-                        SetMember(_battleMgr, "Battle_ClearWaveON", 0);
-                        _battleMgr.GetType().GetMethod("StartCoroutine", new[] { typeof(string) })?.Invoke(_battleMgr, new object[] { "Play_BossWaveEffect_End" });
-                        _ctx.Log("часы боя: у хоста босс-волна кончилась — закончил и у себя (Play_BossWaveEffect_End)");
-                    }
-                    catch (Exception e) { _ctx.Log("часы боя: не закончить босс-волну: " + Inner(e).Message); }
-                }
-            }
+            GuestBossStep(now);
             if (_hostBossWave != 0 || MyBossWave() != 0) return;                 // босс-волну не трогаем
             // 1.6.7: номер волны и уровень врагов больше не подставляем. EnemyWaveID 5 → 6 у игры начинает босс-волну: друг
             // поднимал свой обелиск, мод снова ставил ему волну хоста 6 — босс-файт начинался повторно. Часы держат общая
@@ -124,28 +109,51 @@ namespace MagicSurvivalCoop
             try { return Convert.ToInt32(GetAny(_battleMgr, "AreaChangeNum") ?? -1); } catch { return -1; }
         }
 
-        /// <summary>Гость: у хоста прошла смена области, а у нас нет — через 1 с запустить её у себя (один раз на каждую).</summary>
-        /// <remarks>
-        /// 1.6.12: вызывается каждый кадр и на паузе — в 1.6.11 проверка шла только без паузы, а хост в это время выбирал артефакт
-        /// из обелиска (общая пауза держала гостя ~30 с), смена области запускалась на 34 с позже и повторно (сбивая первую,
-        /// пока корутина шла на паузе) — часы гостя так и стояли. Теперь — сразу и ровно один раз на каждую смену области хоста.
-        /// </remarks>
-        private void AreaChangeStep(double now)
+        private const double EnforceDone = 0.99;
+        /// <summary>Череп босс-волны (BossWave_VisionRatio: 15 — виден, 0 — погас); не прочитать — 0.</summary>
+        private double MyVision()
         {
-            if (_hosting || !_inRun || _battleMgr == null || _hostAreaChange < 0) return;
-            if (_hostAreaChange <= _areaChangeDoneFor) return;                    // эту смену области уже запускали
-            int mine = MyAreaChange();
-            if (mine < 0) return;
-            if (mine >= _hostAreaChange) { _areaChangeDoneFor = _hostAreaChange; return; }   // своя уже прошла (подняли обелиск сами)
-            if (MyBossWave() == 0 && _hostBossWave == 0 && mine + 1 < _hostAreaChange) { _areaChangeDoneFor = _hostAreaChange; return; }   // давно разошлись — не догоняем
-            _areaChangeDoneFor = _hostAreaChange;
-            try
+            try { return Convert.ToDouble(GetAny(_battleMgr, "BossWave_VisionRatio") ?? 0.0); } catch { return 0; }
+        }
+        /// <summary>Вступление босс-волны (BossWave_EnforceVar, 0 → 1); не прочитать — считаем законченным.</summary>
+        private double MyEnforce()
+        {
+            try { return Convert.ToDouble(GetAny(_battleMgr, "BossWave_EnforceVar") ?? 1.0); } catch { return 1; }
+        }
+
+        private int MyObelisk()
+        {
+            try { return Convert.ToInt32(GetAny(_battleMgr, "ApplyObeliskON") ?? -1); } catch { return -1; }
+        }
+
+        /// <summary>
+        /// Конец босс-волны у гостя (1.6.42, ObeliskSync.cs): хост поднял обелиск этого босса, а гость позади — у него идёт своя
+        /// босс-волна (или вступление), лежит обелиск, или смен области меньше, чем у хоста (до босса не дошёл). Тогда сразу:
+        /// волна снята, часы как у хоста, смена области, выбор легендарного артефакта. Своё окно выбора открыто — после него.
+        /// </summary>
+        private void GuestBossStep(double now)
+        {
+            BossHoldStep();
+            NoteClockColor();
+            int ac = MyAreaChange();
+            if (MyObelisk() == 1 && !_hostPicked && !OwnPause())
             {
-                _battleMgr.GetType().GetMethod("StartCoroutine", new[] { typeof(string) })?.Invoke(_battleMgr, new object[] { "Play_AreaChange" });
-                _areaChangesStarted++;
-                _ctx.Log($"часы боя: у хоста смена области ({_hostAreaChange}), у меня {mine} — запустил Play_AreaChange");
+                // игра у гостя сама закончила этап (обелиск лёг): хост свой ещё не поднял — убрать и ждать его; уже поднял
+                // (у гостя этот этап кончился позже) — убрать и пустить часы без второй награды
+                if (_hostObelisk == 1 || _hostBossWave != 0) RemoveObelisks("игра положила его гостю, хост свой ещё не поднял");
+                else try { CatchUpBoss(false); } catch (Exception e) { _ctx.Log("обелиск: " + Inner(e).Message); }
             }
-            catch (Exception e) { _ctx.Log("часы боя: Play_AreaChange не запустить: " + Inner(e).Message); }
+            if (!_hostPicked || OwnPause()) return;
+            _hostPicked = false;
+            bool behind = MyBossWave() != 0 || MyObelisk() == 1 || MyVision() > 0.01 || (ac >= 0 && _hostAreaChange > ac);
+            if (!behind) { _ctx.Log($"обелиск: хост поднял свой — у меня босс уже пройден (смен области {ac}, у хоста {_hostAreaChange})"); return; }
+            try { CatchUpBoss(true); } catch (Exception e) { _ctx.Log("обелиск: " + Inner(e).Message); }
+        }
+
+        /// <summary>Живых боссов у себя (ApplyBossNum, статический счётчик игры); -1 — не прочитать.</summary>
+        private int MyBossCount()
+        {
+            try { return Convert.ToInt32(GetAny(_battleMgr, "ApplyBossNum") ?? 0); } catch { return -1; }
         }
 
         private string ClockSummary() => _hosting || _clockFixes == 0 ? "" : $"; уровень врагов и волна подтянуты к хосту {_clockFixes} раз";

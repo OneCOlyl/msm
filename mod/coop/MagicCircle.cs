@@ -25,6 +25,10 @@ namespace MagicSurvivalCoop
         private bool _mcLogged;
 
         /// <summary>Отправитель, при каждой отправке: есть ли круг, включён ли, кадры, повороты, масштаб.</summary>
+        private static readonly string[] McRendererNames = { "SpriteRenderer_MagicCircleA", "SpriteRenderer_MagicCircleB", "SpriteRenderer_MagicCircleC" };
+        private static readonly string[] McTransformNames = { "Transform_ObjMagicCircleA", "Transform_ObjMagicCircleB", "Transform_ObjMagicCircleC" };
+        private double _mcLookAt;
+
         private void RefreshMyCircle()
         {
             var hero = HeroObject();
@@ -34,11 +38,19 @@ namespace MagicSurvivalCoop
             if (!_myMcOn) return;
             try
             {
-                if (GetMember(GetMember(_myMcObj, "transform"), "localScale") is Vector3 ls) _myMcScale = ls.x;
+                // поворот — каждую отправку (вращение у друга плавное); масштаб и кадры меняются редко — не чаще 10 раз в секунду:
+                // это десяток обращений к игре через рефлексию (1.6.19, телефоны: свои орбиты — 1,2–1,4 мс на отправку при 30 в секунду)
+                double now = Clock.Elapsed.TotalSeconds;
+                bool look = now >= _mcLookAt;
+                if (look)
+                {
+                    _mcLookAt = now + 0.1;
+                    if (GetMember(GetMember(_myMcObj, "transform"), "localScale") is Vector3 ls) _myMcScale = ls.x;
+                }
                 for (int i = 0; i < 3; i++)
                 {
-                    _myMcImg[i] = NameOf(SpriteOf(GetMember(hero, "SpriteRenderer_MagicCircle" + CircleKeys[i])));
-                    _myMcRot[i] = GetMember(GetMember(hero, "Transform_ObjMagicCircle" + CircleKeys[i]), "localEulerAngles") is Vector3 e ? e.z : 0;
+                    if (look) _myMcImg[i] = NameOf(SpriteOf(GetMember(hero, McRendererNames[i])));
+                    _myMcRot[i] = GetMember(GetMember(hero, McTransformNames[i]), "localEulerAngles") is Vector3 e ? e.z : 0;
                 }
                 if (!_mcLogged) { _mcLogged = true; _ctx.Log($"маг. круг (свой): {TreeOf(_myMcObj)}; кадры {string.Join(", ", _myMcImg)}"); }
             }

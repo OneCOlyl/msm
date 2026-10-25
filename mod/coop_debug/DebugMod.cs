@@ -24,7 +24,7 @@ namespace MagicSurvivalCoop.Debug
         {
             Id = "coop_debug",
             Name = "Кооператив: отладка",
-            Version = "0.1.1",
+            Version = "0.1.5",
             Description = "Для разработки: консоль на порту 8770 (только через USB/adb) — читать и менять поля игры во время боя. Игрокам не нужна.",
             OnEnable = ctx => _c = new DebugConsole(ctx),
             OnDisable = ctx => { _c?.Stop(); _c = null; },
@@ -43,6 +43,7 @@ namespace MagicSurvivalCoop.Debug
         private object _mgr, _abil;
         private readonly Dictionary<string, object> _iters = new Dictionary<string, object>();
         private readonly List<Action> _unhooks = new List<Action>();
+        private readonly List<TcpClient> _clients = new List<TcpClient>();   // открытые сессии консоли — закрыть при выключении
         private readonly List<object> _found = new List<object>();
         private MethodInfo _findAll; private object _goType; private bool _findFailed;
 
@@ -105,10 +106,15 @@ namespace MagicSurvivalCoop.Debug
             catch (Exception e) { ctx.Log("отладка: порт не открыт: " + e.Message); }
         }
 
+        /// <summary>Выключение (OnDisable и OnCleanup — может прийти дважды): порт закрыт, сессии оборваны, ждущие запросы отпущены, хуки сняты.</summary>
         public void Stop()
         {
             _stop = true;
             try { _listener?.Stop(); } catch { }
+            TcpClient[] open;
+            lock (_clients) { open = _clients.ToArray(); _clients.Clear(); }
+            foreach (var c in open) { try { c.Close(); } catch { } }
+            while (_q.TryDequeue(out var job)) { job.result[0] = "ошибка: консоль выключена"; job.done.Set(); }
             foreach (var u in _unhooks) { try { u(); } catch { } }
             _unhooks.Clear();
         }
@@ -121,18 +127,24 @@ namespace MagicSurvivalCoop.Debug
             {
                 TcpClient c;
                 try { c = _listener.AcceptTcpClient(); } catch { if (_stop) return; Thread.Sleep(200); continue; }
-                new Thread(() => Serve(c)) { IsBackground = true }.Start();
+                lock (_clients)
+                {
+                    if (_stop) { try { c.Close(); } catch { } return; }
+                    _clients.Add(c);
+                }
+                new Thread(() => Serve(c)) { IsBackground = true, Name = "coop_debug-session" }.Start();
             }
         }
 
+        /// <summary>Сессия консоли. Всё внутри try: Stop может закрыть сокет в любой момент, а исключение фонового потока уронило бы игру.</summary>
         private void Serve(TcpClient c)
         {
-            using (c)
-            using (var s = c.GetStream())
-            using (var r = new StreamReader(s, new UTF8Encoding(false)))
-            using (var w = new StreamWriter(s, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" })
+            try
             {
-                try
+                using (c)
+                using (var s = c.GetStream())
+                using (var r = new StreamReader(s, new UTF8Encoding(false)))
+                using (var w = new StreamWriter(s, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" })
                 {
                     string line;
                     while (!_stop && (line = r.ReadLine()) != null)
@@ -140,13 +152,15 @@ namespace MagicSurvivalCoop.Debug
                         var done = new ManualResetEventSlim(false);
                         var res = new string[1];
                         _q.Enqueue((line, done, res));
+                        if (_stop) break;
                         string text = done.Wait(15000) ? res[0] : "ошибка: игра не ответила за 15 с (пауза? главное меню без таймера?)";
                         w.WriteLine(text);
                         w.WriteLine("<<END>>");
                     }
                 }
-                catch { }
             }
+            catch { }
+            lock (_clients) _clients.Remove(c);
         }
 
         // ------------------------------------------------------------ главный поток
@@ -154,7 +168,7 @@ namespace MagicSurvivalCoop.Debug
         private void Pump()
         {
             int n = 0;
-            while (n++ < 8 && _q.TryDequeue(out var job))
+            while (!_stop && n++ < 8 && _q.TryDequeue(out var job))
             {
                 string res;
                 try { _ctx.Mark("отладка: " + job.line); res = _ev.Run(job.line); }
@@ -186,6 +200,11 @@ namespace MagicSurvivalCoop.Debug
             if (cmd == "iters")
                 return _iters.Count == 0 ? "корутины не пойманы (hook <Тип> <regex>)" : string.Join("\n", _iters.Keys.Select(k => "iter:" + k));
             if (cmd == "find") return a.Length < 1 ? "find <regex имени>, например: find Clone" : Find(a[0]);
+            if (cmd == "calls")
+            {
+                lock (_calls) { var r = _calls.Count == 0 ? "вызовов не было (hookm <Тип> <regex>)" : string.Join("\n", _calls); _calls.Clear(); return r; }
+            }
+            if (cmd == "hookm") return a.Length < 2 ? "hookm <Тип> <regex метода> — записывать вызовы методов (calls — показать)" : HookMethods(a[0], a[1]);
             if (cmd != "hook") return null;
             if (a.Length < 2) return "hook <Тип> <regex вложенного типа>, например: hook C_Battle_Manager Play_Time";
             var t = Hooks.FindType(a[0]);
@@ -201,6 +220,38 @@ namespace MagicSurvivalCoop.Debug
                 catch (Exception e) { done.Add(key + " — не вышло: " + e.Message); }
             }
             return done.Count == 0 ? "вложенных типов с MoveNext не найдено" : "хуки: " + string.Join(", ", done) + "\n(объект появится как iter:<имя> после следующего шага корутины)";
+        }
+
+        private readonly List<string> _calls = new List<string>();
+        private static readonly Regex PerFrame = new Regex("^(Update|LateUpdate|FixedUpdate|OnGUI|OnCollision|OnTrigger|OnBecame|MoveNext|get_|set_|Equals|GetHashCode|ToString)");
+
+        /// <summary>hookm &lt;Тип&gt; &lt;regex&gt; — записывать вызовы объявленных в типе методов (без покадровых); calls — список (до 400).</summary>
+        private string HookMethods(string typeName, string pattern)
+        {
+            var t = Hooks.FindType(typeName);
+            if (t == null) return "тип не найден: " + typeName;
+            var rx = new Regex(pattern, RegexOptions.IgnoreCase);
+            var done = new List<string>();
+            const BindingFlags decl = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+            foreach (var mi in t.GetMethods(decl))
+            {
+                if (mi.IsGenericMethodDefinition || mi.IsAbstract || mi.Name.StartsWith("<") || PerFrame.IsMatch(mi.Name) || !rx.IsMatch(mi.Name)) continue;
+                // методы, создающие корутины (IEnumerator), не трогаем: перехват их у предметов при подборе обелиска уронил игру (24.10)
+                if (typeof(System.Collections.IEnumerator).IsAssignableFrom(mi.ReturnType) || mi.ReturnType.Name.Contains("IEnumerator")) continue;
+                var label = $"{t.Name}.{mi.Name}/{mi.GetParameters().Length}";
+                try
+                {
+                    _unhooks.Add(Hooks.HookBefore(_ctx.Id, mi, (self, args) =>
+                    {
+                        var line = $"{DateTime.Now:HH:mm:ss.fff} {label}" + (args != null && args.Length > 0 ? "(" + string.Join(", ", args.Select(x => Convert.ToString(x))) + ")" : "");
+                        lock (_calls) { if (_calls.Count < 400) _calls.Add(line); }
+                        _ctx.Log("вызов: " + line);   // сразу в журнал — при падении игры список в памяти пропадает
+                    }));
+                    done.Add(label);
+                }
+                catch (Exception e) { done.Add(label + " — не вышло: " + e.Message); }
+            }
+            return done.Count == 0 ? "методов не найдено" : $"слежу ({done.Count}): " + string.Join(", ", done);
         }
 
         // ------------------------------------------------------------ Unity без опасных обёрток

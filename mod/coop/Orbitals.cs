@@ -93,6 +93,8 @@ namespace MagicSurvivalCoop
 
         /// <summary>Своё состояние «орбит»: угол спутников — при каждой отправке (он вместе со временем «t» в том же сообщении),
         /// остальное — не чаще 4 раз в секунду (чтение массивов героя через рефлексию).</summary>
+        private double _zoneLookAt;
+
         private void RefreshMyOrbits()
         {
             double now = Clock.Elapsed.TotalSeconds;
@@ -108,9 +110,11 @@ namespace MagicSurvivalCoop
                 catch { }
             }
             try { _myZoneOn = _myZoneObj != null && Convert.ToBoolean(GetMember(_myZoneObj, "activeSelf") ?? false); } catch { _myZoneOn = false; }
-            if (_myZoneOn)
+            if (_myZoneOn && now >= _zoneLookAt)
             {
-                // игра мигает зоной рендером (enabled/прозрачность) и меняет кадры ElectricZone1A/1B/1C — пересылаем как есть
+                // игра мигает зоной рендером (enabled/прозрачность) и меняет кадры ElectricZone1A/1B/1C — пересылаем как есть,
+                // но не чаще 10 раз в секунду (рендер, картинка, цвет — четыре обращения к игре через рефлексию на отправку)
+                _zoneLookAt = now + 0.1;
                 try
                 {
                     var zsr = RendererOf(_myZoneObj);
@@ -329,7 +333,17 @@ namespace MagicSurvivalCoop
         private static IntPtr _getSprite, _setSprite, _getName, _spriteClass;
         private static Type _il2;
 
-        private static IntPtr PtrOf(object wrapper) => wrapper?.GetType().GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance)?.GetValue(wrapper) is IntPtr p ? p : IntPtr.Zero;
+        private static readonly Dictionary<Type, PropertyInfo> PointerCache = new Dictionary<Type, PropertyInfo>();
+        /// <summary>Адрес объекта игры (обёртка IL2CPP, свойство Pointer); поиск свойства — один раз на тип (зовётся на каждого врага).</summary>
+        private static IntPtr PtrOf(object wrapper)
+        {
+            if (wrapper == null) return IntPtr.Zero;
+            var t = wrapper.GetType();
+            PropertyInfo p;
+            lock (PointerCache)
+                if (!PointerCache.TryGetValue(t, out p)) PointerCache[t] = p = t.GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance);
+            return p?.GetValue(wrapper) is IntPtr ptr ? ptr : IntPtr.Zero;
+        }
 
         private static void InitRaw()
         {

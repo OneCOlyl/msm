@@ -53,7 +53,7 @@ namespace MagicSurvivalCoop
             _enemyCount = 0;
             try
             {
-                var list = _enemies.Alive;
+                var list = AliveNow();
                 if (list.Count > _enemyX.Length) { _enemyX = new float[list.Count * 2]; _enemyY = new float[list.Count * 2]; }
                 foreach (var e in list)
                 {
@@ -107,7 +107,7 @@ namespace MagicSurvivalCoop
         {
             try
             {
-                _ctx.Before("C_Battle_AllyUnit", "Bullet_Create", 13, (self, args) => OnBulletCreate(args));
+                _ctx.Before("C_Battle_AllyUnit", "Bullet_Create", 13, Hook("снаряд героя: пересылка друзьям", (self, args) => OnBulletCreate(args)));
                 _magicHooked = true;
             }
             catch (Exception e) { _ctx.Log("пересылка магии недоступна (нет Bullet_Create): " + e.Message); }

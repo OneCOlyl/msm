@@ -26,11 +26,11 @@ namespace MagicSurvivalCoop.Probe
         {
             Id = "coop_probe",
             Name = "Кооператив: разведка",
-            Version = "0.6.1",
+            Version = "0.6.2",
             Description = "Разведка Армагеддона: что включается в игре при его взрыве — чтобы показать его у друга. Ничего не меняет, только записывает. Потом выключите.",
             Depends = { ["modkit_combat"] = ">=1.0", ["modkit_spells"] = ">=1.0" },
             OnEnable = ctx => _p = new Probe(ctx),
-            OnDisable = ctx => { _p?.Finish("мод выключен"); _p = null; },
+            OnDisable = ctx => { _p?.Shutdown(); _p = null; },
         };
         private Probe _p;
     }
@@ -79,7 +79,7 @@ namespace MagicSurvivalCoop.Probe
             string dir = DirOverride;
             if (dir == null) { try { dir = Paths.Dir; } catch { dir = "/sdcard/MelonLoader/com.vkslrzm.Zombix/UserData/ModKit"; } }
             _path = Path.Combine(dir, "coop_probe.txt");
-            W($"=== coop_probe 0.6.1 (разведка Армагеддона), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+            W($"=== coop_probe 0.6.2 (разведка Армагеддона), {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
             ctx.Log("разведка Армагеддона включена: начните бой и возьмите Армагеддон (можно читом)");
 
             ctx.Before("C_Battle_AllyUnit", "Bullet_Create", 13, (s, a) => OnBullet(a));
@@ -427,6 +427,14 @@ namespace MagicSurvivalCoop.Probe
         private static string Children(object tr)
         {
             try { var c = Get(tr, "childCount"); return c != null && Convert.ToInt32(c) > 0 ? $", детей {c}" : ""; } catch { return ""; }
+        }
+
+        /// <summary>Выключение мода: дописать отчёт и убрать плашку сразу — таймер «убрать через 8 с» у выключенного мода не сработает.</summary>
+        public void Shutdown()
+        {
+            try { Finish("мод выключен"); } catch { }
+            DestroyBoard();
+            Flush();
         }
 
         public void Finish(string why)

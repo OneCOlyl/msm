@@ -325,7 +325,7 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     Frames(30);
     Check(bm.EnemyLevelNum == 170, "во время босс-волны часы не трогаем");
     am.Battle_ClearWaveON = 0;
-    {   // своя босс-волна гостя: его босс прячется (не убирается без смерти), хост победил своего — убит уроном
+    {   // своя босс-волна гостя: его босс прячется (без ИИ, далеко); хост победил своего — босс гостя не убит
         am.Battle_ClearWaveON = 1; bm.Battle_ClearWaveON = 1;
         Frames(15);
         var boss = new FakeEnemy(B, 50); boss.Transform_ObjUnit.position = B.Combat.Pos; B.Combat.Enemies.Add(boss); boss.Fire();
@@ -334,7 +334,7 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
         Check(Math.Abs(boss.Transform_ObjUnit.position.x - B.Combat.Pos.x) > 100, "и стоит далеко от героя");
         am.Battle_ClearWaveON = 0;                                          // хост победил своего босса
         Frames(30);
-        Check(!boss.Unit_IsLive && !boss.DestroyedSimple, "хост победил — свой босс гостя убит уроном (игра засчитает победу)");
+        Check(boss.Unit_IsLive && !boss.DestroyedSimple, "хост победил — свой босс гостя не убит (смерть закончила бы этап и положила обелиск): ждёт обелиска хоста");
         bm.Battle_ClearWaveON = 0;
     }
     B.Ctx.Set["world"] = 0;
@@ -481,7 +481,141 @@ A.Call("Disconnect");
 Console.WriteLine("6. выключение мода");
 A.Disable(); B.Disable();
 Check(true, "моды выключены без исключений");
+
+Console.WriteLine("7. выключение мода посреди боя (общая пауза, общие враги, ускорение) и повторное включение");
+{
+    var sess = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session");
+    var ownField = sess.GetField("OwnPauseOverride", BindingFlags.NonPublic | BindingFlags.Static);
+    var own = new HashSet<ModContext>();
+    ownField.SetValue(null, (Func<ModContext, bool>)(c => own.Contains(c)));
+    var H = new Player("Хост7"); var G = new Player("Друг7");
+    foreach (var p in new[] { H, G }) { p.Ctx.Set["port"] = 28820; p.Ctx.Set["world"] = 1; }
+    void T(int ms) { for (int t = 0; t < ms / 50; t++) { H.Tick(); G.Tick(); Thread.Sleep(50); } }
+    void F(int n) { for (int fr = 0; fr < n; fr++) { H.Call("FrameStep"); H.Tick(); G.Tick(); G.Call("FrameStep"); Thread.Sleep(16); } }
+    G.Call("Join"); T(800);                                              // гость раньше хоста: ждёт, комнату не создаёт
+    H.Call("Host");
+    Check(((string)H.Get("_notice") ?? "").Contains("Создаю"), $"до ответа сервера «Игра создана» не показано: «{H.Get("_notice")}»");
+    T(4000);
+    Check(H.Get("_mySlot") is int hs && hs == 1 && G.Get("_mySlot") is int gs && gs == 2, $"хост — слот 1, гость, пришедший раньше, — слот 2 ({H.Get("_mySlot")}, {G.Get("_mySlot")})");
+    Check(((string)H.Get("_notice") ?? "").Contains("Игра создана"), "после ROOM_CREATED — «Игра создана»");
+    H.Spells.InBattle = G.Spells.InBattle = true; H.Emit("battleStart"); G.Emit("battleStart");
+    H.Combat.Pos = new Vector3(0, 0, 0); G.Combat.Pos = new Vector3(50, 50, 0);
+    var hm = new FakeManager { Owner = H }; var gm = new FakeManager { Owner = G };
+    H.Set("_battleMgr", hm); G.Set("_battleMgr", gm);
+    H.Set("_battleStartSec", -1000.0); G.Set("_battleStartSec", -1000.0);
+    FakeManager.List_BattleUnitEnemyBoss_Empty = Enumerable.Range(0, 5).Select(_ => new object()).ToList();
+    var he = new FakeEnemy(H, 6); he.Transform_ObjUnit.position = new Vector3(2, 1, 0); H.Combat.Enemies.Add(he);
+    Time.timeScale = 1;
+    T(400); F(60);
+    var pups = G.Combat.Enemies.OfType<FakeEnemy>().Where(e => e.Puppet).ToList();
+    Check((bool)G.Get("_worldActive") && gm.EnemyCreateNum == 0 && pups.Count == 1, $"у гостя общие враги: свой спавн погашен, копий {pups.Count}");
+    {   // 1.6.31: перед боссом тот, кто впереди, ждёт — босс-волна начинается у всех вместе
+        hm.Time_Min = 2; hm.Time_Sec = 55; gm.Time_Min = 2; gm.Time_Sec = 50; hm.Battle_ClearWaveON = gm.Battle_ClearWaveON = 0;
+        F(30);
+        Check((bool)H.Get("_pauseForced") && (string)H.Get("_pauseWhy") == "к боссу", $"хост на 2:55, гость на 2:50 — хост ждёт гостя перед боссом ({H.Get("_pauseWhy")})");
+        gm.Time_Sec = 55; F(30);
+        Check(!(bool)H.Get("_pauseForced"), "гость догнал — хост продолжает");
+        Time.timeScale = 1;
+    }
+    {   // босс-волна (1.6.42): хост убил босса и поднял обелиск — у гостя сразу: волна снята, часы как у хоста (за порогом босса),
+        // смена области, награда; конец его вступления не кладёт второй обелиск (ApplyBossNum держится 1)
+        void FS(int n) { for (int k = 0; k < n; k++) { hm.Step(); gm.Step(); F(1); } }
+        void Wait(double sec, Func<bool> until) { var sw = System.Diagnostics.Stopwatch.StartNew(); while (sw.Elapsed.TotalSeconds < sec && !until()) FS(5); }
+        FakeManager.ApplyBossNum = 0;
+        hm.BeginBoss(3); gm.BeginBoss(3);
+        hm.EnforceStep = 0; gm.EnforceStep = 0.001f;                              // вступление гостя ещё долго (телефон: ~1 мин)
+        FS(20);
+        hm.Battle_ClearWaveON = 0; hm.AreaChangeNum = 1; hm.ApplyObeliskON = 1; hm.BossWave_VisionRatio = 0;   // хост убил босса
+        Wait(3, () => false);
+        Check(gm.Battle_ClearWaveON == 1 && gm.AreaChanges == 0, "хост убил босса, обелиск ещё не поднят — у гостя волна идёт, как и часы хоста стоят");
+        float enforce = gm.BossWave_EnforceVar;
+        hm.ApplyObeliskON = 0; hm.Time_Sec = 2;                                   // хост поднял обелиск, его часы пошли (3:02)
+        Wait(5, () => gm.AreaChanges > 0);
+        FS(10);
+        Check(gm.Battle_ClearWaveON == 0 && gm.BossWave_VisionRatio == 0 && gm.ApplyBossGround_Size == 0, "хост поднял обелиск — у гостя сразу снята босс-волна (затемнение, арена)");
+        Check(!gm.Obj_MonsterClearBar.activeSelf && gm.Text_Time.color.g == 1, $"череп над часами убран, часы снова белые ({gm.Text_Time.color.r}, {gm.Text_Time.color.g}, {gm.Text_Time.color.b})");
+        Check(gm.Clock >= 182 && gm.Clock <= 184, $"часы гостя — как у хоста, за порогом босса: {gm.Time_Min}:{gm.Time_Sec:00}");
+        Check(gm.AreaChanges == 1 && gm.AreaChangeNum == 1 && gm.ApplyObeliskON == 0, $"одна смена области, счётчик как у хоста ({gm.AreaChangeNum}), обелиска нет");
+        Check(gm.BossWave_EnforceVar >= enforce && FakeManager.ApplyBossNum == 1, $"вступление не начато заново ({enforce:0.00} → {gm.BossWave_EnforceVar:0.00}), счётчик боссов держится 1");
+        gm.EnforceStep = 0.05f;
+        Wait(3, () => gm.BossWave_EnforceVar >= 0.999f);
+        FakeManager.ApplyBossNum = 0;                                             // игра сбросила счётчик — мод вернёт 1
+        FS(20);
+        Check(FakeManager.ApplyBossNum == 1 && gm.Ends == 0 && gm.AreaChangeNum == 1 && gm.ApplyObeliskON == 0,
+              $"вступление гостя досчиталось — второго конца волны и обелиска нет, счётчик боссов держится 1 (концов {gm.Ends}, смен {gm.AreaChangeNum})");
+
+        // гость отстал и до босса не дошёл (2:58), хост уже поднял обелиск: перескочить порог — своей босс-волны не будет
+        hm.BeginBoss(6); hm.Battle_ClearWaveON = 0; hm.AreaChangeNum = 2; hm.ApplyObeliskON = 1;
+        gm.Time_Min = 5; gm.Time_Sec = 58; gm.BossWave_EnforceVar = 1;
+        Wait(3, () => false);
+        hm.ApplyObeliskON = 0; hm.Time_Sec = 1;
+        Wait(5, () => gm.AreaChanges > 1);
+        FS(10);
+        Check(gm.Clock >= 361 && gm.AreaChangeNum == 2 && gm.Battle_ClearWaveON == 0 && gm.Ends == 0,
+              $"гость до босса не дошёл — часы за порог ({gm.Time_Min}:{gm.Time_Sec:00}), смена области как у хоста ({gm.AreaChangeNum})");
+    }
+    own.Add(H.Ctx); Time.timeScale = 0;                                  // хост выбирает умение — у гостя общая пауза
+    F(20);
+    Check((bool)G.Get("_pauseForced"), "у гостя пауза из-за хоста");
+    G.Disable();
+    Check(Time.timeScale == 1, $"выключение у гостя: скорость игры вернулась ({Time.timeScale})");
+    Check(!(bool)G.Get("_pauseForced"), "общая пауза снята");
+    Check(gm.EnemyCreateNum == 2 && gm.EnemyCreateNum_Max == 300, $"свой спавн гостя возвращён ({gm.EnemyCreateNum}, {gm.EnemyCreateNum_Max})");
+    Check(pups.All(e => e.DestroyedSimple), "копии врагов хоста убраны");
+    Check(!(bool)G.Get("_worldActive"), "общие враги выключены");
+    bool again = true;
+    try { G.Disable(); G.Tick(); G.Call("FrameStep"); } catch (Exception ex) { again = false; Console.WriteLine("    " + ex); }
+    Check(again && gm.EnemyCreateNum == 2, "повторное выключение и запоздалые вызовы таймера и кадра — без исключений и без изменений игры");
+    own.Clear();
+    H.Set("_catchUp", true); H.Set("_gameScale", 1f); H.Set("_catchSet", 1.25f); Time.timeScale = 1.25f;   // хост догонял часы ускорением
+    H.Disable();
+    Check(Time.timeScale == 1, $"выключение у хоста: ускорение снято ({Time.timeScale})");
+    var H2 = new Player("Хост7б"); var G2 = new Player("Друг7б");
+    foreach (var p in new[] { H2, G2 }) p.Ctx.Set["port"] = 28820;
+    H2.Call("Host"); for (int t = 0; t < 10; t++) { H2.Tick(); G2.Tick(); Thread.Sleep(50); }
+    G2.Call("Join"); for (int t = 0; t < 40; t++) { H2.Tick(); G2.Tick(); Thread.Sleep(50); }
+    Check(H2.Partners().Count == 1 && G2.Partners().Count == 1, "после повторного включения новая игра на том же порту работает");
+    H2.Disable(); G2.Disable();
+    ownField.SetValue(null, null);
+}
 Console.WriteLine($"\nОшибки, пойманные Guard (кроме интерфейса Unity): {string.Join("; ", A.Errors.Concat(B.Errors).Distinct().Take(8))}");
+Console.WriteLine("8. версии библиотек ModKit: mod.json и Define() совпадают, несовместимая 2.x не запускается");
+{
+    var dir = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+    while (dir != null && !System.IO.File.Exists(System.IO.Path.Combine(dir.FullName, "mod", "coop", "mod.json"))) dir = dir.Parent;
+    using var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(System.IO.Path.Combine(dir.FullName, "mod", "coop", "mod.json")));
+    var json = doc.RootElement.GetProperty("depends").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString());
+    var def = new MagicSurvivalCoop.CoopMod().Define();
+    Check(json.Count == def.Depends.Count && json.All(kv => def.Depends.TryGetValue(kv.Key, out var v) && v == kv.Value),
+          $"depends в mod.json (их берёт ModKit) = Define(): {string.Join(", ", json.Select(kv => kv.Key + " " + kv.Value))}");
+    var range = MagicSurvivalCoop.CoopMod.LibRange;
+    Check(ModKit.Core.Satisfies("1.0", range) && ModKit.Core.Satisfies("1.9.3", range), $"библиотеки 1.0 (MS_KIT 2.0) и 1.x подходят под «{range}»");
+    Check(!ModKit.Core.Satisfies("2.0", range) && !ModKit.Core.Satisfies("0.9", range) && !ModKit.Core.Satisfies(null, range), "2.0, 0.9 и «без версии» — не подходят (ModKit не запустит мод и напишет причину)");
+}
+
+Console.WriteLine("9. ошибки обработчиков хуков: в журнал ModKit — первые 3, дальше только счёт (иначе ModKit выключил бы мод)");
+{
+    var P = new Player("Ошибки");
+    var sess = P.Session;
+    var hookM = sess.GetType().GetMethod("Hook", BindingFlags.NonPublic | BindingFlags.Instance);
+    var h = (Action<object, object[]>)hookM.Invoke(sess, new object[] { "проверка", (Action<object, object[]>)((s, a) => throw new InvalidOperationException("сбой")) });
+    int gf0 = P.Ctx.GuardFails;
+    bool leaked = false;
+    for (int i = 0; i < 10; i++) try { h(null, null); } catch { leaked = true; }
+    var errs = (System.Collections.Generic.Dictionary<string, int>)P.Get("_hookErrors");
+    Check(!leaked, "исключение не выходит из обработчика");
+    Check(P.Ctx.GuardFails - gf0 == 3, $"в ModKit (ctx.Guard) ушло {P.Ctx.GuardFails - gf0} ошибки из 10");
+    Check(errs.TryGetValue("проверка", out var n) && n == 10, $"все 10 посчитаны для итога боя ({n})");
+    var start = P.Ctx.Hooks.Keys.FirstOrDefault(k => k.Contains("Start_Unit"));
+    Check(start != null, "хук Start_Unit (синхронизация спавна) поставлен через обёртку");
+    P.Disable();
+    gf0 = P.Ctx.GuardFails;
+    h(null, null);
+    Check(P.Ctx.GuardFails == gf0, "после выключения мода обработчик ничего не делает");
+    Check(P.Ctx.Handlers.ContainsKey("bossSpawn") && P.Ctx.Handlers.ContainsKey("areaChange") && !P.Ctx.Hooks.Keys.Any(k => k.Contains("Create_UnitEnemyBoss") || k.Contains("Start_AreaChange")),
+          "журнал боссов и смены области — через события ModKit, без своих хуков");
+}
+
 Console.WriteLine($"ИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
 
@@ -557,7 +691,8 @@ class FakeCtx : ModContext
     public IGameTimer Timer => new Tm(this);
     public IStore Store => new St(this);
     public ITags Tags => null;
-    public void Guard(string what, Action fn) { try { fn(); } catch (Exception e) { var m = $"{what}: {e.GetType().Name}: {e.Message}"; if (!Errors.Contains(m)) Errors.Add(m); } }
+    public int GuardFails;
+    public void Guard(string what, Action fn) { try { fn(); } catch (Exception e) { GuardFails++; var m = $"{what}: {e.GetType().Name}: {e.Message}"; if (!Errors.Contains(m)) Errors.Add(m); } }
     public void Error(string msg) => Errors.Add(msg);
     public void Mark(string what) { }
     class Ev : ModEvents
@@ -670,6 +805,7 @@ class GameHero
 static class WinTimer { [System.Runtime.InteropServices.DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint ms); }
 class FakePlayTime { public int Counter { get; set; } public int Other { get; set; } public int __1__state { get; set; } }
 /// <summary>Менеджер боя (вместо C_Battle_Manager): флаг взрыва Армагеддона и его объекты.</summary>
+class FakeText { public Color color { get; set; } }
 class FakeManager
 {
     public Player Owner;
@@ -679,7 +815,33 @@ class FakeManager
     public void StartCoroutine(string name)
     {
         if (name.StartsWith("Play_Armageddon")) throw new MissingMethodException(name);   // проверки Армагеддона — по таблице объектов
-        Coroutines.Add(name); if (name == "Play_AreaChange") { AreaChangeNum++; Battle_ClearWaveON = 0; }
+        Coroutines.Add(name);
+    }
+    // как в игре (консоль на телефоне 25.10): босс-этап — часы стоят на пороге, вступление (BossWave_EnforceVar) растёт; его
+    // конец при ApplyBossNum 0 заканчивает волну и кладёт обелиск. Start_AreaChange на самом пороге начинает вступление заново,
+    // за порогом — часы идут
+    public int ApplyObeliskON, AreaChanges, Ends, AreaChangeID = 1; public float BossWave_EnforceVar = 1, BossWave_VisionRatio, ApplyBossGround_Size, EnforceStep = 0.01f;
+    bool _intro;
+    public int Clock => Time_Min * 60 + Time_Sec;
+    public GameObject Obj_MonsterClearBar = new GameObject();                  // череп босс-волны над часами
+    public FakeText Text_Time = new FakeText { color = new Color(1, 1, 1, 1) };
+    public void BeginBoss(int min)
+    {
+        Time_Min = min; Time_Sec = 0; Battle_ClearWaveON = 1; BossWave_VisionRatio = 15; ApplyBossGround_Size = 145; BossWave_EnforceVar = 0; _intro = true;
+        Obj_MonsterClearBar.SetActive(true); Text_Time.color = new Color(1, 0.314f, 0.039f, 1);
+    }
+    public void Start_AreaChange()
+    {
+        AreaChanges++; ApplyObeliskON = 0; ApplyBossGround_Size = 0;
+        if (Time_Sec == 0 && Time_Min % 3 == 0) { BossWave_EnforceVar = 0; _intro = true; }
+    }
+    public void Step()
+    {
+        if (!_intro) return;
+        BossWave_EnforceVar = Math.Min(0.999f, BossWave_EnforceVar + EnforceStep);
+        if (BossWave_EnforceVar < 0.999f) return;
+        _intro = false; BossWave_VisionRatio = 0;
+        if (ApplyBossNum <= 0) { Ends++; Battle_ClearWaveON = 0; AreaChangeNum++; ApplyObeliskON = 1; ApplyBossGround_Size = 145; }
     }
     public static int ApplyBossNum { get; set; }
     // как в игре: статические пулы; Create_UnitEnemyBoss берёт из пула боссов (маленький; при 1 заготовке уже не создаёт),

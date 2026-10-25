@@ -85,7 +85,7 @@ namespace MagicSurvivalCoop
                 by = _partners.Values.FirstOrDefault(p => p.OwnPause && p.Battle && !p.Dead && p.Hp > 0 && p.HasState && nowR - p.StateReal < 3
                                                           && (p.OwnPauseSince < 0 || nowR - p.OwnPauseSince < MaxPartnerPause));
                 if (by != null) why = "выбирает умение";
-                else if (!OwnPause()) by = StartWait(nowR, ref why) ?? GapWait(nowR, ref why);   // 1.6.16: ожидание «после босса» убрано — ставило хоста на паузу, пока его обелиск лежал не поднятым (часы и так стоят до подбора)
+                else if (!OwnPause()) by = StartWait(nowR, ref why) ?? BossApproachWait(nowR, ref why) ?? GapWait(nowR, ref why);   // 1.6.16: ожидание «после босса» убрано — ставило хоста на паузу, пока его обелиск лежал не поднятым (часы и так стоят до подбора)
             }
             float ts = TimeScale;
             if (by == null) CatchUpStep(ts);
@@ -99,6 +99,7 @@ namespace MagicSurvivalCoop
                     _ctx.Log(why == "старт" ? $"старт: жду «{by.Name}» ({MyClock()} с против {by.BattleClock} с)"
                            : why == "босс" ? $"босс: жду «{by.Name}» — у него ещё бой с боссом"
                            : why == "часы" ? $"часы: мои впереди «{by.Name}» на {MyClock() - by.BattleClock} с — жду"
+                           : why == "к боссу" ? $"к боссу: жду «{by.Name}» ({MyClock()} с против {by.BattleClock} с), чтобы босс-волна началась у всех вместе"
                            : $"общая пауза: «{by.Name}» выбирает умение");
                 }
                 // игра у себя сняла свою паузу (закрыли окно выбора) — запомнить её скорость и снова остановить
@@ -110,6 +111,7 @@ namespace MagicSurvivalCoop
                     _ctx.Toast(why == "старт" ? $"Ждём «{by.Name}»…"
                              : why == "босс" ? $"«{by.Name}» добивает босса…"
                              : why == "часы" ? $"Ждём «{by.Name}» (часы)…"
+                             : why == "к боссу" ? $"Ждём «{by.Name}» перед боссом…"
                              : $"Пауза: «{by.Name}» выбирает умение", 3);
                 }
                 return;
@@ -117,7 +119,7 @@ namespace MagicSurvivalCoop
             if (!_pauseForced) return;
             _pauseForced = false;
             if (!OwnPause() && ts == 0) TimeScale = _pauseSavedScale;   // своё окно выбора открыто — скоростью управляет игра
-            _ctx.Log(_pauseWhy == "старт" || _pauseWhy == "часы" ? $"{_pauseWhy}: «{_pauseBy}» догнал" : _pauseWhy == "босс" ? $"босс: «{_pauseBy}» закончил бой с боссом" : $"общая пауза: «{_pauseBy}» продолжил");
+            _ctx.Log(_pauseWhy == "старт" || _pauseWhy == "часы" || _pauseWhy == "к боссу" ? $"{_pauseWhy}: «{_pauseBy}» догнал" : _pauseWhy == "босс" ? $"босс: «{_pauseBy}» закончил бой с боссом" : $"общая пауза: «{_pauseBy}» продолжил");
             _pauseWhy = null;
         }
 
@@ -169,6 +171,28 @@ namespace MagicSurvivalCoop
         /// Старт боя (1.6.8): кто вошёл в бой раньше, ждёт, пока часы друга не догонят (наблюдение 24.10: друг вошёл на 5–6 с
         /// позже, и ускорение ×1,25 с паузами на выбор умения этого не догоняло). Только в первые 40 с боя и не дольше 20 с.
         /// </summary>
+        /// <summary>
+        /// 1.6.31: последние 10 с перед босс-волной (3:00, 6:00, …) тот, кто впереди, ждёт отставших — босс-волна (и её вступление
+        /// ~40 с) начинается у всех вместе. Иначе гость, отставший на полминуты (телефоны 24.10), после обелиска хоста ещё столько же
+        /// ждал конца своего вступления. Не дольше 60 с подряд.
+        /// </summary>
+        private Partner BossApproachWait(double nowR, ref string why)
+        {
+            int mine = MyClock();
+            if (mine < 0 || MyBossWave() != 0) { _bossApproachSince = 0; return null; }
+            int toBoss = BossEvery - mine % BossEvery;
+            if (toBoss > 10) { _bossApproachSince = 0; return null; }
+            if (_bossApproachSince > 0 && nowR - _bossApproachSince > 60) return null;
+            var late = _partners.Values.Where(p => p.Battle && !p.Dead && p.Hp > 0 && !p.BossWave && p.BattleClock >= 0 && nowR - p.StateReal < 1.5 && mine - p.BattleClock >= 1)
+                                       .OrderBy(p => p.BattleClock).FirstOrDefault();
+            if (late == null) { if (_pauseWhy != "к боссу") _bossApproachSince = 0; return null; }
+            if (_bossApproachSince <= 0) _bossApproachSince = nowR;
+            why = "к боссу";
+            return late;
+        }
+        private const int BossEvery = 180;
+        private double _bossApproachSince;
+
         private Partner StartWait(double nowR, ref string why)
         {
             int mine = MyClock();
@@ -231,12 +255,18 @@ namespace MagicSurvivalCoop
             try { return _hero.Hp <= 0; } catch { return false; }
         }
 
+        /// <summary>Снять всё, что мод сделал со скоростью игры: паузу из-за друга и догоняющее ускорение. Повторно — ничего не делает.</summary>
         private void ReleaseSharedPause()
         {
             _startWaitSince = 0; _bossWaitSince = 0; _gapWaitSince = 0;
+            if (_catchUp)
+            {
+                _catchUp = false;
+                try { if (Math.Abs(TimeScale - _catchSet) < 0.001f) TimeScale = _gameScale > 0 ? _gameScale : 1; } catch { }   // скорость поменяла игра — её не трогаем
+            }
             if (!_pauseForced) return;
-            _pauseForced = false;
-            try { if (TimeScale == 0 && !OwnPause()) TimeScale = _pauseSavedScale; } catch { }
+            _pauseForced = false; _pauseWhy = null;
+            try { if (TimeScale == 0 && !OwnPause()) TimeScale = _pauseSavedScale > 0 ? _pauseSavedScale : 1; } catch { }
         }
     }
 }

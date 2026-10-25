@@ -86,6 +86,7 @@ namespace MagicSurvivalCoop
                     double t = now - _armaPlayAt;
                     while (_armaStep < ArmaSteps.Length && ArmaSteps[_armaStep].t <= t)
                     {
+                        _ctx.Mark("Армагеддон друга: объекты взрыва по таблице");
                         var s = ArmaSteps[_armaStep++];
                         var go = GetMember(_battleMgr, s.field);
                         if (go != null) SetActive(go, s.on);
@@ -118,6 +119,7 @@ namespace MagicSurvivalCoop
             {
                 _startCoroutine ??= _battleMgr.GetType().GetMethod("StartCoroutine", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(string) }, null);
                 if (_startCoroutine == null) throw new MissingMethodException("StartCoroutine(string)");
+                _ctx.Mark("Армагеддон друга: запуск корутин взрыва");
                 foreach (var name in ArmaCoroutines) _startCoroutine.Invoke(_battleMgr, new object[] { name });
                 return "корутины " + string.Join(", ", ArmaCoroutines);
             }
@@ -186,6 +188,7 @@ namespace MagicSurvivalCoop
             try
             {
                 if (_battleMgr == null || OwnArmaRunning()) return;
+                _ctx.Mark("Армагеддон: выключаю объекты повтора");
                 foreach (var f in ArmaFields) { var go = GetMember(_battleMgr, f); if (go != null) SetActive(go, false); }
             }
             catch { }
