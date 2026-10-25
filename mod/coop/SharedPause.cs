@@ -206,7 +206,8 @@ namespace MagicSurvivalCoop
             var late = _partners.Values.FirstOrDefault(p => !p.Battle && p.HasState && nowR - p.StateReal < 3);
             if (late == null || nowR - _battleStartSec > EntryWaitMax)
             {
-                _entryWaitDone = true; _entryDoneSec = nowR;
+                _entryWaitDone = true;
+                if (_pauseWhy == "вход") _entryDoneSec = nowR;   // окно «старт» сдвигаем, только если правда ждали
                 if (late != null) _ctx.Log($"вход: «{late.Name}» не вошёл в бой за {EntryWaitMax} с — дальше без него");
                 return null;
             }
