@@ -91,7 +91,7 @@ namespace MagicSurvivalCoop
 
         private void ResetWorld()
         {
-            _coSeen.Clear(); _coPull = 0; _itemKinds.Clear(); _itemLogs = 0; _itemCalls = 0; _obeliskItemDumps = 0;
+            _coSeen.Clear();
             _enIds.Clear(); _enIdsNext.Clear(); _enById.Clear(); _dmgIn = 0; _dmgInMiss = 0; _dmgOut.Clear(); _dmgSent = 0; _dmgFlushAt = 0; _enSentAt = -1; _enSentMax = 0; _enHostLogged = false;
             _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _savedSpawn = null;
             _worldHost = null; _enSnap = 0; _enSnapAt = -100; _worldActive = false; _spawningPuppet = false; _justCreated = null;

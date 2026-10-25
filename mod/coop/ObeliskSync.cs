@@ -17,7 +17,8 @@ namespace MagicSurvivalCoop
     ///   перескочить порог — этапа нет вовсе; Start_AreaChange на самом пороге запускает вступление заново (1.6.40);
     /// - конец вступления (BossWave_EnforceVar дорос до 0,999) при ApplyBossNum 0 заканчивает волну и кладёт обелиск
     ///   (CreateItem_Character(18, 1)), часы снова встают; при ApplyBossNum 1 — ничего не делает. Вернуть 0 и после конца
-    ///   вступления нельзя: через 5 с игра всё равно заканчивает этап (телефоны 25.10, 1.6.42) — держим 1 до конца боя.
+    ///   вступления нельзя: через 5 с игра всё равно заканчивает этап (телефоны 25.10, 1.6.42) — держим 1 весь бой, с самого
+    ///   начала (1.6.45: с первого обелиска хоста было поздно — на 3:00 гостю ложился свой обелиск, и убрать его не выходило).
     /// </summary>
     internal sealed partial class Session
     {
@@ -50,12 +51,15 @@ namespace MagicSurvivalCoop
                 var arr = _findObjectsOfType.Invoke(null, new[] { _il2cppTypeOf.MakeGenericMethod(t).Invoke(null, null) });
                 int n = Convert.ToInt32(arr.GetType().GetProperty("Length")?.GetValue(arr) ?? 0);
                 var item = arr.GetType().GetMethod("get_Item", new[] { typeof(int) });
+                var idx = new object[1];
+                Type castFor = null; MethodInfo cast = null;      // TryCast<t> — один раз, а не на каждый из сотен предметов (1.6.46)
                 for (int i = 0; i < n; i++)
                 {
-                    var o = item.Invoke(arr, new object[] { i });
+                    idx[0] = i;
+                    var o = item.Invoke(arr, idx);
                     if (o == null) continue;
-                    var cast = o.GetType().GetMethod("TryCast")?.MakeGenericMethod(t).Invoke(o, null);
-                    res.Add(cast ?? o);
+                    if (o.GetType() != castFor) { castFor = o.GetType(); cast = castFor.GetMethod("TryCast")?.MakeGenericMethod(t); }
+                    res.Add(cast?.Invoke(o, null) ?? o);
                 }
             }
             catch (Exception e) { _ctx.Log($"обелиск: поиск {typeName}: {Inner(e).Message}"); }
@@ -163,6 +167,7 @@ namespace MagicSurvivalCoop
                 area = true;
             }
             catch (Exception e) { _ctx.Log("обелиск: смена области: " + Inner(e).Message); }
+            RemoveObelisks("остался у гостя");                  // до сброса ApplyObeliskON: без флага RemoveObelisks ничего не ищет
             try
             {
                 SetMember(_battleMgr, "Battle_ClearWaveON", 0);
@@ -172,7 +177,6 @@ namespace MagicSurvivalCoop
             }
             catch (Exception e) { _ctx.Log("обелиск: снять волну: " + Inner(e).Message); }
             HideBossWaveUi();
-            RemoveObelisks("остался у гостя");
             if (!reward)
             {
                 _ctx.Log($"обелиск: игра у меня сама закончила босс-этап — обелиск убран, часы {before / 60}:{before % 60:00} → {target / 60}:{target % 60:00}, смена области {(area ? $"{acBefore} → {MyAreaChange()}" : "не вышла")}");
@@ -250,18 +254,24 @@ namespace MagicSurvivalCoop
             catch (Exception e) { _ctx.Log("обелиск: окно артефакта: " + Inner(e).Message); return false; }
         }
 
-        /// <summary>Мана и предметы на карте — к герою, как при подборе обелиска (Play_ItemAllObtain_Move).</summary>
+        /// <summary>
+        /// Мана и предметы на карте — к герою, как при подборе обелиска (Play_ItemAllObtain_Move). Обелиск не трогаем: притянутый,
+        /// он подбирается — второй выбор артефакта и смена области (1.6.44: на 6:00 гость так подобрал обелиск, оставшийся с 3:00).
+        /// </summary>
         private int PullItems()
         {
             int pulled = 0;
+            MethodInfo sc = null;
+            var args = new object[] { "Play_ItemAllObtain_Move" };
             foreach (var it in FindAllOfType("C_Battle_Item"))
             {
                 try
                 {
-                    var sc = it.GetType().GetMethod("StartCoroutine", new[] { typeof(string) });
+                    if (Convert.ToInt32(GetMember(it, "Type_ObjItem")) == ObeliskObjType && NameOf(GetMember(it, "gameObject")) == ObeliskName) continue;
+                    sc ??= it.GetType().GetMethod("StartCoroutine", new[] { typeof(string) });
                     if (sc == null) break;
                     if (pulled == 0) _ctx.Mark("обелиск: притягиваю ману гостя");
-                    sc.Invoke(it, new object[] { "Play_ItemAllObtain_Move" });
+                    sc.Invoke(it, args);
                     pulled++;
                 }
                 catch { }

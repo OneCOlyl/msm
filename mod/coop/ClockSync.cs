@@ -133,6 +133,9 @@ namespace MagicSurvivalCoop
         /// </summary>
         private void GuestBossStep(double now)
         {
+            // 1.6.45: счётчик боссов держим 1 с начала боя, а не с первого обелиска хоста: иначе на 3:00 конец вступления клал
+            // гостю свой обелиск, и убрать его с карты не выходило (DestroyItem и SetActive(false) — обелиск лежал до 6:00)
+            if (!_bossHold) { _bossHold = true; _ctx.Log("обелиск: счётчик боссов гостя держу 1 — своего обелиска игра гостю не положит"); }
             BossHoldStep();
             NoteClockColor();
             int ac = MyAreaChange();

@@ -85,7 +85,7 @@ namespace MagicSurvivalCoop
                 by = _partners.Values.FirstOrDefault(p => p.OwnPause && p.Battle && !p.Dead && p.Hp > 0 && p.HasState && nowR - p.StateReal < 3
                                                           && (p.OwnPauseSince < 0 || nowR - p.OwnPauseSince < MaxPartnerPause));
                 if (by != null) why = "выбирает умение";
-                else if (!OwnPause()) by = StartWait(nowR, ref why) ?? BossApproachWait(nowR, ref why) ?? GapWait(nowR, ref why);   // 1.6.16: ожидание «после босса» убрано — ставило хоста на паузу, пока его обелиск лежал не поднятым (часы и так стоят до подбора)
+                else if (!OwnPause()) by = EntryWait(nowR, ref why) ?? StartWait(nowR, ref why) ?? BossApproachWait(nowR, ref why) ?? GapWait(nowR, ref why);   // 1.6.16: ожидание «после босса» убрано — ставило хоста на паузу, пока его обелиск лежал не поднятым (часы и так стоят до подбора)
             }
             float ts = TimeScale;
             if (by == null) CatchUpStep(ts);
@@ -96,7 +96,8 @@ namespace MagicSurvivalCoop
                 {
                     if (!_pauseForced) _pauseSavedScale = _catchUp ? _gameScale : ts > 0 ? ts : 1;
                     _pauseForced = true; _pauseBy = by.Name; _pauseWhy = why; _pauseToastAt = 0;   // новая причина — подпись сразу
-                    _ctx.Log(why == "старт" ? $"старт: жду «{by.Name}» ({MyClock()} с против {by.BattleClock} с)"
+                    _ctx.Log(why == "вход" ? $"вход: жду «{by.Name}» — ещё не вошёл в бой"
+                           : why == "старт" ? $"старт: жду «{by.Name}» ({MyClock()} с против {by.BattleClock} с)"
                            : why == "босс" ? $"босс: жду «{by.Name}» — у него ещё бой с боссом"
                            : why == "часы" ? $"часы: мои впереди «{by.Name}» на {MyClock() - by.BattleClock} с — жду"
                            : why == "к боссу" ? $"к боссу: жду «{by.Name}» ({MyClock()} с против {by.BattleClock} с), чтобы босс-волна началась у всех вместе"
@@ -108,7 +109,8 @@ namespace MagicSurvivalCoop
                 if (!OwnPause() && now >= _pauseToastAt)
                 {
                     _pauseToastAt = now + 3;
-                    _ctx.Toast(why == "старт" ? $"Ждём «{by.Name}»…"
+                    _ctx.Toast(why == "вход" ? $"Ждём «{by.Name}» — ещё не в бою…"
+                             : why == "старт" ? $"Ждём «{by.Name}»…"
                              : why == "босс" ? $"«{by.Name}» добивает босса…"
                              : why == "часы" ? $"Ждём «{by.Name}» (часы)…"
                              : why == "к боссу" ? $"Ждём «{by.Name}» перед боссом…"
@@ -119,7 +121,7 @@ namespace MagicSurvivalCoop
             if (!_pauseForced) return;
             _pauseForced = false;
             if (!OwnPause() && ts == 0) TimeScale = _pauseSavedScale;   // своё окно выбора открыто — скоростью управляет игра
-            _ctx.Log(_pauseWhy == "старт" || _pauseWhy == "часы" || _pauseWhy == "к боссу" ? $"{_pauseWhy}: «{_pauseBy}» догнал" : _pauseWhy == "босс" ? $"босс: «{_pauseBy}» закончил бой с боссом" : $"общая пауза: «{_pauseBy}» продолжил");
+            _ctx.Log(_pauseWhy == "вход" ? $"вход: все вошли в бой" : _pauseWhy == "старт" || _pauseWhy == "часы" || _pauseWhy == "к боссу" ? $"{_pauseWhy}: «{_pauseBy}» догнал" : _pauseWhy == "босс" ? $"босс: «{_pauseBy}» закончил бой с боссом" : $"общая пауза: «{_pauseBy}» продолжил");
             _pauseWhy = null;
         }
 
@@ -193,10 +195,32 @@ namespace MagicSurvivalCoop
         private const int BossEvery = 180;
         private double _bossApproachSince;
 
+        /// <summary>
+        /// 1.6.45: вход в бой — пока кто-то из комнаты ещё не в бою (меню, выбор героя, загрузка), вошедший стоит на паузе: бой
+        /// у всех начинается вместе. Друг без свежего состояния (3 с — связь пропала) не держит. Все вошли или прошло
+        /// EntryWaitMax реальных секунд от начала боя — до конца этого боя больше не ждём (друг, позже вышедший в меню, паузу не держит).
+        /// </summary>
+        private Partner EntryWait(double nowR, ref string why)
+        {
+            if (_entryWaitDone) return null;
+            var late = _partners.Values.FirstOrDefault(p => !p.Battle && p.HasState && nowR - p.StateReal < 3);
+            if (late == null || nowR - _battleStartSec > EntryWaitMax)
+            {
+                _entryWaitDone = true; _entryDoneSec = nowR;
+                if (late != null) _ctx.Log($"вход: «{late.Name}» не вошёл в бой за {EntryWaitMax} с — дальше без него");
+                return null;
+            }
+            why = "вход";
+            return late;
+        }
+        private const double EntryWaitMax = 120;
+        private bool _entryWaitDone;
+        private double _entryDoneSec;
+
         private Partner StartWait(double nowR, ref string why)
         {
             int mine = MyClock();
-            if (mine < 0 || mine > 40 || nowR - _battleStartSec > 60) return null;
+            if (mine < 0 || mine > 40 || nowR - Math.Max(_battleStartSec, _entryDoneSec) > 60) return null;   // окно — от конца ожидания входа
             if (_startWaitSince > 0 && nowR - _startWaitSince > 20) return null;
             var late = _partners.Values.Where(p => p.Battle && !p.Dead && p.BattleClock >= 0 && nowR - p.StateReal < 1.5 && mine - p.BattleClock >= (_pauseWhy == "старт" ? 1 : 2))
                                        .OrderBy(p => p.BattleClock).FirstOrDefault();

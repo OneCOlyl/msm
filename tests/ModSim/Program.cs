@@ -275,7 +275,7 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     Check(pups.All(e => !e.CoroutinesStopped && e.UnitApply_MoveSpeed == 0 && e.UnitBase_MoveSpeed == 0 && e.Rigidbody_ObjUnit.isKinematic),
           "у копий ИИ работает (анимация), но скорость нулевая, тело кинематическое");
     Check(pups.All(e => Math.Abs(e.Transform_ObjUnitSprite.localScale.x - 1.25f) < 0.01), "картинка копии — по размеру врага (1,25), как у обычного врага");
-    Check(FakeManager.ApplyBossNum == 0, "счётчик боссов после создания копий возвращён");
+    Check(FakeManager.ApplyBossNum == 1, $"счётчик боссов после создания копий возвращён (гость держит 1 с начала боя): {FakeManager.ApplyBossNum}");
     FakeEnemy P6() => pups.First(e => e.UnitID == 6);
     var q = P6().Transform_ObjUnit.position;
     Check(Math.Abs(q.x - bsx - 2) < 0.05 && Math.Abs(q.y - bsy - 1) < 0.05, $"копия стоит относительно старта гостя там же, где враг хоста от старта хоста: ({q.x - bsx:0.00}; {q.y - bsy:0.00})");
@@ -403,6 +403,21 @@ Console.WriteLine("2и. общая пауза: друг выбирает уме�
         Check(!(bool)A.Get("_pauseForced") && Time.timeScale > 0.5f, "друг догнал — хост продолжил");
         A.Set("_battleStartSec", -1000.0);
     }
+    {   // вход в бой: хост уже в бою, друг ещё в меню — хост на паузе, пока друг не войдёт
+        var clk = (System.Diagnostics.Stopwatch)sess.GetField("Clock", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+        B.Spells.InBattle = false; Frames(10);                               // состояние «не в бою» дошло до хоста
+        A.Set("_battleStartSec", clk.Elapsed.TotalSeconds); A.Set("_entryWaitDone", false); A.Set("_entryDoneSec", 0.0);
+        Time.timeScale = 1;
+        Frames(20);
+        Check((bool)A.Get("_pauseForced") && Time.timeScale == 0 && A.Toasts.Any(x => x.Contains("не в бою")), "вход: друг ещё не в бою — хост на паузе («Ждём … — ещё не в бою»)");
+        B.Spells.InBattle = true; Frames(20);
+        Check(!(bool)A.Get("_pauseForced") && Time.timeScale > 0.5f, "друг вошёл в бой — хост продолжил");
+        B.Spells.InBattle = false; Frames(20);
+        Check(!(bool)A.Get("_pauseForced"), "друг позже вышел в меню — за этот бой больше не ждём");
+        B.Spells.InBattle = true; Frames(30);
+        g = A.Comp.Spawned.LastOrDefault(c => c.Alive) ?? g;               // друг выходил из боя — союзник у хоста создан заново
+        A.Set("_battleStartSec", -1000.0);
+    }
     {   // после босса: у хоста бой кончился (поднял обелиск), у друга ещё идёт — хост ждёт
         // начало: у хоста босс-волна началась раньше — друг (часы ещё не 3:00) НЕ ждёт (1.6.14 вставал — взаимная блокировка)
         var am5 = new FakeManager { Owner = A, Time_Min = 3, Time_Sec = 0, Battle_ClearWaveON = 1 }; var bm5 = new FakeManager { Owner = B, Time_Min = 2, Time_Sec = 58 };
@@ -516,6 +531,18 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         gm.Time_Sec = 55; F(30);
         Check(!(bool)H.Get("_pauseForced"), "гость догнал — хост продолжает");
         Time.timeScale = 1;
+    }
+    {   // 1.6.45: первый босс — вступление гостя кончилось раньше, чем хост поднял обелиск: своего обелиска гостю игра не кладёт
+        // (1.6.44 держал счётчик боссов только с первого обелиска хоста — на 3:00 обелиск ложился, и убрать его не выходило)
+        FakeManager.ApplyBossNum = 0;
+        F(10);
+        Check(FakeManager.ApplyBossNum == 1, "общие враги: счётчик боссов гостя держится 1 ещё до первого босса");
+        gm.BeginBoss(3); gm.EnforceStep = 0.2f;
+        for (int k = 0; k < 20; k++) { gm.Step(); F(1); }
+        Check(gm.BossWave_EnforceVar >= 0.999f && gm.Ends == 0 && gm.ApplyObeliskON == 0, $"вступление гостя на 3:00 кончилось до подбора хоста — обелиска у гостя нет (концов {gm.Ends}, обелиск {gm.ApplyObeliskON})");
+        gm.Time_Min = 2; gm.Time_Sec = 55; gm.Battle_ClearWaveON = 0; gm.BossWave_VisionRatio = 0; gm.ApplyBossGround_Size = 0; gm.BossWave_EnforceVar = 1;
+        gm.Obj_MonsterClearBar.SetActive(false); gm.Text_Time.color = new Color(1, 1, 1, 1);
+        F(10);
     }
     {   // босс-волна (1.6.42): хост убил босса и поднял обелиск — у гостя сразу: волна снята, часы как у хоста (за порогом босса),
         // смена области, награда; конец его вступления не кладёт второй обелиск (ApplyBossNum держится 1)

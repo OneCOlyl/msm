@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.6.44";
+        public const string ModVersion = "1.6.47";
         /// <summary>
         /// Версии библиотек ModKit: в MS_KIT 2.0 все четыре — 1.0, и мод написан под их интерфейсы 1.x. Верхняя граница — чтобы
         /// с несовместимой 2.x ModKit не запускал мод, а писал «нужен … >=1.0 &lt;2, установлена …». Те же строки — в mod.json
@@ -619,6 +619,7 @@ namespace MagicSurvivalCoop
             ResetArmageddon();
             ResetWorld();
             ResetTimeDiag();
+            _entryWaitDone = false; _entryDoneSec = 0;
             ResetClock();
             ResetFrameProfile();
             _hookErrors.Clear();
