@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.6.54";
+        public const string ModVersion = "1.6.58";
         /// <summary>
         /// Версии библиотек ModKit: в MS_KIT 2.0 все четыре — 1.0, и мод написан под их интерфейсы 1.x. Верхняя граница — чтобы
         /// с несовместимой 2.x ModKit не запускал мод, а писал «нужен … >=1.0 &lt;2, установлена …». Те же строки — в mod.json
@@ -162,7 +162,6 @@ namespace MagicSurvivalCoop
             public bool BossWave;              // у друга идёт босс-волна (часы стоят до подбора его обелиска)
             public int AreaChange = -1;        // сколько раз у друга прошла смена области (после каждого босса)
             public double StateReal;           // Clock (реальные секунды) последнего состояния: таймер мода на паузе стоит (1.6.2)
-            public double OwnPauseSince = -1;  // с какого момента (Clock) у друга своя пауза; -1 — паузы нет
             public bool WorldGuest;            // друг играет в наших общих врагах и сам шлёт свой урон (1.5.5) — повтор его магии без урона
             public bool Mirror;                // друг пересылает свою магию (1.3+): союзник не стреляет сам, повторяет касты друга
             public readonly Queue<Cast> Casts = new Queue<Cast>();
@@ -528,10 +527,7 @@ namespace MagicSurvivalCoop
             p.Spell = (int)Protocol.Num(s, "spell");
             if (Protocol.Bool(s, "mirror")) p.Mirror = true;
             p.WorldGuest = Protocol.Bool(s, "wg");
-            bool op = Protocol.Bool(s, "op");
-            if (op && !p.OwnPause) p.OwnPauseSince = Clock.Elapsed.TotalSeconds;
-            if (!op) p.OwnPauseSince = -1;
-            p.OwnPause = op;
+            p.OwnPause = Protocol.Bool(s, "op");
             p.BattleClock = (int)Protocol.Num(s, "tm", -1);
             p.BossWave = Protocol.Bool(s, "bw");
             p.AreaChange = (int)Protocol.Num(s, "ac", -1);

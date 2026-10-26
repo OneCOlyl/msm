@@ -21,7 +21,6 @@ namespace MagicSurvivalCoop
         private PropertyInfo _timeScale;
         private double _lastPumpSec;
         private string _pauseWhy;
-        private const double MaxPartnerPause = 60;          // дольше друг «выбирает» (меню паузы, завис) — не держим паузу у всех
 
         private bool SharedPauseOn => _ctx.Setting("sharedPause") > 0;
         /// <summary>Только для тестов на ПК: своя пауза игрока по контексту (в тесте два «телефона» в одном процессе).</summary>
@@ -79,11 +78,12 @@ namespace MagicSurvivalCoop
             if (_inRun && SharedPauseOn)
             {
                 // свежесть — по реальным часам: таймер мода на паузе стоит, и друг, вышедший из боя, держал бы паузу вечно (1.6.0).
-                // Своя пауза друга дольше MaxPartnerPause (меню паузы, завис) — не ждём.
+                // Сколько друг выбирает, столько и ждём: до 1.6.58 пауза снималась через 60 с, и гость, пока хост думал над
+                // окном выбора, играл один и убегал вперёд по часам. Зависший или отключившийся друг состояний не шлёт — его
+                // отпускает проверка свежести (3 с).
                 double nowR = Clock.Elapsed.TotalSeconds;
                 // друг с нулевым здоровьем — погиб: его анимация смерти останавливает его игру, это не «выбирает умение»
-                by = _partners.Values.FirstOrDefault(p => p.OwnPause && p.Battle && !p.Dead && p.Hp > 0 && p.HasState && nowR - p.StateReal < 3
-                                                          && (p.OwnPauseSince < 0 || nowR - p.OwnPauseSince < MaxPartnerPause));
+                by = _partners.Values.FirstOrDefault(p => p.OwnPause && p.Battle && !p.Dead && p.Hp > 0 && p.HasState && nowR - p.StateReal < 3);
                 if (by != null) why = "выбирает умение";
                 else if (!OwnPause()) by = EntryWait(nowR, ref why) ?? StartWait(nowR, ref why) ?? BossApproachWait(nowR, ref why) ?? GapWait(nowR, ref why);   // 1.6.16: ожидание «после босса» убрано — ставило хоста на паузу, пока его обелиск лежал не поднятым (часы и так стоят до подбора)
             }
