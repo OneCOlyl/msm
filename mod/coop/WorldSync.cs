@@ -81,12 +81,26 @@ namespace MagicSurvivalCoop
         private Dictionary<string, string> _mgrAtFirst;   // журнал 1.5.1: почему Create_UnitEnemyBoss перестаёт создавать врагов
         private bool _mgrFailLogged, _poolLogged;
         private int _poolMoved;
+        // 1.6.59: гость отошёл от хоста дальше «worldZone» — у него свой спавн (враги игры гостя идут на него); вернулся ближе
+        // (с запасом AwayHysteresis, чтобы не дёргалось на границе) — спавн снова погашен. Его враги, появившиеся вдали, — свои:
+        // не убираются и не пересылаются хосту, добиваются магией гостя
+        private const double AwayHysteresis = 2;
+        private bool _away;
+        // свой спавн включён: вдали и босс-волны нет ни у кого (1.6.62: в босс-волну спавн гостя — её мобы, а их мод прячет как
+        // «своего босса» — 350 за волну: мобы исчезали на глазах, и волна лагала)
+        private bool _ownSpawn;
+        private readonly HashSet<object> _localKeys = new HashSet<object>();
+        private int _awayTimes, _localSpawned, _awayLogSpawned;
+        private double _awayLogAt;
 
         private void InstallWorldHooks()
         {
             try { _combat = _ctx.Use<ICombat>("modkit_combat"); } catch (Exception e) { _ctx.Log("общие враги: нет ICombat — копии будут убираться без награды: " + e.Message); }
             try { _ctx.After("C_Battle_EnemyUnit", "Start_Unit", 3, Hook("синхронизация спавна врага", (self, a) => OnEnemyStart(self, a))); }
             catch (Exception e) { _ctx.Log("общие враги: хук Start_Unit недоступен (свой спавн гасится только чисткой): " + e.Message); }
+            foreach (var (m, stopped) in new[] { ("Create_UnitEnemy_Stop", true), ("Create_UnitEnemy_Start", false), ("Create_UnitEnemy_StartLoop", false) })
+                try { _ctx.After("C_Battle_Manager", m, 0, Hook("спавн игры: " + m, (self, a) => { _spawnStopped = stopped; })); }
+                catch (Exception e) { _ctx.Log($"общие враги: хук {m} недоступен (свой спавн вдали от хоста после босса не перезапустится): " + e.Message); }
         }
 
         private void ResetWorld()
@@ -102,6 +116,8 @@ namespace MagicSurvivalCoop
             _held.Clear(); _heldKeys.Clear(); _heldNew.Clear(); _heldKilled = 0; _spawnSent = _spawnIn = _spawnInLogs = 0;
             _createMsMax = _createMsSum = _stepMsMax = 0; _createN = 0;
             _mgrAtFirst = null; _mgrFailLogged = false; _poolLogged = false; _poolMoved = 0;
+            ResetGather(); _gatherTimes = 0;
+            _away = _ownSpawn = false; _localKeys.Clear(); _awayTimes = _localSpawned = _onlyBossCleared = _awayLogSpawned = _spawnRestarts = 0; _awayLogAt = 0; _spawnStopped = false; _spawnRestartAt = 0;
         }
 
         private static object KeyOf(object o) { var p = PtrOf(o); return p != IntPtr.Zero ? (object)p : o; }
@@ -215,6 +231,14 @@ namespace MagicSurvivalCoop
                 if (hk != null && !_heldKeys.Contains(hk)) { _heldKeys.Add(hk); _held.Add(self); _heldNew.Enqueue(self); }
                 return;
             }
+            var lk = KeyOf(self);
+            if (_ownSpawn)
+            {
+                if (lk != null) _localKeys.Add(lk);                         // гость вдали от хоста — враг его собственный
+                _localSpawned++;
+                return;
+            }
+            if (lk != null) _localKeys.Remove(lk);                          // пул переиспользует объекты
             _toDestroy.Enqueue(self);                                       // свой враг гостя — убрать на следующем кадре, не внутри Start_Unit
             int type = -1; float va = 0, vb = 0;
             try { type = Convert.ToInt32(a[0]); va = Convert.ToSingle(a[1]); vb = Convert.ToSingle(a[2]); } catch { }
@@ -339,11 +363,28 @@ namespace MagicSurvivalCoop
             }
             _worldFrame++;
             _world.Start();
+            bool hasHero = HeroPosition(out var hhx, out var hhy, out _);
+            UpdateAway(host, hasHero, hhx, hhy);
+            GatherStep(host, now, hasHero, hhx, hhy);
             if (now >= _sweepAt)
             {
                 _sweepAt = now + 0.5;
                 _ctx.Mark("общие враги: гашу свой спавн и скорость копий");
-                SuppressSpawn(mgr); Sweep();
+                if (!_ownSpawn) SuppressSpawn(mgr);
+                bool noBoss = MyBossWave() == 0 && _hostBossWave == 0;
+                if (noBoss) ClearBossLeftovers(mgr);
+                if (_away)
+                {
+                    if (_ownSpawn) RestartOwnSpawn(mgr, now);
+                    if (now >= _awayLogAt)
+                    {
+                        if (_awayLogAt > 0)
+                            _ctx.Log($"общие враги вдали: своих врагов за 10 с {_localSpawned - _awayLogSpawned}, живых своих {_localKeys.Count}; " +
+                                     $"EnemyCreateNum {GetAny(mgr, "EnemyCreateNum")}/{GetAny(mgr, "EnemyCreateNum_Min")}/{GetAny(mgr, "EnemyCreateNum_Max")}, OnlyBossON {GetAny(mgr, "OnlyBossON")}, часы {MyClock()} с");
+                        _awayLogAt = now + 10; _awayLogSpawned = _localSpawned;
+                    }
+                }
+                Sweep();
                 if (_ctx.Setting("puppetAi") > 0)                                // игра пересчитывает скорость (усиления волн) — гасим снова
                     foreach (var pp in _puppets.Values) if (pp.Obj != null && !pp.LocalDead) try { ZeroSpeed(pp.Obj); } catch { }
             }
@@ -363,7 +404,7 @@ namespace MagicSurvivalCoop
             _world.Lap(1);
             double rt = now - host.ClockOff - RenderDelay(host);
             double ox = _startX.Value, oy = _startY ?? 0;
-            if (HeroPosition(out var hhx, out var hhy, out _)) HeldStep(hhx, hhy);
+            if (hasHero) HeldStep(hhx, hhy);
             _world.Lap(2);
             int made = 0, live = 0;
             double createMs = 0;
@@ -441,6 +482,90 @@ namespace MagicSurvivalCoop
             }
             _world.Lap(6);
             _world.Count++;
+        }
+
+        /// <summary>Гость дальше «worldZone» от хоста (оба — от своих точек старта) — свой спавн включён, ближе — погашен.</summary>
+        private void UpdateAway(Partner host, bool hasHero, double hx, double hy)
+        {
+            double r = _ctx.Setting("worldZone");
+            bool was = _away;
+            if (r <= 0 || !hasHero || !host.HasState || !_startX.HasValue) _away = false;
+            else
+            {
+                double dx = hx - _startX.Value - host.RelX, dy = hy - (_startY ?? 0) - host.RelY;
+                double d = Math.Sqrt(dx * dx + dy * dy);
+                _away = _away ? d > r - AwayHysteresis : d > r;
+            }
+            bool boss = MyBossWave() != 0 || _hostBossWave != 0;
+            bool own = _away && !boss;
+            if (_away != was)
+            {
+                if (_away)
+                {
+                    _awayTimes++; _awayLogAt = 0;
+                    _ctx.Log($"общие враги: отошёл от «{host.Name}» дальше {r:0} — {(boss ? "идёт босс-волна, свой спавн включится после неё" : "свой спавн включён")}");
+                    _ctx.Toast("Далеко от хоста: враги идут на вас", 2);
+                }
+                else
+                {
+                    _ctx.Log($"общие враги: вернулся к «{host.Name}» — свой спавн погашен, своих врагов осталось {_localKeys.Count}");
+                    _ctx.Toast("Рядом с хостом: общие враги", 2);
+                }
+            }
+            else if (own != _ownSpawn && _away)
+                _ctx.Log(own ? "общие враги: босс-волна кончилась — вдали от хоста свой спавн включён" : "общие враги: босс-волна — свой спавн погашен до её конца");
+            if (own == _ownSpawn) return;
+            _ownSpawn = own;
+            if (own) RestoreSpawn();
+            else _sweepAt = 0;                                              // погасить спавн в этом же кадре
+        }
+
+        /// <summary>
+        /// Хвосты босс-волны гостя (1.6.61). Босс гостя в общих врагах не умирает — мод убирает его по обелиску хоста, и после
+        /// волны у гостя оставались счётчик убийств волны (ApplyMonsterClearKillNum 2240, …Plus 1) и ярость босса
+        /// (BossWave_SpeedRatio/SizeRatio ≈ 15, HitDamageRatio 0,9); у хоста после смерти босса — 0, 0, 0, 0, 1. С ними игра
+        /// гостя ставит «только босс» (OnlyBossON 1) и каждый кадр зовёт Create_UnitEnemy_Stop: вдали от хоста своих врагов
+        /// не было (телефоны 26.10.2026, 1.6.59–1.6.60; снятый один OnlyBossON игра возвращала тут же). Вне босс-волны —
+        /// как у хоста; ApplyBossNum не трогаем (держит 1 ObeliskSync).
+        /// </summary>
+        private static readonly (string name, double value)[] BossLeftovers =
+        {
+            ("ApplyMonsterClearKillNum", 0), ("ApplyMonsterClearKillNumPlus", 0), ("BossWave_SpeedRatio", 0), ("BossWave_SizeRatio", 0),
+            ("BossWave_HitDamageRatio", 1), ("OnlyBossON", 0),
+        };
+        private void ClearBossLeftovers(object mgr)
+        {
+            List<string> changed = null;
+            foreach (var (name, value) in BossLeftovers)
+                try
+                {
+                    var v = GetAny(mgr, name);
+                    if (v == null || Math.Abs(Convert.ToDouble(v) - value) < 1e-4) continue;
+                    SetMember(mgr, name, value);
+                    (changed ??= new List<string>()).Add($"{name} {Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture)} → {value}");
+                }
+                catch { }
+            if (changed != null && _onlyBossCleared++ < 10)
+                _ctx.Log($"общие враги: хвосты босс-волны сняты (раз {_onlyBossCleared}, часы {MyClock()} с): {string.Join(", ", changed)}");
+        }
+        private int _onlyBossCleared;
+
+        // спавн игры гостя остановлен (Create_UnitEnemy_Stop — босс-волна, «только босс»): сама игра запускает его снова только
+        // на следующем шаге волн (до 30 с) — вдали от хоста запускаем сами; второй Start при идущей корутине удвоил бы спавн
+        private bool _spawnStopped;
+        private double _spawnRestartAt;
+        private int _spawnRestarts;
+        private void RestartOwnSpawn(object mgr, double now)
+        {
+            if (!_spawnStopped || now < _spawnRestartAt) return;
+            _spawnRestartAt = now + 2;
+            try
+            {
+                CallMethod(mgr, "Create_UnitEnemy_Start");
+                _spawnStopped = false; _spawnRestarts++;
+                _ctx.Log("общие враги: свой спавн игры был остановлен — запустил снова (Create_UnitEnemy_Start)");
+            }
+            catch (Exception e) { if (++_wFails <= 5) _ctx.Log("общие враги: запустить свой спавн: " + Inner(e).Message); }
         }
 
         private void FlushDamage(double now)
@@ -718,9 +843,17 @@ namespace MagicSurvivalCoop
         private object[] _savedSpawn;
         private void SuppressSpawn(object mgr)
         {
-            if (_savedSpawn == null) { _savedSpawn = new object[SpawnFields.Length]; for (int i = 0; i < SpawnFields.Length; i++) try { _savedSpawn[i] = GetMember(mgr, SpawnFields[i]); } catch { } }
-            foreach (var f in SpawnFields)
-                try { SetMember(mgr, f, 0); } catch { }
+            bool first = _savedSpawn == null;
+            if (first) _savedSpawn = new object[SpawnFields.Length];
+            for (int i = 0; i < SpawnFields.Length; i++)
+                try
+                {
+                    // новое значение игры (новая волна) — запомнить его: вернём спавн гостю вдали от хоста таким, как сейчас у игры
+                    var v = GetMember(mgr, SpawnFields[i]);
+                    if (first || (v != null && Convert.ToDouble(v) != 0)) _savedSpawn[i] = v;
+                    SetMember(mgr, SpawnFields[i], 0);
+                }
+                catch { }
         }
         /// <summary>Общие враги выключились посреди боя — вернуть свой спавн (иначе до новой волны врагов не будет).</summary>
         private void RestoreSpawn()
@@ -731,14 +864,19 @@ namespace MagicSurvivalCoop
                 if (saved[i] != null) try { SetMember(_battleMgr, SpawnFields[i], saved[i]); } catch { }
         }
 
-        /// <summary>Чистка: все живые враги гостя, которые не копии, — убрать без награды (разведка D).</summary>
+        /// <summary>Чистка: все живые враги гостя, которые не копии и не свои (появились вдали от хоста), — убрать без награды (разведка D).</summary>
+        private readonly HashSet<object> _localAlive = new HashSet<object>();
         private void Sweep()
         {
+            _localAlive.Clear();
             foreach (var e in AliveNow())
             {
                 var key = KeyOf(e.Raw);
-                if (key != null && !_puppetKeys.Contains(key) && !_heldKeys.Contains(key)) _toDestroy.Enqueue(e.Raw);
+                if (key == null || _puppetKeys.Contains(key) || _heldKeys.Contains(key)) continue;
+                if (_ownSpawn || _localKeys.Contains(key)) { _localAlive.Add(key); continue; }   // вдали — все свои враги гостя его
+                _toDestroy.Enqueue(e.Raw);
             }
+            _localKeys.Clear(); _localKeys.UnionWith(_localAlive);           // погибшие свои — забыть (объект уйдёт в пул)
         }
 
         // ------------------------------------------------------------ свой босс гостя (1.6.13)
@@ -818,12 +956,13 @@ namespace MagicSurvivalCoop
             RestoreSpawn();
             _ctx.Log($"общие враги: выключено ({why}); {WorldSummary()}");
             _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear();
-            _worldActive = false; _worldHost = null;
+            _worldActive = false; _worldHost = null; _away = _ownSpawn = false; _localKeys.Clear(); ResetGather();
         }
 
         private string WorldSummary() => _hosting
             ? $"отправлено врагов за раз до {_enSentMax}; урон гостей нанесён {_dmgIn:0} (врагов уже не было: {_dmgInMiss}); врагов от действий гостей создано {_spawnIn}" + SpecialSummary()
             : $"копий создано {_wCreated} (особых {_wSpecial}, одновременно до {_wMax}), убито по хосту {_wKilled}, погибло у себя {_wLocalDead} (создано заново {_wRespawned}), убрано своих врагов {_wDestroyed}, переложено в пул боссов {_poolMoved}, урона отправлено хосту {_dmgSent:0}, своих врагов отправлено хосту {_spawnSent}; " +
+              $"уходил от хоста {_awayTimes} раз, переносов к хосту на босса {_gatherTimes}, своих врагов вдали {_localSpawned}, сняты хвосты босс-волны {_onlyBossCleared}, перезапусков спавна {_spawnRestarts}; " +
               $"убранные свои по типам: {string.Join(" ", System.Linq.Enumerable.Select(_sweptTypes, kv => $"{kv.Key}×{kv.Value}"))}; " +
               $"создание копии мс: макс {_createMsMax:0.0}, среднее {_createMsSum / Math.Max(1, _createN):0.00}; шаг мира мс: макс {_stepMsMax:0.0}; ошибок {_wFails}";
 

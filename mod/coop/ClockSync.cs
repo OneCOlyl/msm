@@ -61,6 +61,7 @@ namespace MagicSurvivalCoop
             w.WriteNumber("bw", MyBossWave());
             int ob = MyObelisk(); if (ob >= 0) w.WriteNumber("ob", ob);
             int ac = MyAreaChange(); if (ac >= 0) w.WriteNumber("ac", ac);
+            if (_hosting) WriteBossGround(w);
             try { w.WriteNumber("lv", Convert.ToInt32(GetAny(_battleMgr, "EnemyLevelNum"))); w.WriteNumber("ew", Convert.ToInt32(GetAny(_battleMgr, "EnemyWaveID"))); } catch { }
         }
 
@@ -79,6 +80,7 @@ namespace MagicSurvivalCoop
             _hostObelisk = (int)Protocol.Num(s, "ob", -1);
             if (_hostObPrev == 1 && _hostObelisk == 0) _hostPicked = true;             // хост поднял обелиск
             _hostObPrev = _hostObelisk;
+            ReadBossGround(s);
         }
 
         /// <summary>4 раза в секунду: события часов в журнал (обе стороны); гость — подстройка часов под хоста.</summary>

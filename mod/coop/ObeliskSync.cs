@@ -263,8 +263,10 @@ namespace MagicSurvivalCoop
         /// Мана и предметы на карте — к герою, как при подборе обелиска (Play_ItemAllObtain_Move). Обелиск не трогаем: притянутый,
         /// он подбирается — второй выбор артефакта и смена области (1.6.44: на 6:00 гость так подобрал обелиск, оставшийся с 3:00).
         /// </summary>
+        private double _pulledAt = -100;
         private int PullItems()
         {
+            _pulledAt = Clock.Elapsed.TotalSeconds;
             int pulled = 0;
             MethodInfo sc = null;
             var args = new object[] { "Play_ItemAllObtain_Move" };

@@ -337,10 +337,66 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
         Check(boss.Unit_IsLive && !boss.DestroyedSimple, "хост победил — свой босс гостя не убит (смерть закончила бы этап и положила обелиск): ждёт обелиска хоста");
         bm.Battle_ClearWaveON = 0;
     }
+    {   // 1.6.59: гость отошёл от хоста дальше «worldZone» — свой спавн включён, его враги остаются; вернулся — спавн погашен
+        var home = B.Combat.Pos;
+        bm.EnemyCreateNum = 5; Frames(40);                                   // новая волна у гостя: игра подняла число в пачке
+        Check(bm.EnemyCreateNum == 0, "рядом с хостом спавн гостя погашен и на новой волне");
+        int sentBefore = (int)B.Get("_spawnSent");
+        B.Combat.Pos = new Vector3(home.x + 30, home.y, 0);
+        Frames(10);
+        Check((bool)B.Get("_away") && bm.EnemyCreateNum == 5 && bm.EnemyCreateNum_Max == 300, $"гость в 30 от хоста — свой спавн вернулся, как у игры сейчас: {bm.EnemyCreateNum}/{bm.EnemyCreateNum_Max}");
+        var mine = new FakeEnemy(B, 1); mine.Transform_ObjUnit.position = new Vector3(home.x + 38, home.y, 0); B.Combat.Enemies.Add(mine); mine.Fire();
+        Frames(50);
+        Check(!mine.DestroyedSimple && mine.Unit_IsLive && bm.EnemyCreateNum == 5, "враг игры гостя вдали не убран — идёт на гостя, спавн не гасится");
+        Check((int)B.Get("_spawnSent") == sentBefore, "и хосту не пересылается");
+        // после босс-волны у гостя остались хвосты (босс не умер — убран по обелиску хоста): игра ставит «только босс» и гасит спавн
+        bm.OnlyBossON = 1; bm.ApplyMonsterClearKillNum = 2240; bm.ApplyMonsterClearKillNumPlus = 1; bm.BossWave_SpeedRatio = bm.BossWave_SizeRatio = 14.98f; bm.BossWave_HitDamageRatio = 0.9f;
+        bm.Create_UnitEnemy_Stop();
+        Frames(40);
+        Check(bm.OnlyBossON == 0 && bm.ApplyMonsterClearKillNum == 0 && bm.ApplyMonsterClearKillNumPlus == 0 && bm.BossWave_SpeedRatio == 0 && bm.BossWave_SizeRatio == 0 && bm.BossWave_HitDamageRatio == 1,
+              "вдали от хоста вне босс-волны хвосты босс-волны сняты, как у хоста");
+        Check(bm.SpawnStarts == 1, $"остановленный игрой спавн запущен снова — один раз: {bm.SpawnStarts}");
+        Frames(40);
+        Check(bm.SpawnStarts == 1, "идущий спавн второй раз не запускается");
+        B.Ctx.Set["bossGather"] = 0;
+        bm.Battle_ClearWaveON = 1; Frames(20);                                // босс-волна у гостя: её мобов мод прятал бы как «своего босса»
+        Check(bm.EnemyCreateNum == 0 && (bool)B.Get("_away") && !(bool)B.Get("_ownSpawn"), $"вдали от хоста в босс-волну свой спавн погашен: {bm.EnemyCreateNum}");
+        bm.Battle_ClearWaveON = 0; Frames(20);
+        Check(bm.EnemyCreateNum == 5 && (bool)B.Get("_ownSpawn"), $"босс-волна кончилась — свой спавн вдали снова включён: {bm.EnemyCreateNum}");
+        {   // 1.6.63: сбор на босса — гость вдали переносится к хосту (арена — как у хоста), после волны обратно
+            B.Ctx.Set["bossGather"] = 1;
+            void For(double sec) { var w = System.Diagnostics.Stopwatch.StartNew(); while (w.Elapsed.TotalSeconds < sec) Frames(1); }
+            var away = B.Combat.Pos; var hostPos = A.Combat.Pos;
+            am.ApplyBossGround_Size = 145; am.ApplyBossGround_X = hostPos.x + 0.5f; am.ApplyBossGround_Y = hostPos.y - 0.5f; am.Battle_ClearWaveON = 1;
+            bm.ApplyBossGround_Size = 145; bm.ApplyBossGround_X = away.x; bm.ApplyBossGround_Y = away.y; bm.Battle_ClearWaveON = 1;
+            For(0.5);
+            float wantX = (float)(bsx + (hostPos.x - asx) + 1.5), wantY = (float)(bsy + (hostPos.y - asy));
+            Check(Math.Abs(B.Combat.Pos.x - wantX) < 0.3 && Math.Abs(B.Combat.Pos.y - wantY) < 0.3, $"на начале волны гость сразу рядом с хостом (мана не притягивается): ({B.Combat.Pos.x - bsx:0.0}; {B.Combat.Pos.y - bsy:0.0}) от старта");
+            Check(Math.Abs(bm.ApplyBossGround_X - (bsx + am.ApplyBossGround_X - asx)) < 0.05 && Math.Abs(bm.ApplyBossGround_Y - (bsy + am.ApplyBossGround_Y - asy)) < 0.05
+                  && Math.Abs(bm.Obj_BossLimitGround.transform.position.x - bm.ApplyBossGround_X) < 0.01, $"и арена гостя — там же, где у хоста: ({bm.ApplyBossGround_X - bsx:0.0}; {bm.ApplyBossGround_Y - bsy:0.0})");
+            am.Battle_ClearWaveON = 0; bm.Battle_ClearWaveON = 0; am.ApplyBossGround_Size = bm.ApplyBossGround_Size = 0;
+            For(1);
+            Check(Math.Abs(B.Combat.Pos.x - wantX) < 0.3, "волна кончилась — гость ещё у хоста (долетает мана обелиска)");
+            For(1.5);
+            Check(Math.Abs(B.Combat.Pos.x - away.x) < 0.01 && Math.Abs(B.Combat.Pos.y - away.y) < 0.01, $"и возвращён туда, где стоял: ({B.Combat.Pos.x - bsx:0.0}; {B.Combat.Pos.y - bsy:0.0})");
+            Check((int)B.Get("_gatherTimes") == 1, "один перенос за волну");
+        }
+        B.Combat.Pos = new Vector3(home.x + 14, home.y, 0);
+        Frames(10);
+        Check((bool)B.Get("_away"), "у границы зоны (14 при 15) — ещё вдали: запас против дёрганья");
+        B.Combat.Pos = home;
+        Frames(40);
+        Check(!(bool)B.Get("_away") && bm.EnemyCreateNum == 0 && bm.EnemyCreateNum_Max == 0, "вернулся к хосту — свой спавн снова погашен");
+        Check(!mine.DestroyedSimple && mine.Unit_IsLive, "враг, пришедший издалека, остаётся — гость добивает его сам");
+        var near = new FakeEnemy(B, 1); B.Combat.Enemies.Add(near); near.Fire();
+        Frames(5);
+        Check(near.DestroyedSimple, "новый свой враг рядом с хостом убран, как раньше");
+        mine.Unit_IsLive = false; B.Combat.Enemies.Remove(mine);
+    }
     B.Ctx.Set["world"] = 0;
     Frames(10);
     Check(!B.Combat.Enemies.OfType<FakeEnemy>().Any(e => e.Puppet && e.Unit_IsLive), "общие враги выключены — копии убраны");
-    Check(bm.EnemyCreateNum == 2 && bm.EnemyCreateNum_Max == 300, $"и свой спавн гостя вернулся: {bm.EnemyCreateNum}/{bm.EnemyCreateNum_Min}/{bm.EnemyCreateNum_Max}");
+    Check(bm.EnemyCreateNum == 5 && bm.EnemyCreateNum_Max == 300, $"и свой спавн гостя вернулся — как у игры на последней волне: {bm.EnemyCreateNum}/{bm.EnemyCreateNum_Min}/{bm.EnemyCreateNum_Max}");
     A.Ctx.Set["world"] = 0; A.Combat.Enemies.Clear(); B.Combat.Enemies.Clear();
 }
 
@@ -836,7 +892,11 @@ class FakeText { public Color color { get; set; } }
 class FakeManager
 {
     public Player Owner;
-    public int EnemyCreateNum = 2, EnemyCreateNum_Min = 0, EnemyCreateNum_Max = 300;
+    public int EnemyCreateNum = 2, EnemyCreateNum_Min = 0, EnemyCreateNum_Max = 300, OnlyBossON;
+    public int ApplyMonsterClearKillNum, ApplyMonsterClearKillNumPlus, SpawnStarts;
+    public float BossWave_SpeedRatio, BossWave_SizeRatio, BossWave_HitDamageRatio = 1;
+    public void Create_UnitEnemy_Start() { SpawnStarts++; Owner.Ctx.Fire("After C_Battle_Manager.Create_UnitEnemy_Start/0", this, new object[0]); }
+    public void Create_UnitEnemy_Stop() => Owner.Ctx.Fire("After C_Battle_Manager.Create_UnitEnemy_Stop/0", this, new object[0]);
     public int Time_Min, Time_Sec, Battle_ClearWaveON, EnemyWaveID = 1, EnemyLevelNum, AreaChangeNum;
     public readonly List<string> Coroutines = new();
     public void StartCoroutine(string name)
@@ -847,7 +907,8 @@ class FakeManager
     // как в игре (консоль на телефоне 25.10): босс-этап — часы стоят на пороге, вступление (BossWave_EnforceVar) растёт; его
     // конец при ApplyBossNum 0 заканчивает волну и кладёт обелиск. Start_AreaChange на самом пороге начинает вступление заново,
     // за порогом — часы идут
-    public int ApplyObeliskON, AreaChanges, Ends, AreaChangeID = 1; public float BossWave_EnforceVar = 1, BossWave_VisionRatio, ApplyBossGround_Size, EnforceStep = 0.01f;
+    public int ApplyObeliskON, AreaChanges, Ends, AreaChangeID = 1; public float BossWave_EnforceVar = 1, BossWave_VisionRatio, ApplyBossGround_Size, ApplyBossGround_X, ApplyBossGround_Y, EnforceStep = 0.01f;
+    public GameObject Obj_BossLimitGround = new GameObject();
     bool _intro;
     public int Clock => Time_Min * 60 + Time_Sec;
     public GameObject Obj_MonsterClearBar = new GameObject();                  // череп босс-волны над часами

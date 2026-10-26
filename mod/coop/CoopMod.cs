@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.6.58";
+        public const string ModVersion = "1.6.64";
         /// <summary>
         /// Версии библиотек ModKit: в MS_KIT 2.0 все четыре — 1.0, и мод написан под их интерфейсы 1.x. Верхняя граница — чтобы
         /// с несовместимой 2.x ModKit не запускал мод, а писал «нужен … >=1.0 &lt;2, установлена …». Те же строки — в mod.json
@@ -51,6 +51,8 @@ namespace MagicSurvivalCoop
                 new ModOption { Key = "orbitals", Label = "Показывать Щит, Спутников и Духов друга (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "sharedPause", Label = "Общая пауза: пока друг выбирает умение, пауза у всех (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "world", Label = "Общие враги: у всех враги хоста (1 — да, 0 — нет; включить у всех игроков)", Default = 0, Min = 0, Max = 1, Step = 1 },
+                new ModOption { Key = "worldZone", Label = "Общие враги: гость дальше этого от хоста — у него свои враги (0 — никогда)", Default = 15, Min = 0, Max = 40, Step = 5 },
+                new ModOption { Key = "bossGather", Label = "Общие враги: на босс-волну гость вдали переносится к хосту, потом обратно (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "clockSync", Label = "Общие враги: часы боя гостя по хосту (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
                 new ModOption { Key = "puppetAi", Label = "Копии врагов: анимация и атаки игры (1) или замершие (0)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
                 new ModOption { Key = "sendHz", Label = "Обновлений позиции в секунду (больше — плавнее, но больше трафика)", Default = 15, Min = 5, Max = 30, Step = 5 },
