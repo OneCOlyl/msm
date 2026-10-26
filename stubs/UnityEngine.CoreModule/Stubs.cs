@@ -17,7 +17,7 @@ namespace UnityEngine
     /// <summary>Только для тестов: как копировать фальшивые объекты.</summary>
     public interface ICloneTarget { Object CloneForTest(); }
     public class Component : Object { public GameObject gameObject { get; set; } public Transform transform => gameObject?.transform; }
-    public class Transform : Component { public Vector3 position { get; set; } public Vector3 localScale { get; set; } public int childCount { get; set; } public Transform parent { get; set; } public new Transform transform => this; }
+    public class Transform : Component { public Vector3 position { get; set; } public Vector3 localScale { get; set; } public Vector3 localEulerAngles { get; set; } public Vector3 localPosition { get; set; } public Transform GetChild(int i) => null; public void SetParent(Transform p, bool worldPositionStays) => parent = p; public int childCount { get; set; } public Transform parent { get; set; } public new Transform transform => this; }
     public class Renderer : Component { }
     public class SpriteRenderer : Renderer { public Color color { get; set; } public bool enabled { get; set; } = true; public Sprite sprite { get; set; } }
     public class Sprite : Object { }
@@ -27,7 +27,7 @@ namespace UnityEngine
         public static int TestScans;
         public static T[] FindObjectsOfTypeAll<T>() where T : Object { TestScans++; return System.Linq.Enumerable.ToArray(System.Linq.Enumerable.OfType<T>(TestAll)); }
     }
-    public class RectTransform : Transform { }
+    public class RectTransform : Transform { public Vector2 anchorMin { get; set; } public Vector2 anchorMax { get; set; } public Vector2 pivot { get; set; } public Vector2 anchoredPosition { get; set; } public Vector2 sizeDelta { get; set; } }
     public class GameObject : Object
     {
         public bool activeSelf { get; set; }
@@ -40,5 +40,7 @@ namespace UnityEngine
     public class Behaviour : Component { }
     public class MonoBehaviour : Behaviour { public bool CoroutinesStopped; public void StopAllCoroutines() => CoroutinesStopped = true; }
     public class Rigidbody : Component { public bool isKinematic { get; set; } }
+    public class Camera : Behaviour { public static Camera main { get; set; } public Vector3 WorldToScreenPoint(Vector3 p) => p; }
+    public static class Screen { public static int width { get; set; } = 720; public static int height { get; set; } = 1280; }
     public static class Time { public static float timeScale { get; set; } = 1; }
 }

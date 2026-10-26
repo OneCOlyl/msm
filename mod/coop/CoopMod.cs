@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.6.47";
+        public const string ModVersion = "1.6.54";
         /// <summary>
         /// Версии библиотек ModKit: в MS_KIT 2.0 все четыре — 1.0, и мод написан под их интерфейсы 1.x. Верхняя граница — чтобы
         /// с несовместимой 2.x ModKit не запускал мод, а писал «нужен … >=1.0 &lt;2, установлена …». Те же строки — в mod.json
@@ -171,7 +171,9 @@ namespace MagicSurvivalCoop
             public ICompanion Ghost;
             public int GhostSpell = -1;
             public double NextSpawn;
-            public UiKit.HudBar Bar;
+            public Marker Mk;                  // полоска здоровья под союзником и стрелка к нему за краем экрана (1.6.50)
+            public double WorldX, WorldY, WorldZ;   // где союзник в нашем мире (последний PlaceGhost)
+            public bool HasWorldPos;
         }
 
         public Session(ModContext ctx)
@@ -206,6 +208,7 @@ namespace MagicSurvivalCoop
             _pauseAction = SharedPauseStep;
             _timeDiagAction = TimeDiagStepNow;
             _clockAction = ClockStepNow;
+            _arrowAction = CaptureMenuArrow;
             ctx.Every(50, () => Safe("таймер", _tickAction));
             InstallMagicHook();
             InstallWorldHooks();
@@ -219,7 +222,7 @@ namespace MagicSurvivalCoop
 
         // ============================================================ защита обработчиков
 
-        private Action _tickAction, _timeDiagAction, _clockAction, _pumpAction, _pauseAction;
+        private Action _tickAction, _timeDiagAction, _clockAction, _pumpAction, _pauseAction, _arrowAction;
         private readonly Dictionary<string, int> _hookErrors = new Dictionary<string, int>();
         private const int ReportedErrorsPerHook = 3;
 
@@ -272,6 +275,7 @@ namespace MagicSurvivalCoop
             _hosting = false; _hostNotice = null;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             _partners.Clear();
+            try { DestroyMarkers(); } catch { }
             DestroyBtn(ref _menuBtn);
             DestroyBtn(ref _healBtn);
             _windowOpen = false;
@@ -375,6 +379,7 @@ namespace MagicSurvivalCoop
             MaybeSend();
 
             _ctx.Guard("союзники", UpdateGhosts);
+            if (!_inRun) Safe("стрелка из меню", _arrowAction);
 
             if (_clockMs >= _nextHud) { _nextHud = _clockMs + 250; UpdateHud(); }
             if (_windowOpen && _clockMs >= _nextWin) { _nextWin = _clockMs + 500; UpdateWindow(); }
@@ -497,11 +502,11 @@ namespace MagicSurvivalCoop
 
         private void DropPartnerVisuals(Partner p)
         {
-            if (p.Ghost != null || p.Bar != null || p.OrbVis != null) _ctx.Mark("союзник: удаление");
+            if (p.Ghost != null || p.OrbVis != null || p.Mk != null) _ctx.Mark("союзник: удаление");
             try { if (p.Ghost != null && p.Ghost.Alive) p.Ghost.Remove(); } catch { }
             p.Ghost = null;
-            try { p.Bar?.Destroy(); } catch { }
-            p.Bar = null;
+            try { DropMarker(p); } catch { }
+            p.HasWorldPos = false;
             try { DestroyOrbVisuals(p); } catch { }
         }
 
@@ -622,6 +627,7 @@ namespace MagicSurvivalCoop
             _entryWaitDone = false; _entryDoneSec = 0;
             ResetClock();
             ResetFrameProfile();
+            ResetMarkers();
             _hookErrors.Clear();
             foreach (var p in _partners.Values) p.GhostTr = null;
             foreach (var p in _partners.Values) { p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; }
@@ -638,6 +644,7 @@ namespace MagicSurvivalCoop
             RestoreGame("конец боя", battleOver: true);
             _inRun = false;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
+            _ctx.Guard("метки союзников", DestroyMarkers);
             DestroyBtn(ref _healBtn);
             _nextSend = 0;
         }
@@ -792,7 +799,7 @@ namespace MagicSurvivalCoop
                 if (_inRun) Safe("время боя", _timeDiagAction);
                 if (_inRun && !_spells.Paused) Safe("часы боя", _clockAction);
                 Lap(4);
-                if (!_inRun || _partners.Count == 0 || _spells.Paused) return;
+                if (!_inRun || _partners.Count == 0 || _spells.Paused) { UpdateMarkers(now); return; }   // на паузе (выбор умения) метки прячутся
                 if (!HeroPosition(out var hx, out var hy, out var hz)) return;
                 _frameSeenSec = now;
                 BeginFrameCasts();
@@ -804,6 +811,7 @@ namespace MagicSurvivalCoop
                         if (p.Orb != null) { if (p.GhostTr == null) EnsureGhostTr(p); PlaceOrbits(p, now); }
                     }
                     else if (p.OrbVis != null) HideAll(p.OrbVis);
+                UpdateMarkers(now);
             }
             catch (Exception e)
             {
@@ -927,6 +935,7 @@ namespace MagicSurvivalCoop
                 if (len < 1e-3) { ox = 0.8; oy = 0; } else { ox = ox / len * 0.8; oy = oy / len * 0.8; }
             }
             p.Ghost.Offset = new Vector2((float)ox, (float)oy);
+            p.WorldX = heroX + ox; p.WorldY = heroY + oy; p.WorldZ = heroZ; p.HasWorldPos = true;
             if (writeTransform) WriteGhostTransform(p, heroX + ox, heroY + oy, heroZ);
         }
 
@@ -1018,24 +1027,13 @@ namespace MagicSurvivalCoop
             try
             {
                 if (_menuBtn != null) _menuBtn.SetVisible(!battle && !_inRun);
-
-                int i = 0;
-                foreach (var p in _partners.Values.OrderBy(x => x.Slot))
-                {
-                    if (!battle) { if (p.Bar != null) { try { p.Bar.Destroy(); } catch { } p.Bar = null; } continue; }
-                    if (p.Bar == null || !p.Bar.Alive)
-                        p.Bar = UiKit.AddHudBar("coop_" + p.Id, 10, 150 + i * 36, 300, 30, SlotColors[Math.Max(0, Math.Min(3, p.Slot - 1))]);
-                    p.Bar.Set(p.HasState ? p.Hp / p.HpMax : 0, PartnerLine(p));
-                    i++;
-                }
-
+                // здоровье друзей — на их метках (AllyMarkers): под моделью и на плашке у стрелки; список слева убран (1.6.54)
                 UpdateHealButton(battle);
             }
             catch (Exception e)
             {
                 // элементы могли исчезнуть вместе со сценой — пересоздадим на следующем тике
                 if (++_hudFails == 1 || _hudFails % 200 == 0) _ctx.Log($"HUD: {e.Message} (раз: {_hudFails})");
-                foreach (var p in _partners.Values) p.Bar = null;
                 _healBtn = null;
             }
         }

@@ -32,11 +32,16 @@ namespace MagicSurvivalCoop
         /// <summary>Все объекты сцены типа игры typeName (UnityEngine.Object.FindObjectsOfType), приведённые к нему.</summary>
         private List<object> FindAllOfType(string typeName)
         {
-            var res = new List<object>();
-            if (_findFailed) return res;
             Type t;
             try { t = Hooks.FindType(typeName); } catch { t = null; }
-            if (t == null) return res;
+            return t == null ? new List<object>() : FindAllOfType(t, typeName);
+        }
+
+        /// <summary>То же для типа t (игры или Unity); what — подпись для журнала.</summary>
+        private List<object> FindAllOfType(Type t, string what)
+        {
+            var res = new List<object>();
+            if (_findFailed) return res;
             try
             {
                 if (_findObjectsOfType == null)
@@ -62,7 +67,7 @@ namespace MagicSurvivalCoop
                     res.Add(cast?.Invoke(o, null) ?? o);
                 }
             }
-            catch (Exception e) { _ctx.Log($"обелиск: поиск {typeName}: {Inner(e).Message}"); }
+            catch (Exception e) { _ctx.Log($"обелиск: поиск {what}: {Inner(e).Message}"); }
             return res;
         }
 
