@@ -112,6 +112,86 @@ Console.WriteLine("7б. кириллица и эмодзи на границе �
     var ms = new System.IO.MemoryStream(Encoding.UTF8.GetBytes(text + "\n"));
     Check(new LineReader(ms).ReadLine() == text, "строка собирается из байтов целиком и только потом декодируется — символы не рвутся");
 }
+Console.WriteLine("7в. LineReader: целое, пустое и оборванное сообщение, дробление TCP");
+{
+    LineReader Of(string s, int chunk = 0) { var m = new System.IO.MemoryStream(Encoding.UTF8.GetBytes(s)); return new LineReader(chunk > 0 ? new Chunked(m, chunk) : m); }
+    var r = Of("{\"type\":\"PING\"}\n");
+    Check(r.ReadLine() == "{\"type\":\"PING\"}" && r.ReadLine() == null, "целое сообщение, затем конец потока → null");
+    r = Of("\n\r\n{\"a\":1}\n");
+    Check(r.ReadLine() == "" && r.ReadLine() == "" && r.ReadLine() == "{\"a\":1}" && r.ReadLine() == null, "пустые строки отдаются пустыми, сообщение после них цело");
+    r = Of("{\"type\":\"PING\"}\n{\"type\":\"PLAYER_ST");
+    Check(r.ReadLine() == "{\"type\":\"PING\"}" && r.ReadLine() == null && r.ReadLine() == null, "обрыв посреди JSON: хвост без \\n не отдаётся, дальше null");
+    Check(Of("{\"x\":1}").ReadLine() == null, "единственное сообщение без \\n → null");
+    var many = string.Concat(Enumerable.Range(0, 50).Select(i => "{\"i\":" + i + ",\"s\":\"Ж🔥" + new string('z', i * 37) + "\"}\n"));
+    foreach (var chunk in new[] { 1, 2, 3, 7, 4095, 4097 })
+    {
+        var cr = Of(many, chunk); var got = new List<string>(); string l;
+        while ((l = cr.ReadLine()) != null) got.Add(l);
+        Check(got.SequenceEqual(many.Split('\n').Take(50)), $"50 сообщений кусками по {chunk} Б читаются без ошибок ({got.Count})");
+    }
+}
+Console.WriteLine("7г. Inbox: всё по порядку, старые состояния выбрасываются только сверх предела, события не теряются");
+{
+    JsonElement J(string s) { using var doc = JsonDocument.Parse(s); return doc.RootElement.Clone(); }
+    JsonElement St(string id, int x) => J("{\"type\":\"REMOTE_PLAYER_STATE\",\"playerId\":\"" + id + "\",\"slot\":2,\"state\":{\"x\":" + x + "}}");
+    JsonElement Ev(string id, int n) => J("{\"type\":\"REMOTE_EVENT\",\"playerId\":\"" + id + "\",\"event\":{\"kind\":\"dmg\",\"n\":" + n + "}}");
+    string Desc(JsonElement m) => Protocol.TypeOf(m) == Protocol.RemotePlayerState ? "S" + Protocol.Str(m, "playerId") + Protocol.Num(Protocol.Obj(m, "state"), "x")
+        : Protocol.TypeOf(m) == Protocol.RemoteEvent ? "E" + Protocol.Num(Protocol.Obj(m, "event"), "n") : Protocol.TypeOf(m);
+    List<string> All(Inbox q) { var l = new List<string>(); while (q.TryDequeue(out var m)) l.Add(Desc(m)); return l; }
+
+    var ib = new Inbox();
+    // состояние — не полный снимок: враги приходят не в каждом; то, что с врагами, не должно пропасть из-за следующего без них
+    ib.TryEnqueue(J("{\"type\":\"REMOTE_PLAYER_STATE\",\"playerId\":\"p2\",\"state\":{\"x\":1,\"en\":[[1,2,3,4]]}}"), 60);
+    ib.TryEnqueue(St("p2", 2), 50); ib.TryEnqueue(Ev("p2", 3), 50); ib.TryEnqueue(St("p2", 4), 50);
+    var seq = new List<JsonElement>(); while (ib.TryDequeue(out var sm)) seq.Add(sm);
+    Check(seq.Count == 4 && Protocol.Obj(seq[0], "state").TryGetProperty("en", out _) && string.Join(",", seq.Select(Desc)) == "Sp21,Sp22,E3,Sp24",
+          $"пачка состояний и событие доходят все и по порядку, враги из первого состояния целы ({string.Join(",", seq.Select(Desc))})");
+
+    int K = Inbox.MaxStatesPerPlayer;
+    for (int i = 0; i < 1000; i++) { ib.TryEnqueue(St("p2", i), 50); ib.TryEnqueue(St("p3", i), 50); if (i % 100 == 0) ib.TryEnqueue(Ev("p2", i), 50); }
+    Check(ib.Count == 2 * K + 10, $"1000 состояний от двух игроков и 10 событий → в очереди {ib.Count} (ждём {2 * K + 10})");
+    var order = All(ib);
+    Check(order.Where(s => s[0] == 'E').SequenceEqual(Enumerable.Range(0, 10).Select(i => "E" + i * 100)), "все события на месте и по порядку");
+    var kept2 = order.Where(s => s.StartsWith("Sp2")).ToList(); var kept3 = order.Where(s => s.StartsWith("Sp3")).ToList();
+    Check(kept2.SequenceEqual(Enumerable.Range(1000 - K, K).Select(i => "Sp2" + i)) && kept3.SequenceEqual(Enumerable.Range(1000 - K, K).Select(i => "Sp3" + i)),
+          $"от каждого игрока — последние {K} состояний по порядку ({kept2.FirstOrDefault()}…{kept2.LastOrDefault()})");
+
+    ib.TryEnqueue(St("p2", 1), 50); ib.TryEnqueue(St("p3", 1), 50); ib.TryEnqueue(St("p2", 2), 50);
+    ib.TryEnqueue(J("{\"type\":\"PLAYER_LEFT\",\"playerId\":\"p2\"}"), 30);
+    Check(string.Join(",", All(ib)) == "Sp31,PLAYER_LEFT", "PLAYER_LEFT убирает неразобранные состояния ушедшего, чужие остаются");
+    ib.TryEnqueue(St("p2", 1), 50); ib.TryEnqueue(Ev("p2", 7), 50);
+    ib.Enqueue(J("{\"type\":\"DISCONNECTED\"}"));
+    Check(string.Join(",", All(ib)) == "E7,DISCONNECTED", "обрыв связи убирает все старые состояния, события остаются");
+
+    int accepted = 0;
+    for (int i = 0; i < Inbox.MaxMessages + 10; i++) if (ib.TryEnqueue(Ev("p2", i), 10)) accepted++;
+    Check(accepted == Inbox.MaxMessages && !ib.TryEnqueue(Ev("p2", -1), 10), $"событий принято ровно {accepted} (предел {Inbox.MaxMessages}), дальше отказ");
+    Check(ib.TryEnqueue(St("p2", 5), 50) && ib.TryEnqueue(St("p2", 6), 50), "состояния принимаются и при полной очереди событий (их число на игрока и так ограничено)");
+    ib.Clear();
+    Check(!ib.TryEnqueue(Ev("p2", 0), Inbox.MaxBytes + 1) && ib.TryEnqueue(Ev("p2", 0), 100), "предел по байтам тоже работает");
+    ib.Clear();
+    int took = 0; bool stopped = false;
+    for (int i = 0; i < Inbox.MaxEntries + 10 && !stopped; i++) { if (ib.TryEnqueue(St("p2", i), 10)) took++; else stopped = true; }
+    Check(stopped && took == Inbox.MaxEntries && ib.Count == Inbox.MaxStatesPerPlayer,
+          $"игра стоит: записей не больше {Inbox.MaxEntries} (принято {took}), ждут только {ib.Count} последних состояний");
+    ib.Clear();
+    Check(ib.Count == 0 && ib.TryEnqueue(St("p2", 1), 10), "после разбора очередь снова принимает");
+    ib.Clear();
+
+    // сетевой поток пишет, главный читает одновременно: порядок, ни одно событие не потеряно, счётчики сходятся
+    var got = new List<string>(); var writer = new Thread(() =>
+    {
+        for (int i = 0; i < 20000; i++) { ib.TryEnqueue(St("p2", i), 10); if (i % 7 == 0) ib.TryEnqueue(Ev("p2", i), 10); }
+    });
+    writer.Start();
+    var swc = Stopwatch.StartNew();
+    while ((writer.IsAlive || ib.Count > 0) && swc.ElapsedMilliseconds < 10000) { while (ib.TryDequeue(out var cm)) got.Add(Desc(cm)); if (got.Count % 500 == 0) Thread.Yield(); }
+    var gotEv = got.Where(s => s[0] == 'E').Select(s => int.Parse(s.Substring(1))).ToList();
+    var gotSt = got.Where(s => s[0] == 'S').Select(s => int.Parse(s.Substring(3))).ToList();
+    Check(gotEv.SequenceEqual(Enumerable.Range(0, 20000).Where(i => i % 7 == 0)), $"параллельно: все {gotEv.Count} событий по порядку");
+    Check(gotSt.Count > 0 && gotSt.Last() == 19999 && gotSt.Zip(gotSt.Skip(1), (p, q) => p < q).All(x => x), $"параллельно: состояния по порядку, последнее дошло ({gotSt.Count} из 20000)");
+    Check(ib.Count == 0 && ib.Pending == 0, $"счётчики сошлись: ждёт {ib.Count}, событий {ib.Pending}");
+}
 Console.WriteLine("8. защита сервера");
 using (var raw = new TcpClient(host, port))
 {
@@ -386,6 +466,162 @@ if (server != null)
     Check(CoopClient.LiveThreads == 0, $"после Stop потоков клиентов не осталось: {CoopClient.LiveThreads}");
 }
 
+if (server != null)
+{
+    Console.WriteLine("19. счётчик входов: адреса без запросов забываются, число адресов ограничено, предел работает");
+    var rl19 = new CoopServer { RoomOpsPerMinute = 2, RoomOpsWindowSec = 1, MaxTrackedIps = 100 };
+    rl19.Start(0);
+    Check(rl19.RoomOpAllowedForTest("10.0.0.1") && rl19.RoomOpAllowedForTest("10.0.0.1") && !rl19.RoomOpAllowedForTest("10.0.0.1"), "третий вход за окно с адреса → отказ");
+    for (int i = 0; i < 5000; i++) rl19.RoomOpAllowedForTest("10.1." + (i / 250) + "." + (i % 250));
+    Check(rl19.RoomOpsTracked <= 100, $"5000 разных адресов → в счётчике {rl19.RoomOpsTracked} (предел 100)");
+    rl19.RoomOpAllowedForTest("10.9.9.9"); rl19.RoomOpAllowedForTest("10.9.9.9");
+    for (int i = 0; i < 150; i++) { rl19.RoomOpAllowedForTest("10.2.0." + i); rl19.RoomOpAllowedForTest("10.9.9.9"); }
+    Check(!rl19.RoomOpAllowedForTest("10.9.9.9"), "адрес, упёршийся в предел и стучащийся дальше, при переполнении счётчика не сбрасывается");
+    var sw19 = Stopwatch.StartNew();
+    while (sw19.ElapsedMilliseconds < 6000 && rl19.RoomOpsTracked > 0) Thread.Sleep(100);
+    Check(rl19.RoomOpsTracked == 0, $"без новых запросов адреса забыты по таймеру через {sw19.ElapsedMilliseconds} мс (окно 1 с)");
+    Check(rl19.RoomOpAllowedForTest("10.0.0.1"), "после окна адрес снова может входить");
+    // по сети: один адрес, предел 2 за окно
+    var (t19, r19, w19) = Raw("127.0.0.1", rl19.Port);
+    int ok19 = 0; JsonElement? lim19 = null;
+    for (int i = 0; i < 4 && lim19 == null; i++)
+    {
+        SendLine(w19, "{\"type\":\"JOIN_ROOM\",\"roomCode\":\"\",\"name\":\"Ч\",\"protocol\":2}");
+        var resp = ReadType(r19, Protocol.Error, Protocol.RoomJoined);
+        if (resp.HasValue && Protocol.TypeOf(resp.Value) == Protocol.RoomJoined) ok19++; else lim19 = resp ?? default(JsonElement);
+    }
+    Check(ok19 == 2 && lim19.HasValue && lim19.Value.ValueKind == JsonValueKind.Object && Protocol.Str(lim19.Value, "code") == "rate_limited", $"по сети предел соблюдается (прошло {ok19} из 2, затем rate_limited)");
+    t19.Close(); rl19.Stop();
+
+    Console.WriteLine("20. гонка: состояние пересылается во время повторного входа того же игрока");
+    var rc = new CoopServer { MaxConnectionsPerIp = 100, MaxConnections = 200, RoomOpsPerMinute = 1000 }; rc.Start(0);
+    var (tr, rr, wr) = Raw("127.0.0.1", rc.Port);
+    SendLine(wr, "{\"type\":\"CREATE_ROOM\",\"name\":\"Хост\",\"clientId\":\"host-20\",\"protocol\":2}");
+    var cr20 = ReadType(rr, Protocol.RoomCreated);
+    string code20 = cr20.HasValue ? Protocol.Str(cr20.Value, "roomCode") : "";
+    var (to, ro, wo) = Raw("127.0.0.1", rc.Port);                                   // игрок другой комнаты
+    SendLine(wo, "{\"type\":\"CREATE_ROOM\",\"name\":\"Чужой\",\"clientId\":\"other-20\",\"protocol\":2}");
+    ReadType(ro, Protocol.RoomCreated);
+    int got20 = 0, zero20 = 0, other20 = 0;
+    tr.GetStream().ReadTimeout = 1500; to.GetStream().ReadTimeout = 1500;
+    var readers = new[]
+    {
+        new Thread(() => { string l; try { while ((l = rr.ReadLine()) != null) if (l.Contains(Protocol.RemotePlayerState)) { Interlocked.Increment(ref got20); if (l.Contains("\"slot\":0")) Interlocked.Increment(ref zero20); } } catch { } }) { IsBackground = true },
+        new Thread(() => { string l; try { while ((l = ro.ReadLine()) != null) if (l.Contains(Protocol.RemotePlayerState)) Interlocked.Increment(ref other20); } catch { } }) { IsBackground = true },
+    };
+    foreach (var th in readers) th.Start();
+    var spam = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("{\"type\":\"PLAYER_STATE\",\"state\":{\"x\":1}}\n", 300)));
+    var olds = new List<TcpClient>();
+    for (int i = 0; i < 40; i++)
+    {
+        var (ts, rsx, wsx) = Raw("127.0.0.1", rc.Port);
+        olds.Add(ts);
+        SendLine(wsx, "{\"type\":\"JOIN_ROOM\",\"roomCode\":\"" + code20 + "\",\"name\":\"Гость\",\"clientId\":\"guest-20\",\"protocol\":2}");
+        ReadType(rsx, Protocol.RoomJoined);
+        // поток состояний с этого соединения, а следующий виток тем временем входит заново с тем же clientId
+        new Thread(() => { try { wsx.Write(spam, 0, spam.Length); } catch { } }) { IsBackground = true }.Start();
+        Thread.Sleep(i % 3);
+    }
+    Thread.Sleep(800);
+    foreach (var th in readers) th.Join(3000);
+    Check(got20 > 0 && zero20 == 0, $"ни одно из {got20} пересланных состояний не ушло со слотом 0");
+    Check(other20 == 0, $"игроку другой комнаты состояний не пришло ({other20})");
+    foreach (var t in olds) t.Close();
+    tr.Close(); to.Close(); rc.Stop();
+
+    // то же окно гонки, но наверняка: повторный вход происходит ровно между снимком под замком и сборкой сообщения
+    var rd = new CoopServer(); rd.Start(0);
+    var (th1, rh1, wh1) = Raw("127.0.0.1", rd.Port);
+    SendLine(wh1, "{\"type\":\"CREATE_ROOM\",\"name\":\"Хост\",\"clientId\":\"host-20b\",\"protocol\":2}");
+    var crd = ReadType(rh1, Protocol.RoomCreated);
+    string coded = crd.HasValue ? Protocol.Str(crd.Value, "roomCode") : "";
+    var (tg1, rg1, wg1) = Raw("127.0.0.1", rd.Port);
+    SendLine(wg1, "{\"type\":\"JOIN_ROOM\",\"roomCode\":\"" + coded + "\",\"name\":\"Гость\",\"clientId\":\"guest-20b\",\"protocol\":2}");
+    var gj1 = ReadType(rg1, Protocol.RoomJoined);
+    int gslot = gj1.HasValue ? (int)Protocol.Num(gj1.Value, "slot") : -1;
+    TcpClient tg2 = null; JsonElement? gj2 = null; int fired = 0;
+    rd.RelayHook = () =>
+    {
+        if (Interlocked.Exchange(ref fired, 1) != 0) return;
+        LineReader rg2; NetworkStream wg2;
+        (tg2, rg2, wg2) = Raw("127.0.0.1", rd.Port);
+        SendLine(wg2, "{\"type\":\"JOIN_ROOM\",\"roomCode\":\"" + coded + "\",\"name\":\"Гость\",\"clientId\":\"guest-20b\",\"protocol\":2}");
+        gj2 = ReadType(rg2, Protocol.RoomJoined);
+    };
+    SendLine(wg1, "{\"type\":\"PLAYER_STATE\",\"state\":{\"x\":7}}");
+    var relayed = ReadType(rh1, Protocol.RemotePlayerState);
+    Check(gj2.HasValue, "повторный вход случился посреди пересылки");
+    Check(relayed.HasValue && Protocol.Num(relayed.Value, "slot") == gslot, $"состояние ушло со слотом из снимка {gslot}, а не 0 (вышло {(relayed.HasValue ? Protocol.Num(relayed.Value, "slot") : -1)})");
+    th1.Close(); tg1.Close(); tg2?.Close(); rd.Stop();
+
+    Console.WriteLine("21. игра долго не разбирает входящие: состояний не больше предела, события целы");
+    var ps = new CoopServer(); ps.Start(0);
+    var snd = new CoopClient(); var rcv = new CoopClient(); var b21 = new List<JsonElement>();
+    snd.Start("127.0.0.1", ps.Port, "Отправитель", clientId: "s21");
+    WaitFor(snd, Protocol.RoomJoined, b21);
+    rcv.Start("127.0.0.1", ps.Port, "Тормоз", clientId: "r21");
+    WaitFor(rcv, Protocol.RoomJoined, b21);
+    Thread.Sleep(300); Drain(rcv);
+    for (int i = 0; i < 300; i++)
+    {
+        snd.SendState("{\"x\":" + i + "}");
+        if (i % 30 == 0) snd.SendEvent("{\"kind\":\"dmg\",\"n\":" + i + "}");
+        Thread.Sleep(3);
+    }
+    snd.SendState("{\"x\":1000}");
+    Thread.Sleep(1000);
+    int queued = rcv.Incoming.Count;
+    var all21 = Drain(rcv);
+    var st21 = all21.Where(m => Protocol.TypeOf(m) == Protocol.RemotePlayerState).Select(m => Protocol.Num(Protocol.Obj(m, "state"), "x")).ToList();
+    var ev21 = all21.Where(m => Protocol.TypeOf(m) == Protocol.RemoteEvent).Select(m => (int)Protocol.Num(Protocol.Obj(m, "event"), "n")).ToList();
+    Check(queued <= Inbox.MaxStatesPerPlayer + 10 && st21.Count <= Inbox.MaxStatesPerPlayer && st21.Count > 0 && st21.Last() == 1000,
+          $"в очереди {queued} сообщений; состояний {st21.Count} (предел {Inbox.MaxStatesPerPlayer}), последнее — самое свежее ({st21.LastOrDefault()})");
+    Check(st21.Zip(st21.Skip(1), (p, q) => p < q).All(ok => ok), "оставшиеся состояния идут по порядку");
+    Check(ev21.SequenceEqual(Enumerable.Range(0, 10).Select(i => i * 30)), $"все 10 событий дошли по порядку ({ev21.Count})");
+    snd.Stop(); rcv.Stop(); ps.Stop();
+}
+
+Console.WriteLine("22. сервер не читает: очередь событий клиента ограничена, клиент переподключается");
+{
+    var stuck = new TcpListener(System.Net.IPAddress.Loopback, 0); stuck.Start();
+    int sp = ((System.Net.IPEndPoint)stuck.LocalEndpoint).Port, accepts = 0;
+    var keep = new List<TcpClient>();
+    new Thread(() =>
+    {
+        try
+        {
+            while (true)
+            {
+                var cl = stuck.AcceptTcpClient(); Interlocked.Increment(ref accepts);
+                cl.ReceiveBufferSize = 4096;
+                lock (keep) keep.Add(cl);
+                var hello = Encoding.UTF8.GetBytes("{\"type\":\"WELCOME\",\"protocol\":2,\"playerId\":\"p1\"}\n{\"type\":\"ROOM_JOINED\",\"roomCode\":\"AAAAAA\",\"playerId\":\"p1\",\"slot\":1,\"players\":[]}\n");
+                cl.GetStream().Write(hello, 0, hello.Length);   // и больше ни байта не читаем
+            }
+        }
+        catch { }
+    }) { IsBackground = true }.Start();
+    var sc = new CoopClient { RetrySec = 0.3 }; var b22 = new List<JsonElement>();
+    sc.Start("127.0.0.1", sp, "Застрявший");
+    WaitFor(sc, Protocol.RoomJoined, b22);
+    var big = "{\"kind\":\"casts\",\"pad\":\"" + new string('x', 8000) + "\"}";
+    int maxPending = 0, sent22 = 0; bool refused = false;
+    var sw22 = Stopwatch.StartNew();
+    while (sw22.ElapsedMilliseconds < 15000 && !refused)
+    {
+        if (sc.Connected) { if (sc.SendEvent(big)) sent22++; else refused = true; }
+        maxPending = Math.Max(maxPending, sc.PendingEvents);
+        if (sent22 % 50 == 0) Thread.Sleep(1);
+    }
+    Check(refused, $"очередь переполнилась и событие отклонено (принято {sent22}, ~{sent22 * 8 / 1024} МБ)");
+    Check(maxPending <= CoopClient.MaxPendingEvents, $"в очереди не больше {CoopClient.MaxPendingEvents} (было до {maxPending})");
+    sw22.Restart();
+    while (sw22.ElapsedMilliseconds < 5000 && Volatile.Read(ref accepts) < 2) Thread.Sleep(50);
+    Check(Volatile.Read(ref accepts) >= 2, $"клиент переподключился ({accepts} подключений): «{sc.LastError}»");
+    Check(sc.PendingEvents < CoopClient.MaxPendingEvents, $"старая очередь сброшена ({sc.PendingEvents})");
+    sc.Stop(); stuck.Stop(); lock (keep) foreach (var k in keep) k.Close();
+}
+
 server?.Stop();
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
@@ -424,6 +660,18 @@ static bool ClosedBy(LineReader r, int ms)
     catch (System.IO.IOException e) when (e.InnerException is SocketException se && se.SocketErrorCode == SocketError.TimedOut) { return false; }
     catch { return true; }
     return false;
+}
+
+/// <summary>Поток, который отдаёт данные кусками не больше chunk байт — как TCP, дробящий сообщения.</summary>
+sealed class Chunked : System.IO.Stream
+{
+    private readonly System.IO.Stream _s; private readonly int _chunk;
+    public Chunked(System.IO.Stream s, int chunk) { _s = s; _chunk = chunk; }
+    public override int Read(byte[] buffer, int offset, int count) => _s.Read(buffer, offset, Math.Min(count, _chunk));
+    public override bool CanRead => true; public override bool CanSeek => false; public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException(); public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    public override void Flush() { } public override long Seek(long o, System.IO.SeekOrigin so) => throw new NotSupportedException();
+    public override void SetLength(long v) => throw new NotSupportedException(); public override void Write(byte[] b, int o, int c) => throw new NotSupportedException();
 }
 
 /// <summary>TCP-посредник между клиентом и сервером: Cut() рвёт все текущие соединения, как обрыв мобильной сети.</summary>

@@ -23,6 +23,9 @@ IDLE_TIMEOUT = 40
 MAX_CONNECTIONS = 32
 MAX_CONNECTIONS_PER_IP = 8
 ROOM_OPS_PER_MINUTE = 60
+ROOM_OPS_WINDOW = 60             # окно счётчика входов, с; адрес без входов дольше окна забывается
+MAX_TRACKED_IPS = 4096           # сколько адресов помнит счётчик; при переполнении забывается входивший давнее всех
+DRAIN_TIMEOUT = 10               # получатель не разбирает свой буфер отправки столько секунд — отключаем
 MAX_ROOMS = 16
 JOIN_TIMEOUT = 30
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -54,10 +57,12 @@ def protocol_ok(m):
 
 
 class Conn:
-    def __init__(self, cid, writer, ip=""):
+    def __init__(self, cid, writer, ip="", drain_timeout=DRAIN_TIMEOUT):
         self.id = cid
         self.writer = writer
         self.ip = ip
+        self.drain_timeout = drain_timeout
+        self.drainer = None
         self.last_in_room = time.monotonic()
         self.ending = False
         self.name = "Игрок"
@@ -78,6 +83,33 @@ class Conn:
             self.writer.write((json.dumps(obj, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
         except Exception:
             self.close()
+            return
+        self.kick_drain()
+
+    def kick_drain(self):
+        """Обратное давление — по буферу этого соединения, а не того, чьё сообщение пересылаем: своя задача ждёт drain()
+        получателя; не разобрал буфер за drain_timeout — отключаем. Задача одна на соединение: параллельный drain()
+        одного writer в Python < 3.10 падает."""
+        if self.closed or (self.drainer is not None and not self.drainer.done()):
+            return
+        try:
+            if self.writer.transport.get_write_buffer_size() == 0:
+                return
+        except Exception:
+            return
+        self.drainer = asyncio.ensure_future(self._drain())
+
+    async def _drain(self):
+        try:
+            await asyncio.wait_for(self.writer.drain(), self.drain_timeout)
+        except Exception:   # TimeoutError — получатель не читает; остальное — соединение уже оборвано
+            self.close()
+
+    async def drain(self):
+        """Дождаться, пока уйдёт свой буфер: клиент, который не читает ответы, не получает и новых."""
+        self.kick_drain()
+        if self.drainer is not None and not self.drainer.done():
+            await asyncio.shield(self.drainer)
 
     def close_after_send(self):
         """Последнее сообщение уже в буфере — закрыть, когда оно уйдёт (writer.close дописывает буфер)."""
@@ -101,7 +133,8 @@ class Room:
 
 class Server:
     def __init__(self, log=print, max_connections=MAX_CONNECTIONS, max_per_ip=MAX_CONNECTIONS_PER_IP,
-                 room_ops_per_minute=ROOM_OPS_PER_MINUTE, max_rooms=MAX_ROOMS, join_timeout=JOIN_TIMEOUT):
+                 room_ops_per_minute=ROOM_OPS_PER_MINUTE, max_rooms=MAX_ROOMS, join_timeout=JOIN_TIMEOUT,
+                 room_ops_window=ROOM_OPS_WINDOW, max_tracked_ips=MAX_TRACKED_IPS, drain_timeout=DRAIN_TIMEOUT, clock=time.monotonic):
         self.rooms = {}
         self.conns = set()
         self.room_ops = {}
@@ -112,6 +145,10 @@ class Server:
         self.room_ops_per_minute = room_ops_per_minute
         self.max_rooms = max_rooms
         self.join_timeout = join_timeout
+        self.room_ops_window = room_ops_window
+        self.max_tracked_ips = max_tracked_ips
+        self.drain_timeout = drain_timeout
+        self.clock = clock
 
     # ---------------------------------------------------------------- комнаты
     def new_code(self):
@@ -177,18 +214,31 @@ class Server:
         return found
 
     def room_op_allowed(self, ip):
-        now = time.monotonic()
-        q = self.room_ops.setdefault(ip, deque())
-        while q and now - q[0] > 60:
+        """Не больше room_ops_per_minute входов за окно room_ops_window с одного адреса (как RoomOpAllowedLocked)."""
+        now = self.clock()
+        # порядок словаря — по последней попытке (в том числе отказанной): адрес переставляется в конец при каждой
+        q = self.room_ops.pop(ip, None)
+        if q is None:
+            if len(self.room_ops) >= self.max_tracked_ips:
+                self.sweep_room_ops(now)
+            if len(self.room_ops) >= self.max_tracked_ips:
+                # все адреса ещё в окне — забыть тот, что дольше всех не обращался; упёршийся в предел и стучащийся дальше
+                # остаётся в конце и счётчик не сбрасывает
+                del self.room_ops[next(iter(self.room_ops))]
+            q = deque()
+        self.room_ops[ip] = q
+        while q and now - q[0] > self.room_ops_window:
             q.popleft()
-        if len(self.room_ops) > 1024:
-            for k in [k for k, v in self.room_ops.items() if not v]:
-                del self.room_ops[k]
-            q = self.room_ops.setdefault(ip, q)
         if len(q) >= self.room_ops_per_minute:
             return False
         q.append(now)
         return True
+
+    def sweep_room_ops(self, now=None):
+        """Убрать адреса, у которых все входы старше окна (зовётся и по таймеру из reaper)."""
+        now = self.clock() if now is None else now
+        for k in [k for k, q in self.room_ops.items() if not q or now - q[-1] > self.room_ops_window]:
+            del self.room_ops[k]
 
     # ---------------------------------------------------------------- сообщения
     def handle(self, c, m):
@@ -293,7 +343,7 @@ class Server:
             self.log(f"отказ {ip}: {busy}")
             return await self.reject(reader, writer, "server_busy", busy)
         self.next_id += 1
-        c = Conn(f"p{self.next_id}", writer, ip)
+        c = Conn(f"p{self.next_id}", writer, ip, self.drain_timeout)
         self.conns.add(c)
         self.log(f"подключение {c.id} с {peer}")
         c.send({"type": "WELCOME", "protocol": PROTOCOL, "playerId": c.id})
@@ -319,7 +369,7 @@ class Server:
                     self.error(c, "invalid_message", "Ожидался JSON-объект.")
                     continue
                 self.handle(c, m)
-                await writer.drain()
+                await c.drain()
         except (ConnectionError, OSError):
             pass
         finally:
@@ -331,6 +381,7 @@ class Server:
     async def reaper(self):
         while True:
             await asyncio.sleep(2)
+            self.sweep_room_ops()
             now = time.monotonic()
             for c in list(self.conns):
                 if now - c.last_seen > IDLE_TIMEOUT:
@@ -361,10 +412,12 @@ def main():
     ap.add_argument("--room-ops-per-minute", type=int, default=ROOM_OPS_PER_MINUTE, help="CREATE_ROOM/JOIN_ROOM в минуту с адреса")
     ap.add_argument("--max-rooms", type=int, default=MAX_ROOMS, help="комнат одновременно")
     ap.add_argument("--join-timeout", type=float, default=JOIN_TIMEOUT, help="секунд без комнаты до отключения")
+    ap.add_argument("--room-ops-window", type=float, default=ROOM_OPS_WINDOW, help="окно счётчика входов, с")
     args = ap.parse_args()
     try:
         asyncio.run(main_async(args.host, args.port, max_connections=args.max_connections, max_per_ip=args.max_per_ip,
-                               room_ops_per_minute=args.room_ops_per_minute, max_rooms=args.max_rooms, join_timeout=args.join_timeout))
+                               room_ops_per_minute=args.room_ops_per_minute, max_rooms=args.max_rooms, join_timeout=args.join_timeout,
+                               room_ops_window=args.room_ops_window))
     except KeyboardInterrupt:
         print("остановлено")
 

@@ -83,6 +83,8 @@ if [ "${SKIP_TESTS:-}" != "1" ]; then
   sleep 1
   run_test dotnet "$NET" external 127.0.0.1 18766 18767
   kill $PY $PY2 2>/dev/null || true
+  echo "== Python-сервер изнутри: счётчик входов, обратное давление"
+  run_test python3 tests/server_test.py
   echo "== имитация игры: два мода (хост и друг)"
   run_test dotnet tests/ModSim/bin/Release/net8.0/ModSim.dll
   echo "== отладочная консоль: разбор команд"

@@ -97,7 +97,10 @@ namespace MagicSurvivalCoop.Net
 
         public LineReader(Stream s) { _s = s; }
 
-        /// <summary>Следующая строка или null, если соединение закрыто. Слишком длинная строка — IOException.</summary>
+        /// <summary>
+        /// Следующая строка или null, если соединение закрыто. Слишком длинная строка — IOException.
+        /// Хвост без '\n' перед закрытием — оборванное сообщение: он отбрасывается (тоже null), парсеру не отдаётся.
+        /// </summary>
         public string ReadLine()
         {
             _line.SetLength(0);
@@ -107,7 +110,7 @@ namespace MagicSurvivalCoop.Net
                 {
                     _len = _s.Read(_buf, 0, _buf.Length);
                     _pos = 0;
-                    if (_len <= 0) return _line.Length > 0 ? Encoding.UTF8.GetString(_line.ToArray()) : null;
+                    if (_len <= 0) { _len = 0; _line.SetLength(0); return null; }
                 }
                 int start = _pos;
                 while (_pos < _len && _buf[_pos] != (byte)'\n') _pos++;

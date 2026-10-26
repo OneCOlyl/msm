@@ -30,7 +30,7 @@ namespace MagicSurvivalCoop.Net
         private volatile bool _running;
         private int _nextId;
 
-        private readonly Dictionary<string, Queue<long>> _roomOps = new Dictionary<string, Queue<long>>();
+        private readonly Dictionary<string, RoomOps> _roomOps = new Dictionary<string, RoomOps>();
 
         public Action<string> Log = _ => { };
         /// <summary>Сколько соединений всего (лишние получают server_busy и закрываются).</summary>
@@ -39,6 +39,10 @@ namespace MagicSurvivalCoop.Net
         public int MaxConnectionsPerIp = 8;
         /// <summary>Сколько CREATE_ROOM / JOIN_ROOM в минуту с одного адреса (больше — rate_limited, соединение закрывается).</summary>
         public int RoomOpsPerMinute = 60;
+        /// <summary>Окно счётчика входов (секунды). Адрес без входов дольше окна забывается — и при следующем входе, и по таймеру.</summary>
+        public double RoomOpsWindowSec = 60;
+        /// <summary>Сколько адресов помнит счётчик входов; при переполнении забывается адрес, входивший давнее всех.</summary>
+        public int MaxTrackedIps = 4096;
         /// <summary>Сколько комнат одновременно.</summary>
         public int MaxRooms = 16;
         /// <summary>Соединение без комнаты дольше этого закрывается.</summary>
@@ -48,6 +52,8 @@ namespace MagicSurvivalCoop.Net
         /// только хост (CREATE_ROOM), и гость, успевший раньше, не займёт слот 1 — он подождёт и войдёт в комнату хоста.
         /// </summary>
         public bool AutoCreateRoom = true;
+        /// <summary>Зовётся при пересылке состояния/события между снимком под замком и сборкой сообщения — для теста гонки.</summary>
+        internal Action RelayHook;
         public int Port { get; private set; }
         public bool Running => _running;
         public int ConnectionCount { get { lock (_lock) return _conns.Count; } }
@@ -225,8 +231,8 @@ namespace MagicSurvivalCoop.Net
             {
                 Thread.Sleep(2000);
                 Conn[] all;
-                lock (_lock) all = _conns.ToArray();
                 var now = DateTime.UtcNow.Ticks;
+                lock (_lock) { all = _conns.ToArray(); SweepRoomOpsLocked(now); }
                 foreach (var c in all)
                 {
                     if (TimeSpan.FromTicks(now - Interlocked.Read(ref c.LastSeenTicks)).TotalSeconds > IdleTimeoutSec)
@@ -339,16 +345,21 @@ namespace MagicSurvivalCoop.Net
                         string to = isState ? null : Protocol.Str(payload, "to");
                         string raw = payload.GetRawText();
                         Conn[] targets;
+                        int slot;
+                        // комната, слот и получатели — одним снимком под замком: повторный вход того же игрока (DropStaleLocked)
+                        // в другом потоке обнуляет c.Slot и c.Room, и прочитанный после замка слот мог уйти как 0
                         lock (_lock)
                         {
                             if (c.Room == null) { SendError(c, "not_in_room", "Сначала войдите в комнату."); break; }
+                            slot = c.Slot;
                             targets = c.Room.Players.Where(p => p != c && (to == null || p.Id == to)).ToArray();
                         }
+                        RelayHook?.Invoke();
                         var line = Protocol.Build(w =>
                         {
                             w.WriteString("type", isState ? Protocol.RemotePlayerState : Protocol.RemoteEvent);
                             w.WriteString("playerId", c.Id);
-                            w.WriteNumber("slot", c.Slot);
+                            w.WriteNumber("slot", slot);
                             w.WritePropertyName(isState ? "state" : "event");
                             w.WriteRawValue(raw, skipInputValidation: true);
                         });
@@ -421,18 +432,61 @@ namespace MagicSurvivalCoop.Net
             return found;
         }
 
-        /// <summary>Не больше RoomOpsPerMinute входов в комнату за минуту с одного адреса.</summary>
+        /// <summary>Не больше RoomOpsPerMinute входов в комнату за окно RoomOpsWindowSec с одного адреса.</summary>
         private bool RoomOpAllowedLocked(string ip)
         {
             long now = DateTime.UtcNow.Ticks;
-            if (!_roomOps.TryGetValue(ip, out var q)) _roomOps[ip] = q = new Queue<long>();
-            while (q.Count > 0 && now - q.Peek() > TimeSpan.TicksPerMinute) q.Dequeue();
-            if (_roomOps.Count > 1024)
-                foreach (var k in _roomOps.Where(kv => kv.Value.Count == 0).Select(kv => kv.Key).ToList()) _roomOps.Remove(k);
-            if (q.Count >= RoomOpsPerMinute) return false;
-            q.Enqueue(now);
+            long window = RoomOpsWindowTicks;
+            if (!_roomOps.TryGetValue(ip, out var r))
+            {
+                if (_roomOps.Count >= MaxTrackedIps) SweepRoomOpsLocked(now);
+                if (_roomOps.Count >= MaxTrackedIps) EvictIdlestRoomOpsLocked();
+                _roomOps[ip] = r = new RoomOps();
+            }
+            r.LastTry = now;
+            while (r.Ops.Count > 0 && now - r.Ops.Peek() > window) r.Ops.Dequeue();
+            if (r.Ops.Count >= RoomOpsPerMinute) return false;
+            r.Ops.Enqueue(now);
+            r.LastOp = now;
             return true;
         }
+
+        private sealed class RoomOps
+        {
+            public readonly Queue<long> Ops = new Queue<long>();
+            public long LastOp, LastTry;     // последний разрешённый вход и последняя попытка (в том числе отказанная)
+        }
+
+        private long RoomOpsWindowTicks => (long)(RoomOpsWindowSec * TimeSpan.TicksPerSecond);
+
+        /// <summary>Убрать адреса, у которых все входы старше окна: их счётчик уже ни на что не влияет (зовётся и по таймеру из ReapLoop).</summary>
+        private void SweepRoomOpsLocked(long now)
+        {
+            long window = RoomOpsWindowTicks;
+            List<string> expired = null;
+            foreach (var kv in _roomOps)
+                if (now - kv.Value.LastOp > window) (expired ??= new List<string>()).Add(kv.Key);
+            if (expired != null) foreach (var k in expired) _roomOps.Remove(k);
+        }
+
+        /// <summary>
+        /// Все MaxTrackedIps адресов ещё в окне (входы с очень многих адресов за минуту) — забыть тот, что дольше всех не обращался.
+        /// По последней попытке, а не входу: адрес, который упёрся в предел и продолжает стучаться, не забывается и не получает
+        /// сброс счётчика; память не растёт, сколько бы адресов ни было.
+        /// </summary>
+        private void EvictIdlestRoomOpsLocked()
+        {
+            string idlest = null; long idlestAt = long.MaxValue;
+            foreach (var kv in _roomOps)
+                if (kv.Value.LastTry < idlestAt) { idlestAt = kv.Value.LastTry; idlest = kv.Key; }
+            if (idlest != null) _roomOps.Remove(idlest);
+        }
+
+        /// <summary>Сколько адресов сейчас в счётчике входов — для тестов.</summary>
+        internal int RoomOpsTracked { get { lock (_lock) return _roomOps.Count; } }
+
+        /// <summary>Проверка счётчика входов без сети — для тестов.</summary>
+        internal bool RoomOpAllowedForTest(string ip) { lock (_lock) return RoomOpAllowedLocked(ip); }
 
         private static void AddToRoomLocked(Conn c, Room room, int preferSlot = 0)
         {

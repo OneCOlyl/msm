@@ -11,7 +11,9 @@ namespace MagicSurvivalCoop.Net
     /// <summary>
     /// Клиент протокола. Вся сеть — в фоновых потоках; игра забирает сообщения из <see cref="Incoming"/> на главном потоке.
     /// Сам переподключается при обрыве (мобильный интернет, смена Wi-Fi) и снова входит в комнату.
-    /// Состояние игрока не копится в очереди: отправляется только самое свежее.
+    /// Состояние игрока не копится в очереди: отправляется только самое свежее. События копятся, но не больше
+    /// <see cref="MaxPendingEvents"/>: дальше связь считается зависшей и клиент переподключается (см. <see cref="SendEvent"/>).
+    /// Входящие — в <see cref="Inbox"/>: по порядку, состояний от друга не больше предела, остальное ограничено.
     /// Каждый <see cref="Start"/> — отдельное подключение (<see cref="Worker"/>) со своим сокетом, очередями и потоками;
     /// <see cref="Stop"/> закрывает его и ждёт, пока оба его потока закончатся, поэтому старое подключение не живёт рядом с новым.
     /// </summary>
@@ -24,6 +26,12 @@ namespace MagicSurvivalCoop.Net
         /// <summary>Сколько потоков клиентов (рабочих и читающих) живо во всём процессе — для тестов.</summary>
         public static int LiveThreads => Volatile.Read(ref _liveThreads);
         private const int JoinTimeoutMs = 3000;
+        /// <summary>
+        /// Сколько событий (и прочих сообщений, кроме состояния) может ждать отправки. Очередь растёт, только когда запись
+        /// в сокет стоит (сеть зависла или сервер не читает): события и так пачки за шаг отправки, ~20–30 в секунду, так что
+        /// это ~10 с без связи. Каждое ≤ <see cref="Protocol.MaxLineBytes"/>, всего ≤ 4 МБ.
+        /// </summary>
+        public const int MaxPendingEvents = 256;
 
         private readonly object _ctl = new object();     // Start/Stop — по очереди
         private readonly object _lock = new object();    // смена текущего подключения и всё, что оно публикует
@@ -32,7 +40,7 @@ namespace MagicSurvivalCoop.Net
         private int _port, _portIdx;
 
         /// <summary>Сообщения сервера (разобранные JSON), читать на главном потоке.</summary>
-        public readonly ConcurrentQueue<JsonElement> Incoming = new ConcurrentQueue<JsonElement>();
+        public readonly Inbox Incoming = new Inbox();
         public Action<string> Log = _ => { };
 
         public volatile Status State = Status.Off;
@@ -103,16 +111,22 @@ namespace MagicSurvivalCoop.Net
             w.Wake.Set();
         }
 
-        /// <summary>Событие для всех (to = null) или одного игрока.</summary>
-        public void SendEvent(string eventJson)
+        /// <summary>
+        /// Событие для всех (to = null) или одного игрока. События не схлопываются и не выбрасываются по одному: если
+        /// в очереди уже <see cref="MaxPendingEvents"/>, связь рвётся и клиент переподключается (друзья получат PLAYER_LEFT,
+        /// игра — DISCONNECTED), а очередь сбрасывается. false — событие не принято.
+        /// </summary>
+        public bool SendEvent(string eventJson)
         {
             var w = _w;
-            if (w == null || !Connected) return;
-            w.Out.Enqueue(Protocol.Build(b => { b.WriteString("type", Protocol.Event); b.WritePropertyName("event"); b.WriteRawValue(eventJson, true); }));
-            w.Wake.Set();
+            if (w == null || !Connected) return false;
+            return w.TryQueue(Protocol.Build(b => { b.WriteString("type", Protocol.Event); b.WritePropertyName("event"); b.WriteRawValue(eventJson, true); }));
         }
 
-        public void SendRaw(string line) { var w = _w; if (w != null && Connected) { w.Out.Enqueue(line); w.Wake.Set(); } }
+        public bool SendRaw(string line) { var w = _w; return w != null && Connected && w.TryQueue(line); }
+
+        /// <summary>Сколько сообщений ждёт отправки — для тестов.</summary>
+        public int PendingEvents => _w?.OutCount ?? 0;
 
         /// <summary>Запомнить код комнаты, в которую мы вошли, чтобы вернуться в неё после обрыва.</summary>
         public void RememberRoom(string code) { var w = _w; if (w != null && !string.IsNullOrEmpty(code)) w.RoomCode = code; }
@@ -133,7 +147,9 @@ namespace MagicSurvivalCoop.Net
         private sealed class Worker
         {
             private readonly CoopClient _c;
-            public readonly ConcurrentQueue<string> Out = new ConcurrentQueue<string>();
+            private readonly ConcurrentQueue<string> _out = new ConcurrentQueue<string>();
+            private int _outCount;
+            private volatile bool _outOverflow;         // очередь переполнилась: эта сессия рвётся, очередь сбрасывается
             public readonly AutoResetEvent Wake = new AutoResetEvent(false);
             public volatile string LatestState;
             public volatile string RoomCode;
@@ -167,6 +183,34 @@ namespace MagicSurvivalCoop.Net
             }
 
             public bool Join(int ms) => _thread == null || _thread == Thread.CurrentThread || _thread.Join(ms);
+
+            public int OutCount => Volatile.Read(ref _outCount);
+
+            /// <summary>В очередь отправки; переполнение — связь зависла: закрыть сокет (запись проснётся с ошибкой) и переподключиться.</summary>
+            public bool TryQueue(string line)
+            {
+                if (_outOverflow) return false;
+                if (Interlocked.Increment(ref _outCount) > MaxPendingEvents)
+                {
+                    Interlocked.Decrement(ref _outCount);
+                    _outOverflow = true;
+                    _refuse = "связь зависла: не отправлено " + MaxPendingEvents + " событий, переподключаюсь";
+                    _c.Log("клиент: " + _refuse);
+                    lock (_tcpLock) { try { _tcp?.Close(); } catch { } }
+                    Wake.Set();
+                    return false;
+                }
+                _out.Enqueue(line);
+                Wake.Set();
+                return true;
+            }
+
+            private bool TryTake(out string line)
+            {
+                if (!_out.TryDequeue(out line)) return false;
+                Interlocked.Decrement(ref _outCount);
+                return true;
+            }
 
             private static void Counted(Action body)
             {
@@ -207,6 +251,12 @@ namespace MagicSurvivalCoop.Net
                         }
                     }
                     finally { CloseTcp(); }
+                    if (_outOverflow)
+                    {
+                        // то, что не ушло за ~10 с, после переподключения устарело: друзья нас потеряли и встретят заново
+                        while (TryTake(out _)) { }
+                        _outOverflow = false;
+                    }
                     if (!_running) break;
                     // сообщаем только об обрыве живой связи, не о каждой неудачной попытке
                     _c.Publish(this, () => { _c.State = Status.Waiting; if (hadRoom) _c.Incoming.Enqueue(Local("DISCONNECTED")); });
@@ -256,6 +306,17 @@ namespace MagicSurvivalCoop.Net
                             JsonElement el;
                             try { using var doc = JsonDocument.Parse(line); el = doc.RootElement.Clone(); }
                             catch (JsonException) { continue; }
+                            int size = line.Length;
+                            bool full = false;
+                            // в очередь игры; переполнена — игра давно её не разбирает: рвём связь, а не копим память
+                            bool Deliver(Action before = null)
+                            {
+                                if (!_c.Publish(this, () => { before?.Invoke(); full = !_c.Incoming.TryEnqueue(el, size); })) return false;
+                                if (!full) return true;
+                                _refuse = "игра не успевает разбирать входящие сообщения, переподключаюсь";
+                                Volatile.Write(ref refuse, _refuse);
+                                return false;
+                            }
                             var type = Protocol.TypeOf(el);
                             if (type == Protocol.Welcome || type == Protocol.RoomJoined || type == Protocol.RoomCreated || type == Protocol.Error) Volatile.Write(ref ours, true);
                             if (type == Protocol.Pong)
@@ -270,7 +331,7 @@ namespace MagicSurvivalCoop.Net
                                 if (!string.IsNullOrEmpty(code)) RoomCode = code;   // вернуться в неё после обрыва — сразу, не дожидаясь игры
                                 Create = false;                                    // комната есть — дальше только входим в неё
                                 Volatile.Write(ref joined, true);
-                                if (!_c.Publish(this, () => { _c.State = Status.Connected; _c.Incoming.Enqueue(el); })) break;
+                                if (!Deliver(() => _c.State = Status.Connected)) break;
                                 continue;
                             }
                             if (type == Protocol.Error && !Volatile.Read(ref joined))
@@ -281,8 +342,7 @@ namespace MagicSurvivalCoop.Net
                                     // старой комнаты нет (хост перезапустил игру или комната опустела): хост создаёт её заново, гость входит в ту, что есть
                                     RoomCode = "";
                                     Create = Creator;
-                                    Out.Enqueue(EnterMessage());
-                                    Wake.Set();
+                                    TryQueue(EnterMessage());
                                     continue;
                                 }
                                 if (code == "room_not_found" || code == "server_busy" || code == "rate_limited")
@@ -290,11 +350,11 @@ namespace MagicSurvivalCoop.Net
                                     // хост ещё не создал игру / сервер перегружен — переподключимся через паузу
                                     Volatile.Write(ref refuse, Protocol.Str(el, "message", code));
                                     _refuse = refuse;
-                                    _c.Publish(this, () => _c.Incoming.Enqueue(el));
+                                    Deliver();
                                     break;
                                 }
                             }
-                            if (!_c.Publish(this, () => _c.Incoming.Enqueue(el))) break;
+                            if (!Deliver()) break;
                         }
                     }
                     catch { }
@@ -319,7 +379,7 @@ namespace MagicSurvivalCoop.Net
                             double t = Clock.Elapsed.TotalMilliseconds;
                             Write(stream, Protocol.Build(w => { w.WriteString("type", Protocol.Ping); w.WriteNumber("t", Math.Round(t)); }));
                         }
-                        while (_running && Out.TryDequeue(out var line)) Write(stream, line);
+                        while (_running && !_outOverflow && TryTake(out var line)) Write(stream, line);
                         var st = Interlocked.Exchange(ref LatestState, null);
                         if (st != null && _running) Write(stream, st);
                         Wake.WaitOne(100);
