@@ -237,13 +237,37 @@ if (server != null)
 if (server != null)
 {
     Console.WriteLine("10. хост занял соседний порт — клиент находит его сам");
-    var alt = new CoopServer(); alt.Start(0); int altPort = alt.Port;
+    // два порта перед altPort должны отвечать отказом: случайный порт может оказаться через один от сервера прошлых шагов
+    // (на CI порты выдаются подряд), и клиент вошёл бы к нему. Сокет с Bind без Listen держит порт закрытым на время теста
+    CoopServer alt = null; int altPort = 0; var holds = new List<Socket>();
+    for (int attempt = 0; attempt < 20 && alt == null; attempt++)
+    {
+        var cand = new CoopServer(); cand.Start(0);
+        try
+        {
+            foreach (var p in new[] { cand.Port - 2, cand.Port - 1 })
+            {
+                var h = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                holds.Add(h);
+                h.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Any, p));
+            }
+            alt = cand; altPort = cand.Port;
+        }
+        catch (SocketException)
+        {
+            foreach (var h in holds) h.Dispose();
+            holds.Clear();
+            cand.Stop();
+        }
+    }
+    Check(alt != null, "нашёлся порт, перед которым два свободных");
     var f = new CoopClient(); var boxF = new List<JsonElement>();
     f.Start(host, altPort - 2, "Ищущий", portSpan: 4);
     var jf = WaitFor(f, Protocol.RoomJoined, boxF, 8000);
     Check(jf.HasValue && f.Port == altPort, $"клиент подключился к порту {altPort}, начав с {altPort - 2} (сейчас {f.Port})");
     Check(!boxF.Any(m => Protocol.TypeOf(m) == "DISCONNECTED"), "неудачные попытки не выдают «связь потеряна»");
-    f.Stop(); alt.Stop();
+    f.Stop(); alt?.Stop();
+    foreach (var h in holds) h.Dispose();
 
     Console.WriteLine("11. на порту чужая программа (как тестовый сервер в Termux) — клиент идёт дальше");
     var foreign = new TcpListener(System.Net.IPAddress.Loopback, 0); foreign.Start(); int fPort = ((System.Net.IPEndPoint)foreign.LocalEndpoint).Port;
