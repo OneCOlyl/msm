@@ -1,3 +1,4 @@
 ModKit.dll и modkit_*.dll — из релиза MS_KIT (https://github.com/Kysnez4/MS_KIT, лицензия MIT), только для сборки мода.
-На телефон их ставить не нужно: они уже есть в Zombix-melon-ModKit.zip.
+На телефон их отсюда ставить не нужно: игроки берут ядро и библиотеки из релизов MS_KIT
+«ModKit: ядро (MelonLoader)» и «ModKit: библиотеки (MelonLoader)» (см. docs/INSTALL.md).
 Хэши SHA-256 — в SHA256SUMS (проверяет CI: sha256sum -c SHA256SUMS).
