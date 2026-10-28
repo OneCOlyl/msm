@@ -39,8 +39,26 @@ namespace MagicSurvivalCoop
         private void UpdateOwnPause(float ts)
         {
             if (!_inRun) { _ownNow = false; return; }
+            // 1.6.84: меню паузы (C_Battle_Manager.IsStopGame) — своя пауза, даже если мод сам держит игру на паузе: хост открыл
+            // меню, пока ждал друга перед боссом, — по скорости 0 это была «пауза из-за друга», друг её своей не видел и играл
+            bool menu = MenuPaused();
+            if (menu != _menuWas)
+            {
+                _menuWas = menu;
+                if (_menuLogs++ < 30) _ctx.Log($"своя пауза: меню паузы {(menu ? "открыто" : "закрыто")} (скорость {ts}, пауза из-за друга {_pauseForced})");
+            }
+            if (menu) { _ownNow = true; return; }
             if (!_pauseForced) _ownNow = ts == 0;
             else if (ts > 0) _ownNow = false;
+        }
+
+        private bool _menuWas;
+        private int _menuLogs;
+
+        private bool MenuPaused()
+        {
+            if (_battleMgr == null) return false;
+            try { return GetAny(_battleMgr, "IsStopGame") is bool b && b; } catch { return false; }
         }
 
         private float TimeScale
