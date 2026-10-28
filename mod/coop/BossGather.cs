@@ -20,7 +20,7 @@ namespace MagicSurvivalCoop
         private int _gatherTimes;
         // арена босса хоста от его точки старта (в состоянии хоста, пока арена есть)
         private double _hostBgX, _hostBgY;
-        private bool _hostBg;
+        private bool _hostBg, _gatherBgHost;
 
         private void ResetGather() { _gather = Gather.Idle; _gatherAt = 0; _hostBg = false; }
 
@@ -61,7 +61,8 @@ namespace MagicSurvivalCoop
                     MoveBossGround(tx, ty);
                     return;
                 case Gather.AtHost:
-                    if (boss) { if (now >= _gatherAt) { _gatherAt = now + 0.5; MoveBossGround(_gatherX, _gatherY); } return; }   // игра могла поставить арену заново
+                    // игра могла поставить арену заново; арена хоста пришла после переноса — сразу на неё
+                    if (boss) { if (now >= _gatherAt || (_hostBg && !_gatherBgHost)) { _gatherAt = now + 0.5; MoveBossGround(_gatherX, _gatherY); } return; }
                     _gather = Gather.Leaving; _gatherAt = now + GatherBackSec;
                     // мана — до возвращения: обелиск хоста её уже притянул (CatchUpBoss), иначе — здесь
                     if (now - _pulledAt > 3) _ctx.Log($"сбор на босса: волна кончилась — притягиваю ману ({PullItems()} предметов)");
@@ -88,6 +89,7 @@ namespace MagicSurvivalCoop
                 double x = _hostBg ? (_startX ?? 0) + _hostBgX : heroX, y = _hostBg ? (_startY ?? 0) + _hostBgY : heroY;
                 SetMember(mgr, "ApplyBossGround_X", (float)x);
                 SetMember(mgr, "ApplyBossGround_Y", (float)y);
+                _gatherBgHost = _hostBg;
                 if (GetAny(mgr, "Obj_BossLimitGround") is GameObject g && g.transform is Transform t)
                 {
                     var z = t.position.z;
