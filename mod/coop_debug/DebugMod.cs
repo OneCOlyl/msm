@@ -24,7 +24,7 @@ namespace MagicSurvivalCoop.Debug
         {
             Id = "coop_debug",
             Name = "Кооператив: отладка",
-            Version = "0.1.5",
+            Version = "0.1.6",
             Description = "Для разработки: консоль на порту 8770 (только через USB/adb) — читать и менять поля игры во время боя. Игрокам не нужна.",
             OnEnable = ctx => _c = new DebugConsole(ctx),
             OnDisable = ctx => { _c?.Stop(); _c = null; },
@@ -205,6 +205,12 @@ namespace MagicSurvivalCoop.Debug
                 lock (_calls) { var r = _calls.Count == 0 ? "вызовов не было (hookm <Тип> <regex>)" : string.Join("\n", _calls); _calls.Clear(); return r; }
             }
             if (cmd == "hookm") return a.Length < 2 ? "hookm <Тип> <regex метода> — записывать вызовы методов (calls — показать)" : HookMethods(a[0], a[1]);
+            if (cmd == "skip")
+            {
+                if (a.Length < 3 || !int.TryParse(a[2], out int argc)) return "skip <Тип> <Метод> <число аргументов> — метод ничего не делает, например: skip C_Battle_AllyUnit Unit_Death 0";
+                Hooks.AddReplace(_ctx.Id, a[0], a[1], argc, (self, args) => null, _unhooks);
+                return $"{a[0]}.{a[1]}/{argc} отключён до выключения мода";
+            }
             if (cmd != "hook") return null;
             if (a.Length < 2) return "hook <Тип> <regex вложенного типа>, например: hook C_Battle_Manager Play_Time";
             var t = Hooks.FindType(a[0]);
