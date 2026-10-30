@@ -448,21 +448,39 @@ Console.WriteLine("2и. общая пауза: друг выбирает уме�
     bm2.Time_Sec = 14; Frames(20);
     Check(Math.Abs(Time.timeScale - 0.5f) < 0.01f, $"догнал — вернулась скорость игры 0,5: {Time.timeScale}");
     bm2.Time_Sec = 14; Time.timeScale = 1; Frames(10);
-    {   // старт боя: хост вошёл в бой раньше на 5 с — ждёт друга («Ждём …»), потом продолжает
-        var clk = (System.Diagnostics.Stopwatch)sess.GetField("Clock", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
-        A.Set("_battleStartSec", clk.Elapsed.TotalSeconds); A.Set("_startWaitSince", 0.0);
-        var am3 = new FakeManager { Owner = A, Time_Sec = 8 }; var bm3 = new FakeManager { Owner = B, Time_Sec = 3 };
+    {   // старт боя: хост вошёл в бой раньше на 5 с — не ждёт, друг догоняет ускорением ×1,5
+        var am3 = new FakeManager { Owner = A, Time_Sec = 8 }; var bm3 = new FakeManager { Owner = B, Time_Sec = 8 };
         A.Set("_battleMgr", am3); B.Set("_battleMgr", bm3); Time.timeScale = 1;
+        Frames(15); Time.timeScale = 1;                                      // в тесте скорость одна на двоих: пока часы менялись, ускорялись оба
+        bm3.Time_Sec = 3;                                                    // друг позади на 5 с
         Frames(20);
-        Check((bool)A.Get("_pauseForced") && A.Toasts.Any(x => x.Contains("Ждём")), "старт: хост впереди на 5 с — ждёт друга («Ждём …»)");
+        Check(!(bool)A.Get("_pauseForced") && (bool)B.Get("_catchUp") && Math.Abs(Time.timeScale - 1.5f) < 0.01f, $"старт: хост впереди на 5 с — хост не на паузе, друг ускоряется ×1,5: {Time.timeScale}");
         bm3.Time_Sec = 8; Frames(20);
-        Check(!(bool)A.Get("_pauseForced") && Time.timeScale > 0.5f, "друг догнал — хост продолжил");
-        A.Set("_battleStartSec", -1000.0);
+        Check(!(bool)B.Get("_catchUp") && Time.timeScale == 1, "друг догнал — обычная скорость");
+    }
+    {   // в игре скорость боя = замедление × TimeScaleBonus (пересчёт каждый кадр) — ускоряем бонусом, timeScale не трогаем
+        var am6 = new FakeManager { Owner = A, Time_Sec = 20 }; var bm6 = new BonusManager { Owner = B, Time_Sec = 20 };
+        BonusManager.TimeScaleBonus = 1.18f;
+        A.Set("_battleMgr", am6); B.Set("_battleMgr", bm6); Time.timeScale = 1;
+        Frames(15); Time.timeScale = 1;
+        bm6.Time_Sec = 10; Frames(20);
+        Check((bool)B.Get("_catchUp") && Math.Abs(BonusManager.TimeScaleBonus - 2.36f) < 0.01f && Time.timeScale == 1, $"отстаёт на 10 с — бонус скорости ×2: {BonusManager.TimeScaleBonus}, timeScale {Time.timeScale}");
+        bm6.K = 0.6f; Frames(40);                                              // игра замедлила время (низкий FPS)
+        Check(Math.Abs(BonusManager.TimeScaleBonus - 1.18f * 2 / 0.6f) < 0.02f, $"замедление игры 0,6 снято на время догона: бонус {BonusManager.TimeScaleBonus}");
+        bm6.K = 0.2f; Frames(40);
+        Check(Math.Abs(BonusManager.TimeScaleBonus - 1.18f * 4) < 0.02f, $"бонус не больше ×4: {BonusManager.TimeScaleBonus}");
+        bm6.K = 0;
+        bm6.Time_Sec = 20; Frames(20);
+        Check(!(bool)B.Get("_catchUp") && Math.Abs(BonusManager.TimeScaleBonus - 1.18f) < 0.001f, $"догнал — бонус скорости вернулся: {BonusManager.TimeScaleBonus}");
+        bm6.Time_Sec = 15; Frames(20);
+        B.Call("ReleaseSharedPause");
+        Check(Math.Abs(BonusManager.TimeScaleBonus - 1.18f) < 0.001f, $"возврат игры (конец боя, выключение мода) — бонус скорости вернулся: {BonusManager.TimeScaleBonus}");
+        bm6.Time_Sec = 20; Frames(10);
     }
     {   // вход в бой: хост уже в бою, друг ещё в меню — хост на паузе, пока друг не войдёт
         var clk = (System.Diagnostics.Stopwatch)sess.GetField("Clock", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
         B.Spells.InBattle = false; Frames(10);                               // состояние «не в бою» дошло до хоста
-        A.Set("_battleStartSec", clk.Elapsed.TotalSeconds); A.Set("_entryWaitDone", false); A.Set("_entryDoneSec", 0.0);
+        A.Set("_battleStartSec", clk.Elapsed.TotalSeconds); A.Set("_entryWaitDone", false);
         Time.timeScale = 1;
         Frames(20);
         Check((bool)A.Get("_pauseForced") && Time.timeScale == 0 && A.Toasts.Any(x => x.Contains("не в бою")), "вход: друг ещё не в бою — хост на паузе («Ждём … — ещё не в бою»)");
@@ -485,11 +503,12 @@ Console.WriteLine("2и. общая пауза: друг выбирает уме�
         Frames(20);
         Check(!(bool)A.Get("_pauseForced"), "у друга ещё бой с боссом — хост не стоит на паузе (1.6.15 вставал, пока его обелиск лежал не поднятым)");
         bm4.Battle_ClearWaveON = 0; bm4.Time_Sec = 5; bm4.AreaChangeNum = 1; Frames(20);
-        // большое расхождение (10 с, у друга была замедлена игра) — хост ждёт; разница 2 с — продолжает
+        // большое расхождение (10 с, у друга была замедлена игра) — хост не ждёт, друг ×2; разница 2 с — ×1,25
         am4.Time_Sec = 30; bm4.Time_Sec = 20; Frames(20);
-        Check((bool)A.Get("_pauseForced") && A.Toasts.Any(x => x.Contains("(часы)")), "часы хоста впереди на 10 с — хост ждёт");
+        Check(!(bool)A.Get("_pauseForced") && (bool)B.Get("_catchUp") && Math.Abs(Time.timeScale - 2f) < 0.01f, $"часы хоста впереди на 10 с — хост не на паузе, друг ускоряется ×2: {Time.timeScale}");
         bm4.Time_Sec = 28; Frames(20);
-        Check(!(bool)A.Get("_pauseForced"), "разница 2 с — хост продолжил (дальше догоняет ускорение)");
+        Check(Math.Abs(Time.timeScale - 1.25f) < 0.01f, $"разница 2 с — ускорение ×1,25: {Time.timeScale}");
+        bm4.Time_Sec = 30; Frames(20);
         Time.timeScale = 1;
     }
     sess.GetField("OwnPauseOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
@@ -580,18 +599,20 @@ Console.WriteLine("7. выключение мода посреди боя (об�
     T(400); F(60);
     var pups = G.Combat.Enemies.OfType<FakeEnemy>().Where(e => e.Puppet).ToList();
     Check((bool)G.Get("_worldActive") && gm.EnemyCreateNum == 0 && pups.Count == 1, $"у гостя общие враги: свой спавн погашен, копий {pups.Count}");
-    {   // 1.6.31: перед боссом тот, кто впереди, ждёт — босс-волна начинается у всех вместе
+    {   // перед боссом (за 30 с) отстающий ускоряется ступенью выше и уже с 1 с; тот, кто впереди, не ждёт
         hm.Time_Min = 2; hm.Time_Sec = 55; gm.Time_Min = 2; gm.Time_Sec = 50; hm.Battle_ClearWaveON = gm.Battle_ClearWaveON = 0;
         F(30);
-        Check((bool)H.Get("_pauseForced") && (string)H.Get("_pauseWhy") == "к боссу", $"хост на 2:55, гость на 2:50 — хост ждёт гостя перед боссом ({H.Get("_pauseWhy")})");
+        Check(!(bool)H.Get("_pauseForced") && (bool)G.Get("_catchUp") && Math.Abs(Time.timeScale - 2f) < 0.01f, $"хост на 2:55, гость на 2:50 — хост не ждёт, гость ускоряется ×2: {Time.timeScale}");
+        gm.Time_Sec = 54; F(30);
+        Check(Math.Abs(Time.timeScale - 1.5f) < 0.01f, $"перед боссом отстаёт на 1 с — всё ещё ×1,5: {Time.timeScale}");
         gm.Time_Sec = 55; F(30);
-        Check(!(bool)H.Get("_pauseForced"), "гость догнал — хост продолжает");
+        Check(!(bool)G.Get("_catchUp"), "гость догнал — обычная скорость");
         Time.timeScale = 1;
     }
     {   // 1.6.45: первый босс — вступление гостя кончилось раньше, чем хост поднял обелиск: своего обелиска гостю игра не кладёт
         // (1.6.44 держал счётчик боссов только с первого обелиска хоста — на 3:00 обелиск ложился, и убрать его не выходило)
         FakeManager.ApplyBossNum = 0;
-        F(10);
+        F(20);                                                            // шаг часов — раз в 0,25 с
         Check(FakeManager.ApplyBossNum == 1, "общие враги: счётчик боссов гостя держится 1 ещё до первого босса");
         gm.BeginBoss(3); gm.EnforceStep = 0.2f;
         for (int k = 0; k < 20; k++) { gm.Step(); F(1); }
@@ -890,6 +911,13 @@ static class WinTimer { [System.Runtime.InteropServices.DllImport("winmm.dll")] 
 class FakePlayTime { public int Counter { get; set; } public int Other { get; set; } public int __1__state { get; set; } }
 /// <summary>Менеджер боя (вместо C_Battle_Manager): флаг взрыва Армагеддона и его объекты.</summary>
 class FakeText { public Color color { get; set; } }
+/// <summary>Менеджер боя с бонусом скорости игры (статическое поле, как у C_Battle_Manager).</summary>
+class BonusManager : FakeManager
+{
+    public static float TimeScaleBonus = 1;
+    public float K;                                                       // замедление игры от FPS; 0 — поля ApplyTimeScale будто нет
+    public float ApplyTimeScale => K * TimeScaleBonus;                    // игра пересчитывает каждый кадр
+}
 class FakeManager
 {
     public Player Owner;

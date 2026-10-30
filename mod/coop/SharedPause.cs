@@ -73,9 +73,8 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Каждый кадр и шаг таймера: у друга своя пауза — держим паузу и у себя; кончилась — вернуть скорость.
-        /// 1.6.1: «кто впереди — ждёт» — общая пауза не даёт часам расходиться, но разница от старта боя оставалась (консоль: друг
-        /// вошёл в бой на 5 с позже — 0:14 против 0:09). Если наши часы обгоняют часы друга на 2 с и больше, ждём, пока догонит.
+        /// Каждый кадр и шаг таймера: у друга своя пауза — держим паузу и у себя; кончилась — вернуть скорость. Ещё пауза — пока
+        /// друг не вошёл в бой. Разошедшиеся часы паузой не выравниваем: отстающий догоняет ускорением (CatchUpStep).
         /// </summary>
         private void SharedPauseStep()
         {
@@ -103,23 +102,18 @@ namespace MagicSurvivalCoop
                 // друг с нулевым здоровьем — погиб: его анимация смерти останавливает его игру, это не «выбирает умение»
                 by = _partners.Values.FirstOrDefault(p => p.OwnPause && p.Battle && !p.Dead && p.Hp > 0 && p.HasState && nowR - p.StateReal < 3);
                 if (by != null) why = "выбирает умение";
-                else if (!OwnPause()) by = EntryWait(nowR, ref why) ?? StartWait(nowR, ref why) ?? BossApproachWait(nowR, ref why) ?? GapWait(nowR, ref why);   // 1.6.16: ожидание «после босса» убрано — ставило хоста на паузу, пока его обелиск лежал не поднятым (часы и так стоят до подбора)
+                else if (!OwnPause()) by = EntryWait(nowR, ref why);
             }
             float ts = TimeScale;
             if (by == null) CatchUpStep(ts);
-            else if (_catchUp) { _catchUp = false; }                    // пауза из-за друга — ускорение не нужно (скорость 0 ставим ниже)
+            else if (_catchUp) { _catchUp = false; RestoreSpeedBonus(); }   // пауза из-за друга — ускорение не нужно (скорость 0 ставим ниже)
             if (by != null)
             {
                 if (!_pauseForced || _pauseWhy != why)
                 {
                     if (!_pauseForced) _pauseSavedScale = _catchUp ? _gameScale : ts > 0 ? ts : 1;
                     _pauseForced = true; _pauseBy = by.Name; _pauseWhy = why; _pauseToastAt = 0;   // новая причина — подпись сразу
-                    _ctx.Log(why == "вход" ? $"вход: жду «{by.Name}» — ещё не вошёл в бой"
-                           : why == "старт" ? $"старт: жду «{by.Name}» ({MyClock()} с против {by.BattleClock} с)"
-                           : why == "босс" ? $"босс: жду «{by.Name}» — у него ещё бой с боссом"
-                           : why == "часы" ? $"часы: мои впереди «{by.Name}» на {MyClock() - by.BattleClock} с — жду"
-                           : why == "к боссу" ? $"к боссу: жду «{by.Name}» ({MyClock()} с против {by.BattleClock} с), чтобы босс-волна началась у всех вместе"
-                           : $"общая пауза: «{by.Name}» выбирает умение");
+                    _ctx.Log(why == "вход" ? $"вход: жду «{by.Name}» — ещё не вошёл в бой" : $"общая пауза: «{by.Name}» выбирает умение");
                 }
                 // игра у себя сняла свою паузу (закрыли окно выбора) — запомнить её скорость и снова остановить
                 if (ts > 0) { if (!OwnPause()) _pauseSavedScale = ts; TimeScale = 0; }
@@ -127,31 +121,27 @@ namespace MagicSurvivalCoop
                 if (!OwnPause() && now >= _pauseToastAt)
                 {
                     _pauseToastAt = now + 3;
-                    _ctx.Toast(why == "вход" ? $"Ждём «{by.Name}» — ещё не в бою…"
-                             : why == "старт" ? $"Ждём «{by.Name}»…"
-                             : why == "босс" ? $"«{by.Name}» добивает босса…"
-                             : why == "часы" ? $"Ждём «{by.Name}» (часы)…"
-                             : why == "к боссу" ? $"Ждём «{by.Name}» перед боссом…"
-                             : $"Пауза: «{by.Name}» выбирает умение", 3);
+                    _ctx.Toast(why == "вход" ? $"Ждём «{by.Name}» — ещё не в бою…" : $"Пауза: «{by.Name}» выбирает умение", 3);
                 }
                 return;
             }
             if (!_pauseForced) return;
             _pauseForced = false;
             if (!OwnPause() && ts == 0) TimeScale = _pauseSavedScale;   // своё окно выбора открыто — скоростью управляет игра
-            _ctx.Log(_pauseWhy == "вход" ? $"вход: все вошли в бой" : _pauseWhy == "старт" || _pauseWhy == "часы" || _pauseWhy == "к боссу" ? $"{_pauseWhy}: «{_pauseBy}» догнал" : _pauseWhy == "босс" ? $"босс: «{_pauseBy}» закончил бой с боссом" : $"общая пауза: «{_pauseBy}» продолжил");
+            _ctx.Log(_pauseWhy == "вход" ? $"вход: все вошли в бой" : $"общая пауза: «{_pauseBy}» продолжил");
             _pauseWhy = null;
         }
 
         /// <summary>
-        /// Отставшие часы — догнать ускорением, а не паузой у того, кто впереди (1.6.5: паузы «Синхронизация часов» раз в
-        /// 10–15 с раздражали; часы расходятся на задержку общей паузы — 0,2–0,5 с за окно выбора — и на замедления игры у
-        /// одного игрока). Наши часы отстают от самых быстрых часов друга на 2 с и больше, игра идёт с обычной скоростью 1 —
-        /// ставим 1,25, пока не догоним. Свою скорость игра поменяла (замедление, пауза) — не трогаем.
+        /// Отставшие часы — догнать ускорением, а не паузой у того, кто впереди (1.6.5; с 1.6.99 пауз из-за часов нет совсем:
+        /// раньше ждал при разнице от 8 с, в первые 40 с боя и перед боссом). Часы расходятся на задержку общей паузы — 0,2–0,5 с
+        /// за окно выбора — и на замедления игры у одного игрока. Наши часы отстают от самых быстрых часов друга на 2 с и больше —
+        /// ускоряем ×1,25, от 4 с — ×1,5, от 8 с — ×2, пока не догоним. За 30 с до босс-волны — уже с 1 с и ступенью выше,
+        /// чтобы волна началась у всех почти вместе. Паузу (скорость 0) не трогаем. Ускоряем через бонус скорости игры
+        /// (SetSpeedBonus); нет его — прямо скоростью.
         /// </summary>
         private void CatchUpStep(float ts)
         {
-            const float Fast = 1.25f;
             bool want = false;
             if (_inRun && SharedPauseOn && !OwnPause() && !_pauseForced && MyBossWave() == 0)
             {
@@ -163,17 +153,19 @@ namespace MagicSurvivalCoop
                 {
                     int behindBy = ahead.BattleClock - mine;
                     _catchBehind = behindBy;
-                    want = _catchUp ? behindBy >= 1 : behindBy >= 2;
-                    if (want && !_catchUp) { _catchUpBy = ahead.Name; _catchUps++; if (_catchUps <= 10) _ctx.Log($"часы: отстаю от «{ahead.Name}» на {behindBy} с — ускоряю до ×{Fast}"); }
+                    _catchNearBoss = BossEvery - mine % BossEvery <= NearBoss;
+                    want = behindBy >= (_catchUp || _catchNearBoss ? 1 : 2);
+                    if (want && !_catchUp) { _catchUpBy = ahead.Name; _catchUps++; if (_catchUps <= 10) _ctx.Log($"часы: отстаю от «{ahead.Name}» на {behindBy} с — ускоряю до ×{CatchFactor()}{(_catchNearBoss ? " (скоро босс)" : "")}"); }
                 }
             }
             // 1.6.7: ускоряем от текущей скорости игры (у друга она часто 0,5–0,8 — 1.6.5 ускорял только при 1 и почти не догонял).
-            // Скорость, которую поставила игра, — _gameScale; ставим _gameScale × 1,25. Игра поменяла скорость сама (не наше
+            // Скорость, которую поставила игра, — _gameScale; ставим _gameScale × множитель. Игра поменяла скорость сама (не наше
             // значение) — запоминаем её новую и ускоряем уже от неё. Паузу (0) не трогаем.
             if (want && ts > 0)
             {
+                if (SetSpeedBonus(CatchFactor())) { _catchUp = true; _catchSet = -1; return; }
                 if (!_catchUp || Math.Abs(ts - _catchSet) > 0.001f) _gameScale = ts;
-                _catchSet = _gameScale * (_catchBehind >= 4 ? 1.5f : Fast);
+                _catchSet = _gameScale * CatchFactor();
                 if (Math.Abs(ts - _catchSet) > 0.001f) TimeScale = _catchSet;
                 _catchUp = true;
                 return;
@@ -181,38 +173,52 @@ namespace MagicSurvivalCoop
             if (_catchUp && !want)
             {
                 _catchUp = false;
+                RestoreSpeedBonus();
                 if (Math.Abs(TimeScale - _catchSet) < 0.001f) TimeScale = _gameScale;
                 if (_catchUps <= 10 && !_pauseForced && !OwnPause()) _ctx.Log($"часы: догнал «{_catchUpBy}»");
             }
         }
+        private static readonly float[] CatchFactors = { 1.25f, 1.5f, 2f };
+        private float CatchFactor()
+        {
+            int level = _catchBehind >= 8 ? 2 : _catchBehind >= 4 ? 1 : 0;
+            return CatchFactors[Math.Min(2, level + (_catchNearBoss ? 1 : 0))];
+        }
+        private const int NearBoss = 30, BossEvery = 180;
+        private bool _catchNearBoss;
+
+        // Скорость боя игра пересчитывает в каждом C_Battle_Manager.Update: ApplyTimeScale = Time.timeScale = k × TimeScaleBonus
+        // (статическое поле менеджера), k = 0,1 × округлённое число от частоты кадров, от 0,01 до 1 (libil2cpp, 30.10): при низком
+        // FPS игра замедляет время — потому часы гостя на слабом телефоне и отстают (Pixel 3a: k 0,5–0,8, у хоста 1). Запись мода
+        // в timeScale стиралась в том же кадре (до 1.6.100 ускорение часы почти не догоняло). Ускоряем бонусом и на время догона
+        // снимаем замедление: бонус = исходный × factor / k, не больше ×MaxBonus. k меняется почти каждый кадр — берём среднее
+        // (по последнему кадру скорость гостя прыгала 0,2–4,7: телефоны 30.10).
+        private const float MaxBonus = 4;
+        private object _bonusMgr;
+        private float _bonusBase, _bonusSet, _kAvg;
+        /// <summary>Бонус скорости под итоговую скорость × factor. Ложь — бонуса нет (тесты): ускорять прямо скоростью.</summary>
+        private bool SetSpeedBonus(float factor)
+        {
+            var mgr = _battleMgr;
+            if (mgr == null || !(GetAny(mgr, "TimeScaleBonus") is float cur)) return false;
+            if (_bonusMgr == null || Math.Abs(cur - _bonusSet) > 0.001f) _bonusBase = cur;   // игра поменяла бонус сама — ускоряем от нового
+            _bonusMgr = mgr;
+            float k = cur > 0 && GetAny(mgr, "ApplyTimeScale") is float applied ? applied / cur : 1;   // с бонусом прошлого кадра
+            if (k < 0.1f || k > 1) k = 1;
+            _kAvg = _kAvg <= 0 ? k : _kAvg + 0.2f * (k - _kAvg);
+            _bonusSet = _bonusBase * Math.Min(MaxBonus, factor / _kAvg);
+            if (Math.Abs(cur - _bonusSet) > 0.001f) SetMember(mgr, "TimeScaleBonus", _bonusSet);
+            return true;
+        }
+        /// <summary>Вернуть бонус скорости, если его с нашего значения не меняла игра. Повторно — ничего не делает.</summary>
+        private void RestoreSpeedBonus()
+        {
+            if (_bonusMgr == null) return;
+            try { if (GetAny(_bonusMgr, "TimeScaleBonus") is float cur && Math.Abs(cur - _bonusSet) < 0.001f) SetMember(_bonusMgr, "TimeScaleBonus", _bonusBase); } catch { }
+            _bonusMgr = null; _kAvg = 0;
+        }
         private float _gameScale = 1, _catchSet;
         private int _catchBehind;
-        /// <summary>
-        /// Старт боя (1.6.8): кто вошёл в бой раньше, ждёт, пока часы друга не догонят (наблюдение 24.10: друг вошёл на 5–6 с
-        /// позже, и ускорение ×1,25 с паузами на выбор умения этого не догоняло). Только в первые 40 с боя и не дольше 20 с.
-        /// </summary>
-        /// <summary>
-        /// 1.6.31: последние 10 с перед босс-волной (3:00, 6:00, …) тот, кто впереди, ждёт отставших — босс-волна (и её вступление
-        /// ~40 с) начинается у всех вместе. Иначе гость, отставший на полминуты (телефоны 24.10), после обелиска хоста ещё столько же
-        /// ждал конца своего вступления. Не дольше 60 с подряд.
-        /// </summary>
-        private Partner BossApproachWait(double nowR, ref string why)
-        {
-            int mine = MyClock();
-            if (mine < 0 || MyBossWave() != 0) { _bossApproachSince = 0; return null; }
-            int toBoss = BossEvery - mine % BossEvery;
-            if (toBoss > 10) { _bossApproachSince = 0; return null; }
-            if (_bossApproachSince > 0 && nowR - _bossApproachSince > 60) return null;
-            var late = _partners.Values.Where(p => p.Battle && !p.Dead && p.Hp > 0 && !p.BossWave && p.BattleClock >= 0 && nowR - p.StateReal < 1.5 && mine - p.BattleClock >= 1)
-                                       .OrderBy(p => p.BattleClock).FirstOrDefault();
-            if (late == null) { if (_pauseWhy != "к боссу") _bossApproachSince = 0; return null; }
-            if (_bossApproachSince <= 0) _bossApproachSince = nowR;
-            why = "к боссу";
-            return late;
-        }
-        private const int BossEvery = 180;
-        private double _bossApproachSince;
-
         /// <summary>
         /// 1.6.45: вход в бой — пока кто-то из комнаты ещё не в бою (меню, выбор героя, загрузка), вошедший стоит на паузе: бой
         /// у всех начинается вместе. Друг без свежего состояния (3 с — связь пропала) не держит. Все вошли или прошло
@@ -225,7 +231,6 @@ namespace MagicSurvivalCoop
             if (late == null || nowR - _battleStartSec > EntryWaitMax)
             {
                 _entryWaitDone = true;
-                if (_pauseWhy == "вход") _entryDoneSec = nowR;   // окно «старт» сдвигаем, только если правда ждали
                 if (late != null) _ctx.Log($"вход: «{late.Name}» не вошёл в бой за {EntryWaitMax} с — дальше без него");
                 return null;
             }
@@ -234,60 +239,6 @@ namespace MagicSurvivalCoop
         }
         private const double EntryWaitMax = 120;
         private bool _entryWaitDone;
-        private double _entryDoneSec;
-
-        private Partner StartWait(double nowR, ref string why)
-        {
-            int mine = MyClock();
-            if (mine < 0 || mine > 40 || nowR - (_entryDoneSec > 0 ? Math.Max(_battleStartSec, _entryDoneSec) : _battleStartSec) > 60) return null;   // ждали входа — окно от конца ожидания
-            if (_startWaitSince > 0 && nowR - _startWaitSince > 20) return null;
-            var late = _partners.Values.Where(p => p.Battle && !p.Dead && p.BattleClock >= 0 && nowR - p.StateReal < 1.5 && mine - p.BattleClock >= (_pauseWhy == "старт" ? 1 : 2))
-                                       .OrderBy(p => p.BattleClock).FirstOrDefault();
-            if (late == null) return null;
-            if (_startWaitSince <= 0) _startWaitSince = nowR;
-            why = "старт";
-            return late;
-        }
-        private double _startWaitSince;
-
-        /// <summary>
-        /// 1.6.14: босс-волна у меня кончилась (поднял обелиск — часы пошли), а у друга ещё идёт (его часы стоят на 3:00, пока он
-        /// не поднимет свой обелиск) — жду, иначе убегаю вперёд (наблюдение 24.10: на 15 с, дальше больше). Не дольше 60 с.
-        /// </summary>
-        private Partner BossWait(double nowR, ref string why)
-        {
-            if (MyBossWave() != 0) { _bossWaitSince = 0; return null; }
-            // 1.6.15: ждём, только если свой бой с боссом мы уже закончили (смена области прошла), а друг — нет. 1.6.14 ждал и в
-            // начале босс-волны: у хоста она началась раньше, друг вставал «ждать», его часы не доходили до 3:00 — взаимная блокировка
-            int myAc = MyAreaChange();
-            var p = _partners.Values.FirstOrDefault(x => x.BossWave && x.Battle && !x.Dead && x.Hp > 0 && nowR - x.StateReal < 1.5
-                                                         && myAc >= 0 && x.AreaChange >= 0 && myAc > x.AreaChange);
-            if (p == null) { _bossWaitSince = 0; return null; }
-            if (_bossWaitSince <= 0) _bossWaitSince = nowR;
-            if (nowR - _bossWaitSince > 60) return null;
-            why = "босс";
-            return p;
-        }
-        private double _bossWaitSince;
-
-        /// <summary>
-        /// 1.6.14: большое расхождение часов (от 8 с — у друга часто замедлена игра: артефакты, умения, и ускорения ×1,25 от его
-        /// скорости не хватает) — тот, кто впереди, ждёт, пока разница не станет 2 с. Редко; мелкое — догоняющее ускорение.
-        /// </summary>
-        private Partner GapWait(double nowR, ref string why)
-        {
-            int mine = MyClock();
-            if (mine < 0 || MyBossWave() != 0) return null;
-            if (_gapWaitSince > 0 && nowR - _gapWaitSince > 30) { if (nowR - _gapWaitSince > 90) _gapWaitSince = 0; return null; }   // не дольше 30 с подряд
-            var late = _partners.Values.Where(p => p.Battle && !p.Dead && p.Hp > 0 && !p.BossWave && p.BattleClock >= 0 && nowR - p.StateReal < 1.5
-                                                   && mine - p.BattleClock >= (_pauseWhy == "часы" ? 3 : 8))
-                                       .OrderBy(p => p.BattleClock).FirstOrDefault();
-            if (late == null) { if (_pauseWhy != "часы") _gapWaitSince = 0; return null; }
-            if (_gapWaitSince <= 0) _gapWaitSince = nowR;
-            why = "часы";
-            return late;
-        }
-        private double _gapWaitSince;
 
         private bool _catchUp;
         private string _catchUpBy;
@@ -301,7 +252,7 @@ namespace MagicSurvivalCoop
         /// <summary>Снять всё, что мод сделал со скоростью игры: паузу из-за друга и догоняющее ускорение. Повторно — ничего не делает.</summary>
         private void ReleaseSharedPause()
         {
-            _startWaitSince = 0; _bossWaitSince = 0; _gapWaitSince = 0;
+            RestoreSpeedBonus();
             if (_catchUp)
             {
                 _catchUp = false;
