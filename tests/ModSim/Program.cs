@@ -407,6 +407,7 @@ Console.WriteLine("2и. общая пауза: друг выбирает уме�
     var sess = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session");
     sess.GetField("OwnPauseOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, (Func<ModContext, bool>)(c => own.Contains(c)));
     void Frames(int n) { for (int fr = 0; fr < n; fr++) { A.Call("FrameStep"); A.Tick(); B.Tick(); B.Call("FrameStep"); Thread.Sleep(16); } }
+    void FramesUntil(Func<bool> done, int max = 300) { for (int fr = 0; fr < max && !done(); fr++) Frames(1); }   // медленный CI: ждать условие, а не число кадров
     Time.timeScale = 1;
     A.Set("_battleMgr", new FakeManager { Owner = A }); B.Set("_battleMgr", new FakeManager { Owner = B });   // часы равны — ждать некому
     Frames(10);
@@ -453,9 +454,9 @@ Console.WriteLine("2и. общая пауза: друг выбирает уме�
         A.Set("_battleMgr", am3); B.Set("_battleMgr", bm3); Time.timeScale = 1;
         Frames(15); Time.timeScale = 1;                                      // в тесте скорость одна на двоих: пока часы менялись, ускорялись оба
         bm3.Time_Sec = 3;                                                    // друг позади на 5 с
-        Frames(20);
+        FramesUntil(() => (bool)B.Get("_catchUp") && Math.Abs(Time.timeScale - 1.5f) < 0.01f);
         Check(!(bool)A.Get("_pauseForced") && (bool)B.Get("_catchUp") && Math.Abs(Time.timeScale - 1.5f) < 0.01f, $"старт: хост впереди на 5 с — хост не на паузе, друг ускоряется ×1,5: {Time.timeScale}");
-        bm3.Time_Sec = 8; Frames(20);
+        bm3.Time_Sec = 8; FramesUntil(() => !(bool)B.Get("_catchUp"));
         Check(!(bool)B.Get("_catchUp") && Time.timeScale == 1, "друг догнал — обычная скорость");
     }
     {   // в игре скорость боя = замедление × TimeScaleBonus (пересчёт каждый кадр) — ускоряем бонусом, timeScale не трогаем
@@ -463,14 +464,14 @@ Console.WriteLine("2и. общая пауза: друг выбирает уме�
         BonusManager.TimeScaleBonus = 1.18f;
         A.Set("_battleMgr", am6); B.Set("_battleMgr", bm6); Time.timeScale = 1;
         Frames(15); Time.timeScale = 1;
-        bm6.Time_Sec = 10; Frames(20);
+        bm6.Time_Sec = 10; FramesUntil(() => Math.Abs(BonusManager.TimeScaleBonus - 2.36f) < 0.01f);
         Check((bool)B.Get("_catchUp") && Math.Abs(BonusManager.TimeScaleBonus - 2.36f) < 0.01f && Time.timeScale == 1, $"отстаёт на 10 с — бонус скорости ×2: {BonusManager.TimeScaleBonus}, timeScale {Time.timeScale}");
-        bm6.K = 0.6f; Frames(40);                                              // игра замедлила время (низкий FPS)
+        bm6.K = 0.6f; FramesUntil(() => Math.Abs(BonusManager.TimeScaleBonus - 1.18f * 2 / 0.6f) < 0.02f);                                              // игра замедлила время (низкий FPS)
         Check(Math.Abs(BonusManager.TimeScaleBonus - 1.18f * 2 / 0.6f) < 0.02f, $"замедление игры 0,6 снято на время догона: бонус {BonusManager.TimeScaleBonus}");
-        bm6.K = 0.2f; Frames(40);
+        bm6.K = 0.2f; FramesUntil(() => Math.Abs(BonusManager.TimeScaleBonus - 1.18f * 4) < 0.02f);
         Check(Math.Abs(BonusManager.TimeScaleBonus - 1.18f * 4) < 0.02f, $"бонус не больше ×4: {BonusManager.TimeScaleBonus}");
         bm6.K = 0;
-        bm6.Time_Sec = 20; Frames(20);
+        bm6.Time_Sec = 20; FramesUntil(() => !(bool)B.Get("_catchUp"));
         Check(!(bool)B.Get("_catchUp") && Math.Abs(BonusManager.TimeScaleBonus - 1.18f) < 0.001f, $"догнал — бонус скорости вернулся: {BonusManager.TimeScaleBonus}");
         bm6.Time_Sec = 15; Frames(20);
         B.Call("ReleaseSharedPause");
@@ -504,9 +505,9 @@ Console.WriteLine("2и. общая пауза: друг выбирает уме�
         Check(!(bool)A.Get("_pauseForced"), "у друга ещё бой с боссом — хост не стоит на паузе (1.6.15 вставал, пока его обелиск лежал не поднятым)");
         bm4.Battle_ClearWaveON = 0; bm4.Time_Sec = 5; bm4.AreaChangeNum = 1; Frames(20);
         // большое расхождение (10 с, у друга была замедлена игра) — хост не ждёт, друг ×2; разница 2 с — ×1,25
-        am4.Time_Sec = 30; bm4.Time_Sec = 20; Frames(20);
+        am4.Time_Sec = 30; bm4.Time_Sec = 20; FramesUntil(() => Math.Abs(Time.timeScale - 2f) < 0.01f);
         Check(!(bool)A.Get("_pauseForced") && (bool)B.Get("_catchUp") && Math.Abs(Time.timeScale - 2f) < 0.01f, $"часы хоста впереди на 10 с — хост не на паузе, друг ускоряется ×2: {Time.timeScale}");
-        bm4.Time_Sec = 28; Frames(20);
+        bm4.Time_Sec = 28; FramesUntil(() => Math.Abs(Time.timeScale - 1.25f) < 0.01f);
         Check(Math.Abs(Time.timeScale - 1.25f) < 0.01f, $"разница 2 с — ускорение ×1,25: {Time.timeScale}");
         bm4.Time_Sec = 30; Frames(20);
         Time.timeScale = 1;
@@ -582,6 +583,7 @@ Console.WriteLine("7. выключение мода посреди боя (об�
     foreach (var p in new[] { H, G }) { p.Ctx.Set["port"] = 28820; p.Ctx.Set["world"] = 1; }
     void T(int ms) { for (int t = 0; t < ms / 50; t++) { H.Tick(); G.Tick(); Thread.Sleep(50); } }
     void F(int n) { for (int fr = 0; fr < n; fr++) { H.Call("FrameStep"); H.Tick(); G.Tick(); G.Call("FrameStep"); Thread.Sleep(16); } }
+    void FUntil(Func<bool> done, int max = 300) { for (int fr = 0; fr < max && !done(); fr++) F(1); }
     G.Call("Join"); T(800);                                              // гость раньше хоста: ждёт, комнату не создаёт
     H.Call("Host");
     Check(((string)H.Get("_notice") ?? "").Contains("Создаю"), $"до ответа сервера «Игра создана» не показано: «{H.Get("_notice")}»");
@@ -601,11 +603,11 @@ Console.WriteLine("7. выключение мода посреди боя (об�
     Check((bool)G.Get("_worldActive") && gm.EnemyCreateNum == 0 && pups.Count == 1, $"у гостя общие враги: свой спавн погашен, копий {pups.Count}");
     {   // перед боссом (за 30 с) отстающий ускоряется ступенью выше и уже с 1 с; тот, кто впереди, не ждёт
         hm.Time_Min = 2; hm.Time_Sec = 55; gm.Time_Min = 2; gm.Time_Sec = 50; hm.Battle_ClearWaveON = gm.Battle_ClearWaveON = 0;
-        F(30);
+        FUntil(() => Math.Abs(Time.timeScale - 2f) < 0.01f);
         Check(!(bool)H.Get("_pauseForced") && (bool)G.Get("_catchUp") && Math.Abs(Time.timeScale - 2f) < 0.01f, $"хост на 2:55, гость на 2:50 — хост не ждёт, гость ускоряется ×2: {Time.timeScale}");
-        gm.Time_Sec = 54; F(30);
+        gm.Time_Sec = 54; FUntil(() => Math.Abs(Time.timeScale - 1.5f) < 0.01f);
         Check(Math.Abs(Time.timeScale - 1.5f) < 0.01f, $"перед боссом отстаёт на 1 с — всё ещё ×1,5: {Time.timeScale}");
-        gm.Time_Sec = 55; F(30);
+        gm.Time_Sec = 55; FUntil(() => !(bool)G.Get("_catchUp"));
         Check(!(bool)G.Get("_catchUp"), "гость догнал — обычная скорость");
         Time.timeScale = 1;
     }
@@ -664,6 +666,7 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         G.Set("_hostHadBoss", false); G.Set("_treasureRewards", 0);         // как в начале нового боя (ResetClock): боссы прошлых сценариев не в счёт
         var ht = new FakeTreasure(); var gt = new FakeTreasure(); var gam = new FakeArtifactManager { Battle = gm }; var mana = new FakeItem();
         void Run(double sec) { var sw = System.Diagnostics.Stopwatch.StartNew(); while (sw.Elapsed.TotalSeconds < sec) F(5); }   // поиск — раз в 1 с
+        void Until(Func<bool> done, double max = 10) { var sw = System.Diagnostics.Stopwatch.StartNew(); while (sw.Elapsed.TotalSeconds < max && !done()) F(5); }
         sess.GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, (Func<ModContext, string, List<object>>)((ctx, type) =>
         {
             return type == "C_Battle_Item_TreasureBox" ? new List<object> { ctx == H.Ctx ? ht : gt }
@@ -672,11 +675,11 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         }));
         sess.GetField("TypeOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, (Func<string, Type>)(n => n == "Z_Database" ? typeof(Z_Database) : null));
         hm.ApplyObeliskON = gm.ApplyObeliskON = 1;
-        Run(2.5);
+        Until(() => gt.Destroyed && (int)G.Get("_hostObelisk") == 1);
         Check(gt.Destroyed && !ht.Destroyed, "особый обелиск у гостя убран, у хоста лежит");
         int areas0 = gm.AreaChanges;
         hm.ApplyObeliskON = 0;                                               // хост поднял
-        Run(2.5);
+        Until(() => gam.Created == 1);
         Check(gam.Created == 1, $"хост поднял особый обелиск — у гостя выбор артефакта ({gam.Created})");
         Check(Z_Database.ArtifactType == 9 && gm.AreaChanges == areas0 + 1, $"артефакты вида 9 ({Z_Database.ArtifactType}), область сменилась один раз ({gm.AreaChanges - areas0})");
         Check(mana.Pulled == 0, "мана к гостю не притягивается (у хоста особый обелиск её не притягивает)");
@@ -684,10 +687,10 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         Check(gam.Created == 1 && gt.DestroyCalls == 1, "выбор у гостя и уборка его обелиска — по одному разу");
         // второй обелиск — уже обычный, после босса (на Terra босс в 2:30): легендарные артефакты и притянутая мана
         hm.Time_Min = gm.Time_Min = 2; hm.Time_Sec = gm.Time_Sec = 30;
-        hm.Battle_ClearWaveON = gm.Battle_ClearWaveON = 1; Run(1);
-        hm.Battle_ClearWaveON = 0; hm.ApplyObeliskON = gm.ApplyObeliskON = 1; Run(1);
+        hm.Battle_ClearWaveON = gm.Battle_ClearWaveON = 1; Until(() => (bool)G.Get("_hostHadBoss"));
+        hm.Battle_ClearWaveON = 0; hm.ApplyObeliskON = gm.ApplyObeliskON = 1; Until(() => (int)G.Get("_hostObelisk") == 1);
         hm.ApplyObeliskON = 0; hm.Time_Sec = 31;                 // хост поднял обелиск после босса
-        Run(2.5);
+        Until(() => gam.Created == 2 && mana.Pulled == 1);
         Check(gam.Created == 2 && Z_Database.ArtifactType == 10 && mana.Pulled == 1,
               $"второй обелиск (после босса в 2:30) — обычный: артефакты вида {Z_Database.ArtifactType}, мана притянута {mana.Pulled} раз");
         sess.GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
