@@ -663,7 +663,7 @@ Console.WriteLine("7. выключение мода посреди боя (об�
     {   // особый обелиск (Terra): лежит с начала боя у каждого и ставит флаг обелиска; в общих врагах — только у хоста, хост
         // поднял — гостю выбор артефакта вида 9 (без притягивания маны, как у хоста)
         hm.Time_Min = gm.Time_Min = 0; hm.Time_Sec = gm.Time_Sec = 10;
-        G.Set("_hostHadBoss", false); G.Set("_treasureRewards", 0);         // как в начале нового боя (ResetClock): боссы прошлых сценариев не в счёт
+        G.Set("_hostHadBoss", false); G.Set("_treasureRewards", 0); gm.Battle_ClearON = 0; gm.Coroutines.Clear(); gm.Stopped.Clear();        // как в начале нового боя (ResetClock): боссы прошлых сценариев не в счёт
         var ht = new FakeTreasure(); var gt = new FakeTreasure(); var gam = new FakeArtifactManager { Battle = gm }; var mana = new FakeItem();
         void Run(double sec) { var sw = System.Diagnostics.Stopwatch.StartNew(); while (sw.Elapsed.TotalSeconds < sec) F(5); }   // поиск — раз в 1 с
         void Until(Func<bool> done, double max = 10) { var sw = System.Diagnostics.Stopwatch.StartNew(); while (sw.Elapsed.TotalSeconds < max && !done()) F(5); }
@@ -686,6 +686,7 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         Check(gam.Created == 1, $"хост поднял особый обелиск — у гостя выбор артефакта ({gam.Created})");
         Check(Z_Database.ArtifactType == 9 && gm.AreaChanges == areas0 + 1, $"артефакты вида 9 ({Z_Database.ArtifactType}), область сменилась один раз ({gm.AreaChanges - areas0})");
         Check(mana.Pulled == 0, "мана к гостю не притягивается (у хоста особый обелиск её не притягивает)");
+        Check(gm.Battle_ClearON == 0 && !gm.Coroutines.Contains("EnemyLevelUp"), "особый обелиск — флаг «босс пройден» гостю не ставится, ход боя не перезапускается");
         Run(1.5);
         Check(gam.Created == 1 && gt.DestroyCalls == 1, "выбор у гостя и уборка его обелиска — по одному разу");
         // второй обелиск — уже обычный, после босса (на Terra босс в 2:30): легендарные артефакты и притянутая мана
@@ -694,6 +695,9 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         hm.Battle_ClearWaveON = 0; hm.ApplyObeliskON = gm.ApplyObeliskON = 1; Until(() => (int)G.Get("_hostObelisk") == 1);
         hm.ApplyObeliskON = 0; hm.Time_Sec = 31;                 // хост поднял обелиск после босса
         Until(() => gam.Created == 2 && mana.Pulled == 1);
+        Check(gm.Battle_ClearON == 1, $"обычный обелиск — гостю флаг «босс пройден» (Battle_ClearON {gm.Battle_ClearON})");
+        Check(gm.Stopped.Count(n => n == "EnemyLevelUp") == 1 && gm.Coroutines.Count(n => n == "EnemyLevelUp") == 1,
+              $"обычный обелиск — у гостя EnemyLevelUp перезапущена один раз (стоп {gm.Stopped.Count(n => n == "EnemyLevelUp")}, старт {gm.Coroutines.Count(n => n == "EnemyLevelUp")}): без неё EnemyLevelNum стоит и продавца нет");
         Check(gam.Created == 2 && Z_Database.ArtifactType == 10 && mana.Pulled == 1,
               $"второй обелиск (после босса в 2:30) — обычный: артефакты вида {Z_Database.ArtifactType}, мана притянута {mana.Pulled} раз");
         sess.GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
@@ -985,10 +989,14 @@ class FakeManager
         if (name.StartsWith("Play_Armageddon")) throw new MissingMethodException(name);   // проверки Армагеддона — по таблице объектов
         Coroutines.Add(name);
     }
+    public readonly List<string> Stopped = new();
+    public void StopCoroutine(string name) => Stopped.Add(name);
+    public void StartCoroutine(System.Collections.IEnumerator e) => throw new InvalidOperationException("ждали перегрузку со string");
+    public void StopCoroutine(System.Collections.IEnumerator e) => throw new InvalidOperationException("ждали перегрузку со string");
     // как в игре (консоль на телефоне 25.10): босс-этап — часы стоят на пороге, вступление (BossWave_EnforceVar) растёт; его
     // конец при ApplyBossNum 0 заканчивает волну и кладёт обелиск. Start_AreaChange на самом пороге начинает вступление заново,
     // за порогом — часы идут
-    public int ApplyObeliskON, AreaChanges, Ends, AreaChangeID = 1; public float BossWave_EnforceVar = 1, BossWave_VisionRatio, ApplyBossGround_Size, ApplyBossGround_X, ApplyBossGround_Y, EnforceStep = 0.01f;
+    public int ApplyObeliskON, AreaChanges, Ends, AreaChangeID = 1, Battle_ClearON; public float BossWave_EnforceVar = 1, BossWave_VisionRatio, ApplyBossGround_Size, ApplyBossGround_X, ApplyBossGround_Y, EnforceStep = 0.01f;
     public GameObject Obj_BossLimitGround = new GameObject();
     bool _intro;
     public int Clock => Time_Min * 60 + Time_Sec;

@@ -202,6 +202,16 @@ namespace MagicSurvivalCoop
                 SetMember(_battleMgr, "ApplyObeliskON", 0);
             }
             catch (Exception e) { _ctx.Log("обелиск: снять волну: " + Inner(e).Message); }
+            // EnemyLevelUp (ход боя: рост EnemyLevelNum, продавец артефактов, сундуки) на босс-волне заканчивается, а после неё игра
+            // запускает её снова со сменой области (Play_AreaChange). У гостя этого не было: с первого босса EnemyLevelNum стоял на
+            // 150, и продавец, который у хоста появлялся в 4:16, у гостя не появлялся (телефоны, 31.10). Флаг «босс пройден» — как
+            // у хоста после Play_BossWaveEffect_End, которой у гостя нет
+            if (!special)
+            {
+                try { SetMember(_battleMgr, "Battle_ClearON", 1); } catch (Exception e) { _ctx.Log("обелиск: Battle_ClearON: " + Inner(e).Message); }
+                try { CallByString(_battleMgr, "StopCoroutine", "EnemyLevelUp"); CallByString(_battleMgr, "StartCoroutine", "EnemyLevelUp"); }
+                catch (Exception e) { _ctx.Log("обелиск: EnemyLevelUp: " + Inner(e).Message); }
+            }
             HideBossWaveUi();
             if (!reward)
             {

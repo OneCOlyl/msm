@@ -1767,6 +1767,14 @@ namespace MagicSurvivalCoop
             return m.Invoke(o, args);
         }
 
+        /// <summary>Перегрузка с одним string (у StartCoroutine/StopCoroutine есть и IEnumerator — CallMethod взял бы любую).</summary>
+        private static object CallByString(object o, string name, string arg)
+        {
+            var m = o.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { typeof(string) }, null)
+                    ?? throw new MissingMethodException(o.GetType().Name + "." + name + "(string)");
+            return m.Invoke(o, new object[] { arg });
+        }
+
         private static void SetMember(object o, string name, object value)
         {
             if (o == null) return;
