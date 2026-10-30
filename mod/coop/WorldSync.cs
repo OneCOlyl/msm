@@ -28,8 +28,13 @@ namespace MagicSurvivalCoop
         // Нужно в среднем ~20 копий/с, 2 за кадр при 37 кадрах/с — до 74/с: волна догоняется за пару секунд, без рывков
         private const int MaxPuppetSpawnsPerFrame = 2;
         private const double PuppetSpawnBudgetMs = 2.5;
+        private const int MaxPuppetSpawnsPerFrameFast = 4;
+        private const double PuppetSpawnBudgetMsFast = 5;
         private const int MaxPuppetKillsPerFrame = 4;
         private const double PuppetKillBudgetMs = 2;
+        private const int PuppetKillManyQueue = 20;
+        private const int MaxPuppetKillsPerFrameMany = 10;
+        private const double PuppetKillBudgetMsMany = 5;
         private readonly Queue<Puppet> _dying = new Queue<Puppet>();
 
         private ICombat _combat;
@@ -60,6 +65,7 @@ namespace MagicSurvivalCoop
             public object Obj, Key;
             public Transform Tr;
             public bool LocalDead;
+            public bool Placed;                            // мод уже ставил копию на место (после создания)
             public double DeadAt;                          // погибла у гостя (Армагеддон и т.п.) — когда; > 2 с и жива у хоста — создать заново
             public readonly List<(double t, double x, double y)> Track = new List<(double, double, double)>();
         }
@@ -82,7 +88,7 @@ namespace MagicSurvivalCoop
         private double _enSnapAt = -100, _sweepAt;
         private bool _worldActive, _spawningPuppet;
         private object _justCreated;
-        private int _wCreated, _wKilled, _wLocalDead, _wDestroyed, _wFails, _wMax, _wRespawned, _wSpecial;
+        private int _wCreated, _wKilled, _wLocalDead, _wDestroyed, _wFails, _wMax, _wRespawned, _wSpecial, _wReused;
         // копии у гостя неуязвимы: умирают, только когда умер враг у хоста (1.5.4). Unit_Hp — float: у 1e9 шаг 64 единицы и мелкий
         // урон терялся бы; у 1e6 — 0,06, а больше миллиона за 0,1 с не бьёт никто
         private const double PuppetHp = 1e6;
@@ -151,15 +157,15 @@ namespace MagicSurvivalCoop
         {
             _coSeen.Clear();
             _enIds.Clear(); _enIdsNext.Clear(); _enById.Clear(); _dmgIn = 0; _dmgInMiss = 0; _dmgOut.Clear(); _dmgSent = 0; _dmgFlushAt = 0; _enSentAt = -1; _enSentMax = 0; _enHostLogged = false;
-            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _savedSpawn = null;
+            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _aliveByKey.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _viewLogAt = 0; _savedSpawn = null;
             _worldHost = null; _enSnap = 0; _enSnapAt = -100; _worldActive = false; _spawningPuppet = false; _justCreated = null;
-            _wCreated = _wKilled = _wLocalDead = _wDestroyed = _wFails = _wMax = _wRespawned = _wSpecial = 0;
+            _wCreated = _wKilled = _wLocalDead = _wDestroyed = _wFails = _wMax = _wRespawned = _wSpecial = _wReused = 0;
             _enVars.Clear(); _enVarsNext.Clear();
             _toForward.Clear(); _forwardKeys.Clear(); _spawnOut.Clear(); _sweptTypes.Clear(); _specialSpawns.Clear(); _specialLogs = 0;
             _dumpSpecial = _dumpNormal = _specialCopy = null; _dumped = false; _specialCopyAt = 0;
             _held.Clear(); _heldKeys.Clear(); _heldNew.Clear(); _heldKilled = 0; _spawnSent = _spawnIn = _spawnInLogs = 0;
             _createMsMax = _createMsSum = _stepMsMax = 0; _createN = 0;
-            _mgrAtFirst = null; _mgrFailLogged = false; _poolLogged = false; _poolMoved = 0;
+            _mgrAtFirst = null; _mgrFailLogged = false; _poolLogged = false; _poolMoved = 0; _bossPoolEst = -1;
             ResetGather(); _gatherTimes = 0;
             _away = _ownSpawn = false; _localKeys.Clear(); _awayTimes = _localSpawned = _onlyBossCleared = _awayLogSpawned = _spawnRestarts = 0; _awayLogAt = 0; _spawnStopped = false; _spawnRestartAt = 0;
             _spawnOrigin = OriginNormal; _ownSpecialSwept = _ownTransitionSent = _wUpgraded = _trLogs = _trAliveLogs = _peaceRemoved = 0; _destroyTried.Clear(); _commonChecks = 0; _hostMarked.Clear(); _hostMarkedLast.Clear(); _forwardKill.Clear(); Array.Clear(_forwardKillHow, 0, _forwardKillHow.Length); _toUpgrade.Clear(); _originDumped.Clear(); _originDumps.Clear(); _guestVisDumped = false;
@@ -200,12 +206,21 @@ namespace MagicSurvivalCoop
                 _ctx.Log($"общие враги: отправляю своих врагов друзьям; мой враг — размер {GetMember(r0, "UnitApply_UnitSize")}, масштаб {GetMember(GetMember(r0, "transform"), "localScale")}, спрайт-масштаб {GetMember(GetMember(r0, "Transform_ObjUnitSprite"), "localScale")}");
             }
             double sx = _startX ?? 0, sy = _startY ?? 0;
+            bool nearest = alive.Count > MaxSentEnemies && OrderByGuests(alive, sx, sy);
+            int total = nearest ? _sendOrder.Count : alive.Count;
             int n = 0;
             _enById.Clear();
             w.WriteStartArray("en");
-            foreach (var e in alive)                 // список уже только из живых — e.Alive повторил бы те же вызовы игры
+            for (int i = 0; i < total; i++)          // список уже только из живых — e.Alive повторил бы те же вызовы игры
             {
-                if (n >= MaxSentEnemies) break;
+                var e = nearest ? alive[_sendOrder[i].i] : alive[i];
+                if (n >= MaxSentEnemies)
+                {
+                    // не попавшим в отправку — тот же номер: иначе в следующий раз у гостя убьётся старая копия и создастся новая
+                    var k2 = KeyOf(e.Raw);
+                    if (k2 != null && _enIds.TryGetValue(k2, out var v2)) _enIdsNext[k2] = v2;
+                    continue;
+                }
                 var raw = e.Raw; var key = KeyOf(raw);
                 if (key == null) continue;
                 if (!_enIds.TryGetValue(key, out var v))
@@ -218,7 +233,7 @@ namespace MagicSurvivalCoop
                 _enIdsNext[key] = v;
                 _enById[v.id] = e;
                 if (_specialSpawns.Count > 0) MarkSpecialSent(key);
-                var p = e.Pos;
+                var p = nearest ? _sendOrder[i].pos : e.Pos;
                 w.WriteStartArray();
                 w.WriteNumberValue(v.id); w.WriteNumberValue(v.type);
                 w.WriteNumberValue((int)Math.Round((p.x - sx) * 100)); w.WriteNumberValue((int)Math.Round((p.y - sy) * 100));
@@ -231,6 +246,30 @@ namespace MagicSurvivalCoop
             _enIdsNext.Clear();
             if (n < MaxSentEnemies) { (_enVars, _enVarsNext) = (_enVarsNext, _enVars); _enVarsNext.Clear(); }   // мёртвых — забыть
             if (n > _enSentMax) _enSentMax = n;
+        }
+
+        /// <summary>
+        /// Врагов больше MaxSentEnemies — отправить ближайших к друзьям (раньше — первые по списку игры: у гостя рядом с ним
+        /// могло не быть врагов, которые у хоста видны). Ложь — друзей с позицией нет, порядок прежний.
+        /// </summary>
+        private readonly List<(int i, double d, Vector3 pos)> _sendOrder = new List<(int, double, Vector3)>();
+        private readonly List<(double x, double y)> _guestPts = new List<(double, double)>();
+        private bool OrderByGuests(IReadOnlyList<IEnemy> alive, double sx, double sy)
+        {
+            _guestPts.Clear();
+            foreach (var p in _partners.Values) if (p.HasState && p.Battle) _guestPts.Add((sx + p.RelX, sy + p.RelY));
+            if (_guestPts.Count == 0) return false;
+            _sendOrder.Clear();
+            for (int i = 0; i < alive.Count; i++)
+            {
+                Vector3 pos;
+                try { pos = alive[i].Pos; } catch { continue; }
+                double d = double.MaxValue;
+                foreach (var g in _guestPts) { double dx = pos.x - g.x, dy = pos.y - g.y, dd = dx * dx + dy * dy; if (dd < d) d = dd; }
+                _sendOrder.Add((i, d, pos));
+            }
+            _sendOrder.Sort((a, b) => a.d.CompareTo(b.d));
+            return true;
         }
 
         // ============================================================ гость: приём
@@ -788,8 +827,7 @@ namespace MagicSurvivalCoop
                     }
                 }
                 Sweep();
-                if (_ctx.Setting("puppetAi") > 0)                                // игра пересчитывает скорость (усиления волн) — гасим снова
-                    foreach (var pp in _puppets.Values) if (pp.Obj != null && !pp.LocalDead) try { ZeroSpeed(pp.Obj); } catch { }
+                if (hasHero) UpdateViewHalf(now, hhx, hhy);
             }
             _world.Lap(0);
             while (_toForward.Count > 0 && _toForward.Peek().at <= now)
@@ -832,6 +870,9 @@ namespace MagicSurvivalCoop
             _world.Lap(2);
             int made = 0, live = 0;
             double createMs = 0;
+            bool puppetAi = _ctx.Setting("puppetAi") > 0;
+            int waitOnScreen = 0;
+            if (!hasHero) _viewHalfX = 0;
             _worldWatch.Restart();
             _gone.Clear();
             _ctx.Mark("общие враги: перемещение копий");
@@ -847,27 +888,37 @@ namespace MagicSurvivalCoop
                 {
                     if (pp.Obj == null)
                     {
-                        // бюджет кадра: создание копии — работа самой игры (журнал 1.5.7: у гостя лагало в начале волны)
-                        if (made >= MaxPuppetSpawnsPerFrame || createMs > PuppetSpawnBudgetMs) continue;
-                        made++;
-                        _ctx.Mark($"общие враги: создание копии врага (тип {pp.Type})");
-                        double t0 = _worldWatch.Elapsed.TotalMilliseconds;
-                        bool ok = CreatePuppet(mgr, pp);
-                        double ms = _worldWatch.Elapsed.TotalMilliseconds - t0;
-                        createMs += ms; _createMsSum += ms; _createN++; if (ms > _createMsMax) _createMsMax = ms;
-                        _world.Lap(3);
-                        _ctx.Mark("общие враги: перемещение копий");
-                        if (!ok) continue;
+                        // создаём после прохода — сначала ближайших к герою (раньше — по порядку словаря: при очереди на создание
+                        // у гостя рядом с ним было меньше врагов, чем у хоста)
+                        double cd = 0;
+                        if (hasHero && PuppetPos(pp, rt, out var cx, out var cy))
+                        {
+                            double dx = ox + cx - hhx, dy = oy + cy - hhy; cd = dx * dx + dy * dy;
+                            if (_viewHalfX > 0 && Math.Abs(dx) * 1.3 < _viewHalfX && Math.Abs(dy) * 1.3 < _viewHalfY) { _viewWait++; waitOnScreen++; }
+                        }
+                        _toCreate.Add((cd, pp));
+                        continue;
                     }
-                    else if ((_worldFrame + pp.Id) % 6 == 0)
+                    // объект погиб у гостя и пул уже отдал его другой копии (смерть видна раз в 6 кадров) — им двигали бы обе
+                    if (pp.Key != null && _ownerByKey.TryGetValue(pp.Key, out var owner) && owner != pp)
                     {
-                        if (!(GetMember(pp.Obj, "Unit_IsLive") is bool alive && alive))
+                        pp.LocalDead = true; pp.DeadAt = now; _wLocalDead++; _wReused++;
+                        continue;
+                    }
+                    if ((_worldFrame + pp.Id) % 6 == 0)
+                    {
+                        ReadUnitState(pp, out bool alive, out double hp);
+                        if (!alive)
                         {
                             pp.LocalDead = true; pp.DeadAt = now; _wLocalDead++;   // погибла в обход здоровья (Армагеддон…) — подождём хоста
+                            if (_wLocalDead <= 10 && pp.Tr != null)
+                            {
+                                var dp = pp.Tr.position;
+                                _ctx.Log($"общие враги: копия {pp.Id} (тип {pp.Type}) погибла у себя — от героя ({dp.x - hhx:0.0}; {dp.y - hhy:0.0}), вдали от хоста {_away}, ставилась {pp.Placed}, здоровье {GetMember(pp.Obj, "Unit_Hp")}");
+                            }
                             continue;
                         }
                         // урон гостя: здоровье копии держим на PuppetHp — разница и есть урон (любым заклинанием гостя)
-                        double hp = Convert.ToDouble(GetMember(pp.Obj, "Unit_Hp") ?? PuppetHp);
                         if (hp < PuppetHp - 0.01)
                         {
                             _ctx.Mark("общие враги: здоровье копии");
@@ -875,18 +926,57 @@ namespace MagicSurvivalCoop
                             Invulnerable(pp.Obj);
                             _ctx.Mark("общие враги: перемещение копий");
                         }
+                        // игра пересчитывает скорость (усиления волн) — гасим снова; раньше всем копиям в одном кадре раз в 0,5 с:
+                        // 6 записей на копию, у гостя (Pixel 3a) кадр «чистки» до 240 мс
+                        if (puppetAi && (_worldFrame / 6 + pp.Id) % 5 == 0) ZeroSpeed(pp.Obj);
                         _world.Lap(4);
                     }
                     if (pp.Tr == null || !PuppetPos(pp, rt, out var x, out var y)) continue;
-                    if (pp.BackSr != null) SpecialMarksFrame(pp.MainSr, pp.BackSr, ref pp.LastSprite, pp.BackColorUse);
-                    var cur = pp.Tr.position;
-                    pp.Tr.position = new Vector3((float)(ox + x), (float)(oy + y), cur.z);
+                    // за экраном — раз в 3 кадра: перестановка — два обращения к игре на копию (Terra, 29.10: ~1 мс на 175 копий)
+                    if (_viewHalfX > 0 && Math.Abs(ox + x - hhx) * 1.3 < _viewHalfX && Math.Abs(oy + y - hhy) * 1.3 < _viewHalfY) _viewLive++;
+                    if (pp.Placed && _viewHalfX > 0 && (Math.Abs(ox + x - hhx) > _viewHalfX || Math.Abs(oy + y - hhy) > _viewHalfY) && (_worldFrame + pp.Id) % 3 != 0) { live++; continue; }
+                    PlacePuppet(pp, ox + x, oy + y);
                     live++;
                     _world.Lap(5);
                 }
                 catch (Exception e) { pp.LocalDead = true; if (++_wFails <= 5) _ctx.Log($"общие враги: копия {pp.Id}: {Inner(e).Message}"); }
             }
             _world.Lap(5);
+            // бюджет кадра: создание копии — работа самой игры (журнал 1.5.7: у гостя лагало в начале волны). На экране ждут —
+            // бюджет вдвое (Terra, 29.10: у гостя на экране 12–24 копии, ещё 25–36 ждали создания)
+            bool fast = waitOnScreen > 0;
+            if (fast) _fastFrames++;
+            int maxMade = fast ? MaxPuppetSpawnsPerFrameFast : MaxPuppetSpawnsPerFrame;
+            double budget = fast ? PuppetSpawnBudgetMsFast : PuppetSpawnBudgetMs;
+            while (_toCreate.Count > 0 && made < maxMade && createMs <= budget)
+            {
+                int best = 0;
+                for (int i = 1; i < _toCreate.Count; i++) if (_toCreate[i].d < _toCreate[best].d) best = i;
+                var pp = _toCreate[best].pp;
+                _toCreate[best] = _toCreate[_toCreate.Count - 1]; _toCreate.RemoveAt(_toCreate.Count - 1);
+                made++;
+                _ctx.Mark($"общие враги: создание копии врага (тип {pp.Type})");
+                double t0 = _worldWatch.Elapsed.TotalMilliseconds;
+                try
+                {
+                    // новая копия стоит там, где её поставила игра (обычно у героя), — на место сразу
+                    if (CreatePuppet(mgr, pp) && pp.Tr != null && PuppetPos(pp, rt, out var x, out var y)) { PlacePuppet(pp, ox + x, oy + y); live++; }
+                }
+                catch (Exception e) { pp.LocalDead = true; if (++_wFails <= 5) _ctx.Log($"общие враги: копия {pp.Id}: {Inner(e).Message}"); }
+                double ms = _worldWatch.Elapsed.TotalMilliseconds - t0;
+                createMs += ms; _createMsSum += ms; _createN++; if (ms > _createMsMax) _createMsMax = ms; _createAllMs += ms;
+            }
+            _viewWaitAll += _toCreate.Count; _viewFrames++;
+            if (now >= _viewLogAt)
+            {
+                if (_viewLogAt > 0 && _viewFrames > 0)
+                    _ctx.Log($"общие враги за 10 с (на кадр): на экране копий {(double)_viewLive / _viewFrames:0.0}, ждут создания на экране {(double)_viewWait / _viewFrames:0.0}, ждут всего {(double)_viewWaitAll / _viewFrames:0.0}, создано {_wCreated - _viewCreated0}" +
+                             $" по {_createAllMs / Math.Max(1, _wCreated - _viewCreated0):0.00} мс (пул {_createPreMs / Math.Max(1, _wCreated - _viewCreated0):0.00}, Create_UnitEnemyBoss {_createGameMs / Math.Max(1, _wCreated - _viewCreated0):0.00}, настройка {_createPostMs / Math.Max(1, _wCreated - _viewCreated0):0.00}), кадров с ускоренным созданием {_fastFrames}");
+                _viewLogAt = now + 10; _viewLive = _viewWait = _viewWaitAll = _viewFrames = _fastFrames = 0; _viewCreated0 = _wCreated; _createGameMs = _createAllMs = _createPreMs = _createPostMs = 0;
+            }
+            _toCreate.Clear();
+            _ctx.Mark("общие враги: перемещение копий");
+            _world.Lap(3);
             for (int u = 0; u < 2 && _toUpgrade.Count > 0; u++)
             {
                 var up = _toUpgrade[_toUpgrade.Count - 1]; _toUpgrade.RemoveAt(_toUpgrade.Count - 1);
@@ -903,18 +993,79 @@ namespace MagicSurvivalCoop
             if (stepMs > _stepMsMax) _stepMsMax = stepMs;
             // враг погиб у хоста — копию из списка сразу (её больше не двигаем и не создаём заново), а убиваем по очереди: смерть
             // врага — работа игры (награда, эффекты), и пачка смертей в одном кадре давала у гостя кадр до 72 мс (1.6.19, телефоны)
-            foreach (var id in _gone) { _dying.Enqueue(_puppets[id]); _puppets.Remove(id); }
+            // не созданные (бюджет создания) и уже погибшие у гостя — в очередь не ставим: они занимали места в лимите убийств,
+            // живые копии ждали за ними секундами (Terra, 29.10: в очереди 1309, живых из них ~20%)
+            foreach (var id in _gone) { var pp = _puppets[id]; _puppets.Remove(id); if (pp.Obj != null && !pp.LocalDead) _dying.Enqueue(pp); }
             if (_dying.Count > 0)
             {
                 _ctx.Mark("общие враги: убиваю копии (враг погиб у хоста)");
-                FillAliveByKey();
                 double t0 = _worldWatch.Elapsed.TotalMilliseconds;
-                for (int k = 0; k < MaxPuppetKillsPerFrame && _dying.Count > 0 && _worldWatch.Elapsed.TotalMilliseconds - t0 < PuppetKillBudgetMs; k++)
+                // очередь после массовой смерти у хоста (Армагеддон) — бюджет больше: иначе копии стояли у гостя секундами
+                bool many = _dying.Count > PuppetKillManyQueue;
+                int maxKills = many ? MaxPuppetKillsPerFrameMany : MaxPuppetKillsPerFrame;
+                double killBudget = many ? PuppetKillBudgetMsMany : PuppetKillBudgetMs;
+                for (int k = 0; k < maxKills && _dying.Count > 0 && _worldWatch.Elapsed.TotalMilliseconds - t0 < killBudget; k++)
                     KillPuppet(_dying.Dequeue());
-                _aliveByKey.Clear();
             }
             _world.Lap(6);
             _world.Count++;
+        }
+
+        private readonly List<(double d, Puppet pp)> _toCreate = new List<(double, Puppet)>();
+        private int _viewLive, _viewWait, _viewWaitAll, _viewFrames, _viewCreated0, _fastFrames;
+        private double _viewLogAt, _createGameMs, _createAllMs, _createPreMs, _createPostMs;
+        private static double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
+        // Unit_IsLive и Unit_Hp копии — по смещению полей: через GetMember это рефлексия и переход в IL2CPP на каждое чтение.
+        // Первое слово объекта IL2CPP — его класс. Объект держит обёртка pp.Obj, так что память жива и у уничтоженного Unity
+        private static readonly Dictionary<IntPtr, (int live, int hp)> UnitOffsets = new Dictionary<IntPtr, (int, int)>();
+        private static void ReadUnitState(Puppet pp, out bool alive, out double hp)
+        {
+            if (pp.Key is IntPtr p)
+            {
+                var klass = System.Runtime.InteropServices.Marshal.ReadIntPtr(p);
+                if (!UnitOffsets.TryGetValue(klass, out var o))
+                {
+                    IntPtr fl = Field(klass, "Unit_IsLive"), fh = Field(klass, "Unit_Hp");
+                    UnitOffsets[klass] = o = fl != IntPtr.Zero && fh != IntPtr.Zero ? (OffsetOf(fl), OffsetOf(fh)) : (-1, -1);
+                }
+                if (o.live >= 0)
+                {
+                    alive = System.Runtime.InteropServices.Marshal.ReadByte(p + o.live) != 0;
+                    hp = BitConverter.Int32BitsToSingle(System.Runtime.InteropServices.Marshal.ReadInt32(p + o.hp));
+                    return;
+                }
+            }
+            alive = GetMember(pp.Obj, "Unit_IsLive") is bool b && b;
+            hp = Convert.ToDouble(GetMember(pp.Obj, "Unit_Hp") ?? PuppetHp);
+        }
+
+        private static void PlacePuppet(Puppet pp, double wx, double wy)
+        {
+            if (pp.BackSr != null) SpecialMarksFrame(pp.MainSr, pp.BackSr, ref pp.LastSprite, pp.BackColorUse);
+            var cur = pp.Tr.position;
+            pp.Tr.position = new Vector3((float)wx, (float)wy, cur.z);
+            pp.Placed = true;
+        }
+
+        /// <summary>Полуразмеры экрана в единицах мира с запасом 30% — граница «копия за экраном».</summary>
+        private double _viewHalfX, _viewHalfY;
+        private bool _viewLogged;
+        private void UpdateViewHalf(double now, double hx, double hy)
+        {
+            try
+            {
+                var cam = GameCamera(now);
+                if (cam == null) { _viewHalfX = 0; return; }
+                var a = cam.WorldToScreenPoint(new Vector3((float)hx, (float)hy, 0));
+                var b = cam.WorldToScreenPoint(new Vector3((float)hx + 1, (float)hy, 0));
+                double ppu = Math.Abs(b.x - a.x);
+                if (ppu < 1e-3) { _viewHalfX = 0; return; }
+                _viewHalfX = Screen.width / 2.0 / ppu * 1.3;
+                _viewHalfY = Screen.height / 2.0 / ppu * 1.3;
+                if (!_viewLogged) { _viewLogged = true; _ctx.Log($"общие враги: граница экрана для копий ±{_viewHalfX:0.0} × ±{_viewHalfY:0.0}"); }
+            }
+            catch { _viewHalfX = 0; }
         }
 
         /// <summary>Гость дальше «worldZone» от хоста (оба — от своих точек старта) — свой спавн включён, ближе — погашен.</summary>
@@ -1144,6 +1295,7 @@ namespace MagicSurvivalCoop
         private bool CreatePuppet(object mgr, Puppet pp)
         {
             if (pp.Type < 0) { pp.LocalDead = true; return false; }
+            long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
             var bossProp = FindAny(mgr.GetType(), "ApplyBossNum")?.Prop;
             object bossNum = null;
             object commonItem = null;
@@ -1153,7 +1305,11 @@ namespace MagicSurvivalCoop
                 try { bossNum = bossProp?.GetValue(null); } catch { }
                 RefillBossPool(mgr);
                 if (pp.Special) commonItem = PutPrefabFirst(mgr, pp.Origin);  // особой копии — заготовка из пула особых (метка, обводка)
+                long g0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                _createPreMs += Ms(c0, g0);
                 CallMethod(mgr, "Create_UnitEnemyBoss", pp.Type, 1);     // синхронно создаёт обычного врага этого типа (разведка A1)
+                c0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                _createGameMs += Ms(g0, c0);
             }
             catch (Exception e) { pp.LocalDead = true; if (++_wFails <= 5) _ctx.Log($"общие враги: создать тип {pp.Type}: {Inner(e).Message}"); return false; }
             finally
@@ -1166,6 +1322,7 @@ namespace MagicSurvivalCoop
             if (obj == null)
             {
                 pp.LocalDead = true;
+                _bossPoolEst = -1;
                 if (++_wFails <= 5) _ctx.Log($"общие враги: тип {pp.Type} не создался");
                 if (!_mgrFailLogged) { _mgrFailLogged = true; _ctx.Log($"общие враги: менеджер при первой неудаче (было при первой копии → сейчас): {MgrDiff(mgr)}"); }
                 return false;
@@ -1175,10 +1332,12 @@ namespace MagicSurvivalCoop
                 _mgrAtFirst = MgrSnapshot(mgr);
                 _ctx.Log($"общие враги: копия — размер {GetMember(obj, "UnitApply_UnitSize")}, масштаб {GetMember(GetMember(obj, "transform"), "localScale")}, спрайт-масштаб до подгонки {GetMember(GetMember(obj, "Transform_ObjUnitSprite"), "localScale")}");
             }
-            pp.Obj = obj; pp.Key = KeyOf(obj); _puppetKeys.Add(pp.Key);
+            pp.Obj = obj; pp.Placed = false; pp.Key = KeyOf(obj); _puppetKeys.Add(pp.Key);
+            if (pp.Key != null) _ownerByKey[pp.Key] = pp;
             if (pp.Special) ApplySpecialLook(pp, obj);
             pp.Tr = GetMember(obj, "Transform_ObjUnit") as Transform;
             SetupPuppet(obj);
+            _createPostMs += Ms(c0, System.Diagnostics.Stopwatch.GetTimestamp());
             if (_wCreated++ == 0) _ctx.Log($"общие враги: первая копия — тип {pp.Type}, «{NameOf(obj)}», спрайт-масштаб после подгонки {GetMember(GetMember(obj, "Transform_ObjUnitSprite"), "localScale")}, здоровье {GetMember(obj, "Unit_Hp")}");
             return true;
         }
@@ -1316,36 +1475,59 @@ namespace MagicSurvivalCoop
 
         private void RefillBossPool(object mgr)
         {
+            if (_bossPoolEst >= 4) { _bossPoolEst--; return; }
             var boss = GetAny(mgr, "List_BattleUnitEnemyBoss_Empty");          // статические поля (1.5.2 искал только обычные — не находил)
             var common = GetAny(mgr, "List_BattleUnitEnemy_Empty");
             if (boss == null || common == null) { if (!_poolLogged) { _poolLogged = true; _ctx.Log("общие враги: пулов врагов нет — не перекладываю"); } return; }
-            if (Count(boss) >= 4) return;                                       // при 1 заготовке Create_UnitEnemyBoss уже не создаёт
+            int nb = Count(boss);
+            if (nb >= 4) { _bossPoolEst = nb - 1; return; }                    // при 1 заготовке Create_UnitEnemyBoss уже не создаёт
             if (boss.GetType() != common.GetType()) { if (!_poolLogged) { _poolLogged = true; _ctx.Log($"общие враги: пулы разного типа ({boss.GetType().Name} / {common.GetType().Name}) — не перекладываю"); } return; }
             int n = Count(common);
-            if (n < 20) return;
-            var item = ItemAt(common, n - 1);
-            CallMethod(common, "RemoveAt", n - 1);
-            CallMethod(boss, "Add", item);
+            if (n < 20) { _bossPoolEst = -1; return; }
             if (!_poolLogged) { _poolLogged = true; _ctx.Log($"общие враги: пул боссов пуст — переложил врага из обычного пула (там {n})"); }
-            _poolMoved++;
+            for (; nb < 8 && n >= 20; nb++, n--)
+            {
+                var item = ItemAt(common, n - 1);
+                CallMethod(common, "RemoveAt", n - 1);
+                CallMethod(boss, "Add", item);
+                _poolMoved++;
+            }
+            _bossPoolEst = nb - 1;
         }
+        // сколько заготовок в пуле боссов по нашему счёту (каждая копия берёт одну): чтение пулов — пять обращений к игре
+        // через рефлексию, раньше перед каждой копией. -1 — не знаем, прочитать
+        private int _bossPoolEst = -1;
 
         /// <summary>Враг пропал у хоста — копию убить уроном (гостю — убийство и выпадения); не вышло — убрать без награды.</summary>
-        /// <summary>Живые враги по адресу — один раз на кадр, когда есть кого убить (раньше — перебор всех врагов на каждую копию).</summary>
+        /// <summary>
+        /// Живые враги по адресу. Перестраивается, только когда нужной копии в нём нет, и не чаще раза в кадр: снимок живых
+        /// у гостя (400+ врагов) — по два обращения к игре на врага, а пока очередь убийств не пуста, он строился каждый кадр.
+        /// </summary>
         private readonly Dictionary<object, IEnemy> _aliveByKey = new Dictionary<object, IEnemy>();
-        private void FillAliveByKey()
+        private int _aliveByKeyFrame = -1;
+        private bool AliveByKey(object key, out IEnemy e)
         {
+            if (_aliveByKey.TryGetValue(key, out e)) return true;
+            if (_aliveByKeyFrame == _worldFrame) return false;
+            _aliveByKeyFrame = _worldFrame;
             _aliveByKey.Clear();
-            foreach (var e in AliveNow()) { var k = KeyOf(e.Raw); if (k != null) _aliveByKey[k] = e; }
+            foreach (var a in AliveNow()) { var k = KeyOf(a.Raw); if (k != null) _aliveByKey[k] = a; }
+            return _aliveByKey.TryGetValue(key, out e);
         }
+
+        // 1.6.95: копия в очереди убийств, а её объект уже погиб у гостя (Армагеддон…) и пул игры отдал его новой копии —
+        // убивали новую (у хоста враг жив): она пропадала и через 2 с создавалась снова
+        private readonly Dictionary<object, Puppet> _ownerByKey = new Dictionary<object, Puppet>();
 
         private void KillPuppet(Puppet pp)
         {
             if (pp.Obj == null || pp.LocalDead) return;
+            if (pp.Key == null || !_ownerByKey.TryGetValue(pp.Key, out var owner) || owner != pp) { _wReused++; return; }
+            _ownerByKey.Remove(pp.Key);
             try
             {
                 try { SetMember(pp.Obj, "Unit_Hp", 1); } catch { }                 // снять неуязвимость, иначе удар не убьёт
-                if (_combat != null && pp.Key != null && _aliveByKey.TryGetValue(pp.Key, out var e) && e.Alive && _combat.Damage(e, 1e9)) { _wKilled++; return; }
+                if (_combat != null && pp.Key != null && AliveByKey(pp.Key, out var e) && e.Alive && _combat.Damage(e, 1e9)) { _wKilled++; _aliveByKey.Remove(pp.Key); return; }
                 DestroySimple(pp.Obj, own: false);
             }
             catch (Exception e) { if (++_wFails <= 5) _ctx.Log($"общие враги: убить копию {pp.Id}: {Inner(e).Message}"); }
@@ -1497,13 +1679,13 @@ namespace MagicSurvivalCoop
             }
             RestoreSpawn();
             _ctx.Log($"общие враги: выключено ({why}); {WorldSummary()}");
-            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _toUpgrade.Clear(); _toForward.Clear(); _forwardKeys.Clear();
+            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _aliveByKey.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _toUpgrade.Clear(); _toForward.Clear(); _forwardKeys.Clear();
             _worldActive = false; _worldHost = null; _away = _ownSpawn = false; _localKeys.Clear(); ResetGather();
         }
 
         private string WorldSummary() => _hosting
             ? $"отправлено врагов за раз до {_enSentMax}; урон гостей нанесён {_dmgIn:0} (врагов уже не было: {_dmgInMiss}); врагов от действий гостей создано {_spawnIn}" + SpecialSummary()
-            : $"копий создано {_wCreated} (особых {_wSpecial}, одновременно до {_wMax}), убито по хосту {_wKilled}, погибло у себя {_wLocalDead} (создано заново {_wRespawned}), убрано своих врагов {_wDestroyed}, переложено в пул боссов {_poolMoved}, урона отправлено хосту {_dmgSent:0}, своих врагов отправлено хосту {_spawnSent}; " +
+            : $"копий создано {_wCreated} (особых {_wSpecial}, одновременно до {_wMax}), убито по хосту {_wKilled}, погибло у себя {_wLocalDead} (создано заново {_wRespawned}), убрано своих врагов {_wDestroyed}, объект у другой копии {_wReused}, переложено в пул боссов {_poolMoved}, урона отправлено хосту {_dmgSent:0}, своих врагов отправлено хосту {_spawnSent}; " +
               $"уходил от хоста {_awayTimes} раз, переносов к хосту на босса {_gatherTimes}, своих врагов вдали {_localSpawned}, сняты хвосты босс-волны {_onlyBossCleared}, перезапусков спавна {_spawnRestarts}; " +
               $"копий стали особыми позже {_wUpgraded}, свои переходы убраны со 2-й/3-й попытки {_forwardKillHow[1]}/{_forwardKillHow[2]}, своих убрано Unit_Disappear_Peace {_peaceRemoved}, своих особых/эпических убрано {_ownSpecialSwept}, своих переходов отправлено хосту {_ownTransitionSent}; " +
               $"убранные свои по типам: {string.Join(" ", System.Linq.Enumerable.Select(_sweptTypes, kv => $"{kv.Key}×{kv.Value}"))}; " +
