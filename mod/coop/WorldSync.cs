@@ -109,7 +109,7 @@ namespace MagicSurvivalCoop
 
         private void InstallWorldHooks()
         {
-            try { _combat = _ctx.Use<ICombat>("modkit_combat"); } catch (Exception e) { _ctx.Log("общие враги: нет ICombat — копии будут убираться без награды: " + e.Message); }
+            try { _combat = _ctx.Use<ICombat>("modkit_combat"); } catch (Exception e) { _ctx.Log("общие враги: нет ICombat — урон гостей не дойдёт до врагов: " + e.Message); }
             try { _ctx.After("C_Battle_EnemyUnit", "Start_Unit", 3, Hook("синхронизация спавна врага", (self, a) => OnEnemyStart(self, a))); }
             catch (Exception e) { _ctx.Log("общие враги: хук Start_Unit недоступен (свой спавн гасится только чисткой): " + e.Message); }
             foreach (var (m, stopped) in new[] { ("Create_UnitEnemy_Stop", true), ("Create_UnitEnemy_Start", false), ("Create_UnitEnemy_StartLoop", false) })
@@ -157,7 +157,7 @@ namespace MagicSurvivalCoop
         {
             _coSeen.Clear();
             _enIds.Clear(); _enIdsNext.Clear(); _enById.Clear(); _dmgIn = 0; _dmgInMiss = 0; _dmgOut.Clear(); _dmgSent = 0; _dmgFlushAt = 0; _enSentAt = -1; _enSentMax = 0; _enHostLogged = false;
-            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _aliveByKey.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _viewLogAt = 0; _savedSpawn = null;
+            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _viewLogAt = 0; _savedSpawn = null;
             _worldHost = null; _enSnap = 0; _enSnapAt = -100; _worldActive = false; _spawningPuppet = false; _justCreated = null;
             _wCreated = _wKilled = _wLocalDead = _wDestroyed = _wFails = _wMax = _wRespawned = _wSpecial = _wReused = 0;
             _enVars.Clear(); _enVarsNext.Clear();
@@ -175,7 +175,7 @@ namespace MagicSurvivalCoop
 
         /// <summary>
         /// Живые враги — один снимок на кадр. Библиотека на каждое обращение к Alive строит новый список и для каждого врага
-        /// зовёт игру (activeInHierarchy, Unit_Hp); а им пользуются отправка (хост), чистка, повтор магии, убийство копий.
+        /// зовёт игру (activeInHierarchy, Unit_Hp); а им пользуются отправка (хост), чистка, повтор магии.
         /// </summary>
         private IReadOnlyList<IEnemy> AliveNow()
         {
@@ -1042,10 +1042,11 @@ namespace MagicSurvivalCoop
             if (FieldAddr(key, name, out var a)) System.Runtime.InteropServices.Marshal.WriteInt32(a, BitConverter.SingleToInt32Bits(v));
             else SetMember(obj, name, v);
         }
+        private static bool UnitAlive(object obj, object key) =>
+            FieldAddr(key, "Unit_IsLive", out var a) ? System.Runtime.InteropServices.Marshal.ReadByte(a) != 0 : GetMember(obj, "Unit_IsLive") is bool b && b;
         private static void ReadUnitState(Puppet pp, out bool alive, out double hp)
         {
-            alive = FieldAddr(pp.Key, "Unit_IsLive", out var a) ? System.Runtime.InteropServices.Marshal.ReadByte(a) != 0
-                                                               : GetMember(pp.Obj, "Unit_IsLive") is bool b && b;
+            alive = UnitAlive(pp.Obj, pp.Key);
             hp = UnitFloat(pp.Obj, pp.Key, "Unit_Hp") ?? PuppetHp;
         }
 
@@ -1509,22 +1510,6 @@ namespace MagicSurvivalCoop
         private int _bossPoolEst = -1;
 
         /// <summary>Враг пропал у хоста — копию убить уроном (гостю — убийство и выпадения); не вышло — убрать без награды.</summary>
-        /// <summary>
-        /// Живые враги по адресу. Перестраивается, только когда нужной копии в нём нет, и не чаще раза в кадр: снимок живых
-        /// у гостя (400+ врагов) — по два обращения к игре на врага, а пока очередь убийств не пуста, он строился каждый кадр.
-        /// </summary>
-        private readonly Dictionary<object, IEnemy> _aliveByKey = new Dictionary<object, IEnemy>();
-        private int _aliveByKeyFrame = -1;
-        private bool AliveByKey(object key, out IEnemy e)
-        {
-            if (_aliveByKey.TryGetValue(key, out e)) return true;
-            if (_aliveByKeyFrame == _worldFrame) return false;
-            _aliveByKeyFrame = _worldFrame;
-            _aliveByKey.Clear();
-            foreach (var a in AliveNow()) { var k = KeyOf(a.Raw); if (k != null) _aliveByKey[k] = a; }
-            return _aliveByKey.TryGetValue(key, out e);
-        }
-
         // 1.6.95: копия в очереди убийств, а её объект уже погиб у гостя (Армагеддон…) и пул игры отдал его новой копии —
         // убивали новую (у хоста враг жив): она пропадала и через 2 с создавалась снова
         private readonly Dictionary<object, Puppet> _ownerByKey = new Dictionary<object, Puppet>();
@@ -1536,8 +1521,15 @@ namespace MagicSurvivalCoop
             _ownerByKey.Remove(pp.Key);
             try
             {
-                try { SetUnitFloat(pp.Obj, pp.Key, "Unit_Hp", 1); } catch { }                 // снять неуязвимость, иначе удар не убьёт
-                if (_combat != null && pp.Key != null && AliveByKey(pp.Key, out var e) && e.Alive && _combat.Damage(e, 1e9)) { _wKilled++; _aliveByKey.Remove(pp.Key); return; }
+                // сразу Unit_Death, без Unit_Damage (эффекты попадания, статусы, расчёт урона): при Unit_Hp <= 0 и Unit_IsLive игра
+                // засчитывает убийство и награду так же (телефон, 30.10: на каждый вызов +1 Game_KillMonsterNum и событие enemyDeath)
+                if (UnitAlive(pp.Obj, pp.Key))
+                {
+                    SetUnitFloat(pp.Obj, pp.Key, "Unit_Hp", 0);
+                    CallMethod(pp.Obj, "Unit_Death");
+                    _wKilled++;
+                    return;
+                }
                 DestroySimple(pp.Obj, own: false);
             }
             catch (Exception e) { if (++_wFails <= 5) _ctx.Log($"общие враги: убить копию {pp.Id}: {Inner(e).Message}"); }
@@ -1689,7 +1681,7 @@ namespace MagicSurvivalCoop
             }
             RestoreSpawn();
             _ctx.Log($"общие враги: выключено ({why}); {WorldSummary()}");
-            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _aliveByKey.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _toUpgrade.Clear(); _toForward.Clear(); _forwardKeys.Clear();
+            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _toUpgrade.Clear(); _toForward.Clear(); _forwardKeys.Clear();
             _worldActive = false; _worldHost = null; _away = _ownSpawn = false; _localKeys.Clear(); ResetGather();
         }
 

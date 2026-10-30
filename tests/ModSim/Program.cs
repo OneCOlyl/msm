@@ -289,7 +289,7 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     Check(P6().Unit_Hp >= 1e5, "здоровье копии снова полное");
     A.Combat.Enemies.Remove(e6);
     Frames(40);
-    Check(B.Combat.Kills == 1 && !P6().DestroyedSimple && !P6().Unit_IsLive, "враг пропал у хоста — копия убита уроном (гостю — убийство)");
+    Check(B.Combat.Kills == 1 && !P6().DestroyedSimple && !P6().Unit_IsLive, "враг пропал у хоста — копия убита Unit_Death (гостю — убийство)");
     var p11 = pups.First(e => e.UnitID == 11);
     Check(p11.Unit_Hp >= 1e5, $"копии у гостя неуязвимы — умирают только вслед за хостом (здоровье {p11.Unit_Hp:0})");
     p11.Unit_IsLive = false; B.Combat.Enemies.Remove(p11);                // копия погибла у гостя в обход здоровья (Армагеддон)
@@ -844,6 +844,7 @@ class FakeEnemy : MonoBehaviour, IEnemy
     public double DamageTaken;
     public Transform Transform_ObjUnitSprite = new Transform { localScale = new Vector3(1, 1, 1) };
     public void Unit_Destroy_Simple() { DestroyedSimple = true; Unit_IsLive = false; _p.Combat.Enemies.Remove(this); }
+    public void Unit_Death() { if (Unit_Hp > 0 || !Unit_IsLive) return; Unit_IsLive = false; _p.Combat.Enemies.Remove(this); _p.Combat.Kills++; }   // как в игре
     public void Fire(float a = 0, float b = 0) => _p.Ctx.Fire("After C_Battle_EnemyUnit.Start_Unit/3", this, new object[] { UnitID, a, b });   // как хук Harmony
     public float VarA, VarB;
     public int UnitCreateID = 1, ApplyCreateEffectID; public float LineColorR, LineColorG, LineColorB;
