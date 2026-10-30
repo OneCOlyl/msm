@@ -658,6 +658,41 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         Check(gm.Clock >= 361 && gm.AreaChangeNum == 2 && gm.Battle_ClearWaveON == 0 && gm.Ends == 0,
               $"гость до босса не дошёл — часы за порог ({gm.Time_Min}:{gm.Time_Sec:00}), смена области как у хоста ({gm.AreaChangeNum})");
     }
+    {   // особый обелиск (Terra): лежит с начала боя у каждого и ставит флаг обелиска; в общих врагах — только у хоста, хост
+        // поднял — гостю выбор артефакта вида 9 (без притягивания маны, как у хоста)
+        hm.Time_Min = gm.Time_Min = 0; hm.Time_Sec = gm.Time_Sec = 10;
+        G.Set("_hostHadBoss", false); G.Set("_treasureRewards", 0);         // как в начале нового боя (ResetClock): боссы прошлых сценариев не в счёт
+        var ht = new FakeTreasure(); var gt = new FakeTreasure(); var gam = new FakeArtifactManager { Battle = gm }; var mana = new FakeItem();
+        void Run(double sec) { var sw = System.Diagnostics.Stopwatch.StartNew(); while (sw.Elapsed.TotalSeconds < sec) F(5); }   // поиск — раз в 1 с
+        sess.GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, (Func<ModContext, string, List<object>>)((ctx, type) =>
+        {
+            return type == "C_Battle_Item_TreasureBox" ? new List<object> { ctx == H.Ctx ? ht : gt }
+                 : type == "C_Battle_Item" && ctx == G.Ctx ? new List<object> { mana }
+                 : type == "V_Artifact_Manager" && ctx == G.Ctx ? new List<object> { gam } : new List<object>();
+        }));
+        sess.GetField("TypeOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, (Func<string, Type>)(n => n == "Z_Database" ? typeof(Z_Database) : null));
+        hm.ApplyObeliskON = gm.ApplyObeliskON = 1;
+        Run(2.5);
+        Check(gt.Destroyed && !ht.Destroyed, "особый обелиск у гостя убран, у хоста лежит");
+        int areas0 = gm.AreaChanges;
+        hm.ApplyObeliskON = 0;                                               // хост поднял
+        Run(2.5);
+        Check(gam.Created == 1, $"хост поднял особый обелиск — у гостя выбор артефакта ({gam.Created})");
+        Check(Z_Database.ArtifactType == 9 && gm.AreaChanges == areas0 + 1, $"артефакты вида 9 ({Z_Database.ArtifactType}), область сменилась один раз ({gm.AreaChanges - areas0})");
+        Check(mana.Pulled == 0, "мана к гостю не притягивается (у хоста особый обелиск её не притягивает)");
+        Run(1.5);
+        Check(gam.Created == 1 && gt.DestroyCalls == 1, "выбор у гостя и уборка его обелиска — по одному разу");
+        // второй обелиск — уже обычный, после босса (на Terra босс в 2:30): легендарные артефакты и притянутая мана
+        hm.Time_Min = gm.Time_Min = 2; hm.Time_Sec = gm.Time_Sec = 30;
+        hm.Battle_ClearWaveON = gm.Battle_ClearWaveON = 1; Run(1);
+        hm.Battle_ClearWaveON = 0; hm.ApplyObeliskON = gm.ApplyObeliskON = 1; Run(1);
+        hm.ApplyObeliskON = 0; hm.Time_Sec = 31;                 // хост поднял обелиск после босса
+        Run(2.5);
+        Check(gam.Created == 2 && Z_Database.ArtifactType == 10 && mana.Pulled == 1,
+              $"второй обелиск (после босса в 2:30) — обычный: артефакты вида {Z_Database.ArtifactType}, мана притянута {mana.Pulled} раз");
+        sess.GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+        sess.GetField("TypeOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+    }
     own.Add(H.Ctx); Time.timeScale = 0;                                  // хост выбирает умение — у гостя общая пауза
     F(20);
     Check((bool)G.Get("_pauseForced"), "у гостя пауза из-за хоста");
@@ -911,6 +946,17 @@ static class WinTimer { [System.Runtime.InteropServices.DllImport("winmm.dll")] 
 class FakePlayTime { public int Counter { get; set; } public int Other { get; set; } public int __1__state { get; set; } }
 /// <summary>Менеджер боя (вместо C_Battle_Manager): флаг взрыва Армагеддона и его объекты.</summary>
 class FakeText { public Color color { get; set; } }
+/// <summary>Особый обелиск Terra (C_Battle_Item_TreasureBox, вид 9).</summary>
+class FakeTreasure { public int ObtainItemType = 9; public GameObject gameObject = new GameObject { activeSelf = true }; public bool Destroyed; public int DestroyCalls; public void DestroyItem() { Destroyed = true; DestroyCalls++; } }   // как в игре: сам объект остаётся активным
+/// <summary>Мана на поле (C_Battle_Item): притягивание — корутина Play_ItemAllObtain_Move.</summary>
+class FakeItem { public int Type_ObjItem = 1; public GameObject gameObject = new GameObject { activeSelf = true }; public int Pulled; public void StartCoroutine(string name) { if (name == "Play_ItemAllObtain_Move") Pulled++; } }
+class FakeArtifactManager
+{
+    public int Created; public FakeManager Battle;
+    public void Create_Artifact() { Created++; if (Z_Database.ArtifactType is 9 or 10 or 11) Battle?.Start_AreaChange(); }   // как в игре
+}
+/// <summary>Статические поля Z_Database, которые трогает мод.</summary>
+class Z_Database { public static int ArtifactType; }
 /// <summary>Менеджер боя с бонусом скорости игры (статическое поле, как у C_Battle_Manager).</summary>
 class BonusManager : FakeManager
 {

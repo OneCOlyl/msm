@@ -26,6 +26,7 @@ namespace MagicSurvivalCoop
         private int _hostClock = -1, _hostBossWave, _hostLevel = -1, _hostWave = -1, _hostBwPrev;
         private int _hostAreaChange = -1;                // смены области у хоста (AreaChangeNum; растёт при смерти его босса)
         private int _hostObelisk = -1, _hostObPrev = -1; // обелиск хоста (ApplyObeliskON): 1 → 0 — хост его поднял
+        private bool _hostHadBoss;                       // у хоста в этом бою была босс-волна
         private bool _hostPicked;                        // хост поднял обелиск этого босса — гостю сразу то же (ObeliskSync.cs)
         private double _hostClockAt = -100;
         private int _clockFixes, _clockFixLogs;
@@ -39,6 +40,7 @@ namespace MagicSurvivalCoop
             _hostClock = -1; _hostBossWave = 0; _hostClockAt = -100; _hostLevel = -1; _hostWave = -1; _hostBwPrev = 0;
             _clockFixes = _clockFixLogs = 0; _clockCheckAt = 0; _clockEvents.Clear();
             _hostObelisk = _hostObPrev = -1; _hostPicked = false; _bossHold = false; _clockColor = null;
+            _treasureScanAt = 0; _treasureGone.Clear(); _hostHadBoss = false; _treasureRewards = 0;
         }
 
         /// <summary>Часы боя в секундах (-1 — не прочитать).</summary>
@@ -75,6 +77,7 @@ namespace MagicSurvivalCoop
             _hostWave = (int)Protocol.Num(s, "ew", -1);
             _hostClockAt = Clock.Elapsed.TotalSeconds;
             if (_hostBwPrev == 0 && _hostBossWave == 1) _hostPicked = false;   // новый босс у хоста — прошлый подбор не в счёт
+            if (_hostBossWave == 1) _hostHadBoss = true;
             _hostBwPrev = _hostBossWave;
             _hostAreaChange = (int)Protocol.Num(s, "ac", -1);
             _hostObelisk = (int)Protocol.Num(s, "ob", -1);
@@ -98,6 +101,7 @@ namespace MagicSurvivalCoop
                     _ctx.Log($"часы боя ({(_hosting ? "хост" : "гость")}): {f} {old} → {v} в {mine / 60}:{mine % 60:00}{(_hostClock >= 0 && !_hosting ? $" (у хоста {_hostClock / 60}:{_hostClock % 60:00})" : "")}");
                 _clockEvents[f] = v;
             }
+            TreasureStep(now);
             if (_hosting || !_worldActive || _ctx.Setting("clockSync") <= 0 || _hostClock < 0 || now - _hostClockAt > 1.5) return;
             GuestBossStep(now);
             if (_hostBossWave != 0 || MyBossWave() != 0) return;                 // босс-волну не трогаем
