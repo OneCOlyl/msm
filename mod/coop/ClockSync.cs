@@ -148,9 +148,11 @@ namespace MagicSurvivalCoop
             if (MyObelisk() == 1 && !_hostPicked && !OwnPause())
             {
                 // игра у гостя сама закончила этап (обелиск лёг): хост свой ещё не поднял — убрать и ждать его; уже поднял
-                // (у гостя этот этап кончился позже) — убрать и пустить часы без второй награды
+                // (у гостя этот этап кончился позже) — убрать и пустить часы без второй награды. «Уже поднял» — только если у хоста
+                // была босс-волна и его флаг обелиска пришёл нулём: особый обелиск Terra ставит флаг обоим в начале боя, и раньше,
+                // пока состояние хоста с флагом не дошло, гость здесь сам менял область и терял награду за подбор хоста
                 if (_hostObelisk == 1 || _hostBossWave != 0) RemoveObelisks("игра положила его гостю, хост свой ещё не поднял");
-                else try { CatchUpBoss(false); } catch (Exception e) { _ctx.Log("обелиск: " + Inner(e).Message); }
+                else if (_hostHadBoss && _hostObelisk == 0) try { CatchUpBoss(false); } catch (Exception e) { _ctx.Log("обелиск: " + Inner(e).Message); }
             }
             if (!_hostPicked || OwnPause()) return;
             _hostPicked = false;

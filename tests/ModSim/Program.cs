@@ -674,8 +674,11 @@ Console.WriteLine("7. выключение мода посреди боя (об�
                  : type == "V_Artifact_Manager" && ctx == G.Ctx ? new List<object> { gam } : new List<object>();
         }));
         sess.GetField("TypeOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, (Func<string, Type>)(n => n == "Z_Database" ? typeof(Z_Database) : null));
-        hm.ApplyObeliskON = gm.ApplyObeliskON = 1;
+        int areasStart = gm.AreaChanges;
+        gm.ApplyObeliskON = 1; Run(1.5);                                      // у гостя флаг раньше, чем дошло состояние хоста с флагом
+        hm.ApplyObeliskON = 1;
         Until(() => gt.Destroyed && (int)G.Get("_hostObelisk") == 1);
+        Check(gm.ApplyObeliskON == 1 && gm.AreaChanges == areasStart, "пока хост не поднял особый обелиск, у гостя флаг не снят и область не менялась");
         Check(gt.Destroyed && !ht.Destroyed, "особый обелиск у гостя убран, у хоста лежит");
         int areas0 = gm.AreaChanges;
         hm.ApplyObeliskON = 0;                                               // хост поднял
