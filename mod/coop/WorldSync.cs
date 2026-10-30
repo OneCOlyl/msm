@@ -923,12 +923,12 @@ namespace MagicSurvivalCoop
                         {
                             _ctx.Mark("общие враги: здоровье копии");
                             _dmgOut[pp.Id] = (_dmgOut.TryGetValue(pp.Id, out var d0) ? d0 : 0) + (PuppetHp - hp);
-                            Invulnerable(pp.Obj);
+                            Invulnerable(pp.Obj, pp.Key);
                             _ctx.Mark("общие враги: перемещение копий");
                         }
                         // игра пересчитывает скорость (усиления волн) — гасим снова; раньше всем копиям в одном кадре раз в 0,5 с:
                         // 6 записей на копию, у гостя (Pixel 3a) кадр «чистки» до 240 мс
-                        if (puppetAi && (_worldFrame / 6 + pp.Id) % 5 == 0) ZeroSpeed(pp.Obj);
+                        if (puppetAi && (_worldFrame / 6 + pp.Id) % 5 == 0) ZeroSpeed(pp.Obj, pp.Key);
                         _world.Lap(4);
                     }
                     if (pp.Tr == null || !PuppetPos(pp, rt, out var x, out var y)) continue;
@@ -982,7 +982,7 @@ namespace MagicSurvivalCoop
                 var up = _toUpgrade[_toUpgrade.Count - 1]; _toUpgrade.RemoveAt(_toUpgrade.Count - 1);
                 if (up.Obj == null || up.LocalDead || !_puppets.ContainsKey(up.Id)) continue;
                 ApplySpecialLook(up, up.Obj);
-                SetupPuppet(up.Obj);
+                SetupPuppet(up.Obj, up.Key);
                 _wUpgraded++;
             }
             if (live > _wMax) _wMax = live;
@@ -1016,28 +1016,37 @@ namespace MagicSurvivalCoop
         private double _viewLogAt, _createGameMs, _createAllMs, _createPreMs, _createPostMs;
         private static double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
-        // Unit_IsLive и Unit_Hp копии — по смещению полей: через GetMember это рефлексия и переход в IL2CPP на каждое чтение.
-        // Первое слово объекта IL2CPP — его класс. Объект держит обёртка pp.Obj, так что память жива и у уничтоженного Unity
-        private static readonly Dictionary<IntPtr, (int live, int hp)> UnitOffsets = new Dictionary<IntPtr, (int, int)>();
+        // Поля врага (float, bool) — по смещению: через GetMember/SetMember это рефлексия и переход в IL2CPP на каждое обращение.
+        // key — адрес объекта (KeyOf); не адрес (тесты) — рефлексия. Первое слово объекта IL2CPP — его класс. Объект держит
+        // обёртка, так что память жива и у уничтоженного Unity
+        private static readonly Dictionary<(IntPtr, string), int> FieldOffsets = new Dictionary<(IntPtr, string), int>();
+        private static bool FieldAddr(object key, string name, out IntPtr addr)
+        {
+            addr = IntPtr.Zero;
+            if (!(key is IntPtr p)) return false;
+            var klass = System.Runtime.InteropServices.Marshal.ReadIntPtr(p);
+            if (!FieldOffsets.TryGetValue((klass, name), out int off))
+            {
+                var f = Field(klass, name);
+                FieldOffsets[(klass, name)] = off = f != IntPtr.Zero ? OffsetOf(f) : -1;
+            }
+            if (off < 0) return false;
+            addr = p + off;
+            return true;
+        }
+        private static float? UnitFloat(object obj, object key, string name) =>
+            FieldAddr(key, name, out var a) ? BitConverter.Int32BitsToSingle(System.Runtime.InteropServices.Marshal.ReadInt32(a))
+                                            : GetMember(obj, name) is object v ? Convert.ToSingle(v) : (float?)null;
+        private static void SetUnitFloat(object obj, object key, string name, float v)
+        {
+            if (FieldAddr(key, name, out var a)) System.Runtime.InteropServices.Marshal.WriteInt32(a, BitConverter.SingleToInt32Bits(v));
+            else SetMember(obj, name, v);
+        }
         private static void ReadUnitState(Puppet pp, out bool alive, out double hp)
         {
-            if (pp.Key is IntPtr p)
-            {
-                var klass = System.Runtime.InteropServices.Marshal.ReadIntPtr(p);
-                if (!UnitOffsets.TryGetValue(klass, out var o))
-                {
-                    IntPtr fl = Field(klass, "Unit_IsLive"), fh = Field(klass, "Unit_Hp");
-                    UnitOffsets[klass] = o = fl != IntPtr.Zero && fh != IntPtr.Zero ? (OffsetOf(fl), OffsetOf(fh)) : (-1, -1);
-                }
-                if (o.live >= 0)
-                {
-                    alive = System.Runtime.InteropServices.Marshal.ReadByte(p + o.live) != 0;
-                    hp = BitConverter.Int32BitsToSingle(System.Runtime.InteropServices.Marshal.ReadInt32(p + o.hp));
-                    return;
-                }
-            }
-            alive = GetMember(pp.Obj, "Unit_IsLive") is bool b && b;
-            hp = Convert.ToDouble(GetMember(pp.Obj, "Unit_Hp") ?? PuppetHp);
+            alive = FieldAddr(pp.Key, "Unit_IsLive", out var a) ? System.Runtime.InteropServices.Marshal.ReadByte(a) != 0
+                                                               : GetMember(pp.Obj, "Unit_IsLive") is bool b && b;
+            hp = UnitFloat(pp.Obj, pp.Key, "Unit_Hp") ?? PuppetHp;
         }
 
         private static void PlacePuppet(Puppet pp, double wx, double wy)
@@ -1239,7 +1248,7 @@ namespace MagicSurvivalCoop
                     NoteHostVars(obj, new object[] { type, sa, sb }, origin);
                 }
                 try { var tr = GetMember(obj, "Transform_ObjUnit") as Transform; var z = tr.position.z; tr.position = new Vector3((float)((_startX ?? 0) + x), (float)((_startY ?? 0) + y), z); } catch { }
-                FixSpriteScale(obj);
+                FixSpriteScale(obj, KeyOf(obj));
                 _spawnIn++;
                 if (_spawnInLogs++ < 40) _ctx.Log($"общие враги: враг от действий гостя — тип {type}, varA {s[i + 1]}, varB {s[i + 2]}, создан у меня");
                 if (origin == OriginTransition && !_guestVisDumped) { _guestVisDumped = true; _originDumps.Add((obj, -1, Clock.Elapsed.TotalSeconds + 0.5)); }
@@ -1336,7 +1345,7 @@ namespace MagicSurvivalCoop
             if (pp.Key != null) _ownerByKey[pp.Key] = pp;
             if (pp.Special) ApplySpecialLook(pp, obj);
             pp.Tr = GetMember(obj, "Transform_ObjUnit") as Transform;
-            SetupPuppet(obj);
+            SetupPuppet(obj, pp.Key);
             _createPostMs += Ms(c0, System.Diagnostics.Stopwatch.GetTimestamp());
             if (_wCreated++ == 0) _ctx.Log($"общие враги: первая копия — тип {pp.Type}, «{NameOf(obj)}», спрайт-масштаб после подгонки {GetMember(GetMember(obj, "Transform_ObjUnitSprite"), "localScale")}, здоровье {GetMember(obj, "Unit_Hp")}");
             return true;
@@ -1368,14 +1377,14 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>Копия: картинка под размер, неуязвима, без своей скорости, тело кинематическое (и после повторного Start_Unit).</summary>
-        private void SetupPuppet(object obj)
+        private void SetupPuppet(object obj, object key)
         {
             // 1.5.0 останавливал все корутины — вместе с ИИ вставали кадры ходьбы (их меняет Unit_Move). Теперь ИИ работает
             // (анимация, поворот, атаки), но скорость нулевая — двигает только мод. «puppetAi» = 0 — по-старому.
             _ctx.Mark("общие враги: настройка копии (здоровье, скорость, тело)");
-            FixSpriteScale(obj);
-            Invulnerable(obj);
-            if (_ctx.Setting("puppetAi") > 0) ZeroSpeed(obj);
+            FixSpriteScale(obj, key);
+            Invulnerable(obj, key);
+            if (_ctx.Setting("puppetAi") > 0) ZeroSpeed(obj, key);
             else try { CallMethod(obj, "StopAllCoroutines"); } catch { }
             try { SetMember(GetMember(obj, "Rigidbody_ObjUnit"), "isKinematic", true); } catch { }   // соседи не расталкивают
         }
@@ -1414,28 +1423,29 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>У копии из пула боссов картинка 1,00, у обычного врага — как размер (1,25) (журнал 1.5.2).</summary>
-        private static void FixSpriteScale(object enemy)
+        private static void FixSpriteScale(object enemy, object key)
         {
             try
             {
+                float size = UnitFloat(enemy, key, "UnitApply_UnitSize") ?? 0f;
+                if (size <= 0.01f) return;
                 var tr = GetMember(enemy, "Transform_ObjUnitSprite") as Transform;
-                float size = Convert.ToSingle(GetMember(enemy, "UnitApply_UnitSize") ?? 0f);
-                if (tr == null || size <= 0.01f) return;
+                if (tr == null) return;
                 var ls = tr.localScale;
                 tr.localScale = new Vector3(ls.x < 0 ? -size : size, size, ls.z == 0 ? 1 : ls.z);
             }
             catch { }
         }
 
-        private void Invulnerable(object enemy)
+        private void Invulnerable(object enemy, object key)
         {
-            try { SetMember(enemy, "Unit_Hp", PuppetHp); }
+            try { SetUnitFloat(enemy, key, "Unit_Hp", (float)PuppetHp); }
             catch (Exception e) { if (++_wFails <= 5) _ctx.Log("общие враги: здоровье копии: " + Inner(e).Message); }
         }
 
-        private static void ZeroSpeed(object enemy)
+        private static void ZeroSpeed(object enemy, object key)
         {
-            foreach (var f in SpeedFields) try { SetMember(enemy, f, 0f); } catch { }
+            foreach (var f in SpeedFields) try { SetUnitFloat(enemy, key, f, 0f); } catch { }
         }
 
         /// <summary>
@@ -1526,7 +1536,7 @@ namespace MagicSurvivalCoop
             _ownerByKey.Remove(pp.Key);
             try
             {
-                try { SetMember(pp.Obj, "Unit_Hp", 1); } catch { }                 // снять неуязвимость, иначе удар не убьёт
+                try { SetUnitFloat(pp.Obj, pp.Key, "Unit_Hp", 1); } catch { }                 // снять неуязвимость, иначе удар не убьёт
                 if (_combat != null && pp.Key != null && AliveByKey(pp.Key, out var e) && e.Alive && _combat.Damage(e, 1e9)) { _wKilled++; _aliveByKey.Remove(pp.Key); return; }
                 DestroySimple(pp.Obj, own: false);
             }
@@ -1613,7 +1623,7 @@ namespace MagicSurvivalCoop
                 var e = _heldNew.Dequeue();
                 try { CallMethod(e, "StopAllCoroutines"); } catch { }
                 try { SetMember(GetMember(e, "Rigidbody_ObjUnit"), "isKinematic", true); } catch { }
-                Invulnerable(e);
+                Invulnerable(e, KeyOf(e));
                 _ctx.Log($"общие враги: своя босс-волна — прячу своего врага «{NameOf(e)}» тип {GetMember(e, "UnitID")} до победы хоста");
             }
             // 1.6.42: хост победил — не убиваем: смерть босса закончила бы этап у гостя и положила обелиск. Убираем без смерти,
@@ -1746,20 +1756,20 @@ namespace MagicSurvivalCoop
 
         // ------------------------------------------------------------ рефлексия
 
-        private static readonly Dictionary<(Type, string, int), MethodInfo> MethodCache = new Dictionary<(Type, string, int), MethodInfo>();
+        private static readonly Dictionary<(Type, string, int), (MethodInfo m, ParameterInfo[] ps)> MethodCache = new Dictionary<(Type, string, int), (MethodInfo, ParameterInfo[])>();
         private static object CallMethod(object o, string name, params object[] args)
         {
             var t = o.GetType();
-            MethodInfo m;
+            (MethodInfo m, ParameterInfo[] ps) c;
             lock (MethodCache)
-                if (!MethodCache.TryGetValue((t, name, args.Length), out m))
+                if (!MethodCache.TryGetValue((t, name, args.Length), out c))
                 {
                     foreach (var x in t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
-                        if (x.Name == name && x.GetParameters().Length == args.Length) { m = x; break; }
-                    MethodCache[(t, name, args.Length)] = m;
+                        if (x.Name == name && x.GetParameters().Length == args.Length) { c = (x, x.GetParameters()); break; }
+                    MethodCache[(t, name, args.Length)] = c;
                 }
+            var (m, ps) = c;
             if (m == null) throw new MissingMethodException(t.Name + "." + name + "/" + args.Length);
-            var ps = m.GetParameters();
             for (int i = 0; i < args.Length; i++)
                 if (args[i] != null && !ps[i].ParameterType.IsInstanceOfType(args[i])) args[i] = Convert.ChangeType(args[i], ps[i].ParameterType);
             return m.Invoke(o, args);
