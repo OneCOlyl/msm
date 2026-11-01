@@ -1,134 +1,147 @@
-# Синхронизация врагов — исследование
+# Enemy sync: research
 
-Цель: общие враги у всех игроков («мир хоста»). Хост играет как обычно, у остальных враги — копии врагов хоста.
-Документ собирает то, что выяснено на устройстве разведчиком `mod/coop_probe`.
+English | [Русский](ENEMY_SYNC.ru.md)
 
-## Разведка 1 (coop_probe 0.1.0, 2026-10-22, два телефона)
+Goal: shared enemies for all players ("host's world"). The host plays as usual; the others get copies of the host's
+enemies. This document collects what the `mod/coop_probe` probe found out on the device.
 
-**Как появляются враги**
-- Все враги создаются вызовом `C_Battle_EnemyUnit.Start_Unit(int PUnitID, float PUnit_SpecialVarA, float PUnit_SpecialVarB)`; у обычных врагов `varA = varB = 0`.
-- Корутина `C_Battle_Manager.Create_UnitEnemy` создаёт пачки по `EnemyCreateNum` (в начале 2) примерно раз в 0,76 с, на кольце 7–12 ед. вокруг героя.
-- Каждый враг — новый объект с именем по счётчику («10000», «10001»…), адреса объектов не повторяются. Пула врагов в полях менеджера нет; шаблон, вероятно, `AObj_UnitEnemy` (GameObject).
-- Типы за 110 с: 1, 6, 11, 13 (тип зависит от волны).
+## Probe 1 (coop_probe 0.1.0, 2026-10-22, two phones)
 
-**Спавн**
-- `Create_UnitEnemy_Stop()` останавливает корутину, но игра сама перезапускает спавн на каждом шаге волн (~раз в 30 с: `Create_UnitEnemy` + `Create_UnitEnemySpecial`). Для подавления у гостя этот метод не годится.
-- Повторный `StartCoroutine("Create_UnitEnemy")` запускает **вторую** корутину (спавн удваивается) — так делать нельзя.
+**How enemies appear**
+- Every enemy is created by calling `C_Battle_EnemyUnit.Start_Unit(int PUnitID, float PUnit_SpecialVarA, float PUnit_SpecialVarB)`; normal enemies have `varA = varB = 0`.
+- The `C_Battle_Manager.Create_UnitEnemy` coroutine creates batches of `EnemyCreateNum` (2 at the start) about every 0.76 s, on a ring 7–12 units around the hero.
+- Each enemy is a new object named by a counter ("10000", "10001"…); object addresses don't repeat. The manager's fields have no enemy pool; the template is probably `AObj_UnitEnemy` (GameObject).
+- Types over 110 s: 1, 6, 11, 13 (the type depends on the wave).
 
-**Движение**
-- У `C_Battle_EnemyUnit` нет `Update`: поведение — корутины (`Unit_Move`, `Unit_MoveRush`, `Unit_MoveAction`, `Unit_MoveDistance`, `Unit_MoveStop`, `Unit_Rotation`, атаки).
-- Враг — физическое тело (`Rigidbody_ObjUnit`, `BoxCollider_ObjUnit`), поэтому соседи его расталкивают.
-- Заморозка (`Status_Freeze`) и оглушение (`Status_Stun`) не держат врага на месте: за 4 с он уходит на ~2 ед. (без статуса — ~3,5).
-- Поля скорости: `UnitApply_MoveSpeed` (у типа 1 — 0,064), `BUnitApply_MoveSpeed`, флаги `IsPlayMove`, `IsPlayMoveRush`, `IsFreeze`, `IsStun`, `Unit_IsLive`.
+**Spawning**
+- `Create_UnitEnemy_Stop()` stops the coroutine, but the game restarts spawning itself at every wave step (~every 30 s: `Create_UnitEnemy` + `Create_UnitEnemySpecial`). This method doesn't work for suppressing spawns at the guest.
+- A second `StartCoroutine("Create_UnitEnemy")` starts a **second** coroutine (spawning doubles), so don't do that.
 
-**Прочее**
-- Методы удаления без награды-кандидаты: `Unit_Destroy_Simple`, `Unit_Disappear_Peace`.
-- `Create_UnitEnemyBoss(int PUnitEnemyID, int PUnitEnemyNum)` — обычный метод (не корутина): кандидат на «создать врага по команде».
-- Мод «Кооператив» 1.2.0: покадровое движение работает (55–59 кадров/с); раз в ~12 с хук кадра 10–19 мс — вероятно, сборка мусора от выделений каждый кадр (исправлено в 1.2.1).
+**Movement**
+- `C_Battle_EnemyUnit` has no `Update`: behavior is coroutines (`Unit_Move`, `Unit_MoveRush`, `Unit_MoveAction`, `Unit_MoveDistance`, `Unit_MoveStop`, `Unit_Rotation`, attacks).
+- An enemy is a physics body (`Rigidbody_ObjUnit`, `BoxCollider_ObjUnit`), so neighbors push it around.
+- Freeze (`Status_Freeze`) and stun (`Status_Stun`) don't hold an enemy in place: in 4 s it moves ~2 units (~3.5 without the status).
+- Speed fields: `UnitApply_MoveSpeed` (0.064 for type 1), `BUnitApply_MoveSpeed`, flags `IsPlayMove`, `IsPlayMoveRush`, `IsFreeze`, `IsStun`, `Unit_IsLive`.
 
-## Разведка 2 (coop_probe 0.2.0) — что проверяет
+**Other**
+- Candidate methods for removal without reward: `Unit_Destroy_Simple`, `Unit_Disappear_Peace`.
+- `Create_UnitEnemyBoss(int PUnitEnemyID, int PUnitEnemyNum)` is a regular method (not a coroutine): a candidate for "create an enemy on command".
+- Co-op mod 1.2.0: per-frame movement works (55–59 fps); every ~12 s the frame hook takes 10–19 ms, probably garbage collection from per-frame allocations (fixed in 1.2.1).
 
-| Опыт | Вопрос |
+## Probe 2 (coop_probe 0.2.0): what it checks
+
+| Experiment | Question |
 |---|---|
-| A1 | Создаёт ли `Create_UnitEnemyBoss(1, 1)` обычного врага синхронно и где; побочные эффекты (волна боссов?) |
-| A2 | Работает ли копия `AObj_UnitEnemy` + `GetComponent<C_Battle_EnemyUnit>` + `Start_Unit` — полноценный ли враг |
-| B | Держится ли враг в точке, если остановить корутины и сделать тело кинематическим, и можно ли вести его каждый кадр |
-| C | Сколько стоит переставить всех врагов за кадр |
-| D | Убирает ли `Unit_Destroy_Simple` новых врагов без засчитанных убийств |
-| E | Гасит ли спавн обнуление `EnemyCreateNum`/`_Min`/`_Max` |
+| A1 | Does `Create_UnitEnemyBoss(1, 1)` create a normal enemy synchronously, and where; side effects (a boss wave?) |
+| A2 | Does copying `AObj_UnitEnemy` + `GetComponent<C_Battle_EnemyUnit>` + `Start_Unit` work, is it a full enemy |
+| B | Does an enemy stay in place if its coroutines are stopped and its body made kinematic, and can it be driven every frame |
+| C | What it costs to reposition all enemies in a frame |
+| D | Does `Unit_Destroy_Simple` remove new enemies without counting kills |
+| E | Does zeroing `EnemyCreateNum`/`_Min`/`_Max` suppress spawning |
 
-## Разведка 2 — результаты (2026-10-22, два прогона, совпадают)
+## Probe 2: results (2026-10-22, two runs, consistent)
 
-| Опыт | Результат |
+| Experiment | Result |
 |---|---|
-| A1 | ✅ `Create_UnitEnemyBoss(1, 1)` синхронно создаёт обычного врага типа 1 (HP 20, размер 1,25), объект ловится хуком `Start_Unit` во время вызова, стоит в точке героя. Побочно: `ApplyBossNum` 0 → 1 (static) — возвращать после вызова. |
-| A2 | ❌ `AObj_UnitEnemy` — не шаблон, а живой враг («10045»); у копии нет компонента `C_Battle_EnemyUnit`. Путь отброшен. |
-| B | ✅ `StopAllCoroutines()` — враг стоит на месте (0,00 за 3 с; толкотня ≤0,15 без кинематики). Ведомый каждый кадр «стоп+кин» — отклонение 0,000. Только `isKinematic` — ИИ уводит врага. Марионеток можно убить (Unit_IsLive → false). |
-| C | ✅ Переставить всех врагов: 41–55 шт. — 0,31–0,39 мс с готовыми ссылками на Transform (2,6–4,0 мс с поиском объекта) → ~1,5 мс на 200 врагов. |
-| D | ✅ `Unit_Destroy_Simple()` на следующем кадре после `Start_Unit`: 62–64 из 62–64 убраны, счётчики убийств/денег не меняются. |
-| E | ✅ `EnemyCreateNum = EnemyCreateNum_Min = EnemyCreateNum_Max = 0` → 0 новых врагов за 10 с (исходно 2 / 0 / 300). |
+| A1 | ✅ `Create_UnitEnemyBoss(1, 1)` synchronously creates a normal type-1 enemy (HP 20, size 1.25); the `Start_Unit` hook catches the object during the call; it stands at the hero's position. Side effect: `ApplyBossNum` 0 → 1 (static), restore it after the call. |
+| A2 | ❌ `AObj_UnitEnemy` isn't a template but a live enemy ("10045"); the copy has no `C_Battle_EnemyUnit` component. Approach dropped. |
+| B | ✅ `StopAllCoroutines()`: the enemy stays in place (0.00 over 3 s; jostling ≤0.15 without kinematics). Driven every frame with "stop + kinematic": deviation 0.000. `isKinematic` alone: the AI walks the enemy away. Puppets can be killed (Unit_IsLive → false). |
+| C | ✅ Repositioning all enemies: 41–55 of them take 0.31–0.39 ms with cached Transform references (2.6–4.0 ms with object lookup), so ~1.5 ms for 200 enemies. |
+| D | ✅ `Unit_Destroy_Simple()` on the frame after `Start_Unit`: 62–64 of 62–64 removed, kill/money counters unchanged. |
+| E | ✅ `EnemyCreateNum = EnemyCreateNum_Min = EnemyCreateNum_Max = 0` → 0 new enemies in 10 s (originally 2 / 0 / 300). |
 
-## Разведка 3 (coop_probe 0.3.0, 2026-10-22) — подтверждение
+## Probe 3 (coop_probe 0.3.0, 2026-10-22): confirmation
 
-Те же результаты третий раз: созданный по команде враг (поставлен в 3,5 ед от героя, корутины остановлены) убит магией героя за 2 с;
-ведомые марионетки — отклонение 0,000; со стопом корутин — ≤0,10; только кинематика — ИИ уводит на 3–7 ед; переставить 53 врага — 0,44 мс;
-подавление 62/62; обнуление спавна — 0 новых. `ApplyBossNum` после вызова возвращается без последствий.
+Same results a third time: an enemy created on command (placed 3.5 units from the hero, coroutines stopped) was killed by
+the hero's magic within 2 s; driven puppets: deviation 0.000; with coroutines stopped: ≤0.10; kinematics only: the AI walks
+them 3–7 units away; repositioning 53 enemies: 0.44 ms; suppression 62/62; zeroed spawning: 0 new. `ApplyBossNum` is
+restored after the call with no consequences.
 
-Попутно («Кооператив» 1.3.0 на том же бою): повтор магии друга работает (215 касов, без вылетов); заклинание 6 не создаёт `Bullet_Create`
-(вращающиеся вокруг героя объекты) — такие заклинания пересылкой снарядов не покрываются. Поиск ближайшего врага перебором на каждый снаряд
-давал хук кадра 8–15 мс — в 1.3.1 позиции врагов кешируются 4 раза в секунду, повторы дозируются (4 каста и 3 мс за кадр).
+Along the way (Co-op 1.3.0 in the same battle): repeating the friend's magic works (215 casts, no crashes); spell 6 doesn't
+create `Bullet_Create` (objects circling the hero), so forwarding projectiles doesn't cover such spells. Searching for the
+nearest enemy by brute force on every projectile made the frame hook take 8–15 ms; in 1.3.1 enemy positions are cached
+4 times per second, and replays are rationed (4 casts and 3 ms per frame).
 
-## Схема «мира хоста»
+## "Host's world" design
 
-1. Хост: хук `After Start_Unit` → сетевое событие «враг N: тип, varA, varB, x, y»; раз в 1/15 с — позиции и HP живых врагов (пачкой).
-2. Гость: свой спавн погашен (E или D); на событие — создать врага (A1/A2), остановить корутины, сделать тело кинематическим (B); каждый кадр — плавно вести по позициям хоста (как союзников).
-3. Урон гостя по копии → событие хосту → `ICombat.Damage` по настоящему врагу; смерть у хоста → `Unit_Destroy_Simple` копии у гостя.
+1. Host: hook `After Start_Unit` → network event "enemy N: type, varA, varB, x, y"; every 1/15 s, positions and HP of live enemies (in a batch).
+2. Guest: own spawning suppressed (E or D); on the event, create an enemy (A1/A2), stop its coroutines, make the body kinematic (B); every frame, move it smoothly along the host's positions (like allies).
+3. Guest's damage to a copy → event to the host → `ICombat.Damage` on the real enemy; death at the host → `Unit_Destroy_Simple` on the guest's copy.
 
-## Этап 1 — Кооператив 1.5.0 (настройка «Общие враги», по умолчанию выкл.)
+## Stage 1: Co-op 1.5.0 (the «Общие враги» setting, off by default)
 
-Решения (23.10.2026): модель «мир хоста»; урон гостя по врагам хоста — через уже работающий повтор его магии у хоста
-(копии у гостя не отправляют попаданий); первым шагом — сразу мод.
+Decisions (23.10.2026): the "host's world" model; the guest's damage to the host's enemies goes through the already
+working replay of the guest's magic at the host (copies at the guest don't send hits); the first step is the mod itself.
 
-- Хост: в состоянии до 10 раз в секунду — `en: [[номер, UnitID, x×100, y×100], …]` от точки старта хоста (до 250 врагов);
-  номер — свой счётчик по указателю объекта врага.
-- Гость (`WorldSync.cs`): спавн погашен — `EnemyCreateNum/_Min/_Max = 0` раз в 0,5 с (исходные значения возвращаются при
-  выключении) + `Unit_Destroy_Simple` для любого своего врага (хук `After Start_Unit` и чистка раз в 0,5 с).
-  Копия — `Create_UnitEnemyBoss(тип, 1)` (до 4 за кадр, `ApplyBossNum` возвращается), `StopAllCoroutines`, `isKinematic`;
-  каждый кадр — позиция с задержкой и интерполяцией как у союзника. Пропал у хоста → `ICombat.Damage(1e9)` (убийство и
-  выпадения у гостя). Убита у гостя его магией → не пересоздаётся.
-- В режиме общих врагов союзник стоит там же, где друг (без ограничения «Дальность призрака»).
+- Host: in the state, up to 10 times per second, `en: [[id, UnitID, x×100, y×100], …]` relative to the host's start
+  point (up to 250 enemies); the id is the host's own counter keyed by the enemy object's pointer.
+- Guest (`WorldSync.cs`): spawning suppressed with `EnemyCreateNum/_Min/_Max = 0` every 0.5 s (original values restored
+  on shutdown) + `Unit_Destroy_Simple` for any own enemy (hook `After Start_Unit` and a sweep every 0.5 s).
+  A copy is `Create_UnitEnemyBoss(type, 1)` (up to 4 per frame, `ApplyBossNum` restored), `StopAllCoroutines`,
+  `isKinematic`; every frame, the position with delay and interpolation as for an ally. Gone at the host →
+  `ICombat.Damage(1e9)` (kill and drops at the guest). Killed at the guest by the guest's magic → not recreated.
+- In shared enemies mode an ally stands where the friend is (without the «Дальность призрака» ghost range limit).
 
-Известные ограничения этапа 1: враги идут к хосту (ИИ хоста), копии у гостя не атакуют издалека (корутины стоят),
-особые враги (`varA/varB` у `Start_Unit`) создаются обычными; отдельно не синхронизированы боссы и снаряды врагов.
+Known limitations of stage 1: enemies walk to the host (the host's AI), copies at the guest don't attack from range
+(coroutines are stopped), special enemies (`varA/varB` in `Start_Unit`) are created as normal ones; bosses and enemy
+projectiles aren't synced separately.
 
-## Особые мобы — 1.6.65–1.6.77 (разведка 27.10.2026, coop_debug на обоих телефонах)
+## Special mobs: 1.6.65–1.6.77 (probe 27.10.2026, coop_debug on both phones)
 
-Особых мобов игра создаёт тремя корутинами `C_Battle_Manager` — все через тот же `C_Battle_EnemyUnit.Start_Unit`:
+The game creates special mobs with three `C_Battle_Manager` coroutines, all through the same `C_Battle_EnemyUnit.Start_Unit`:
 
-| Корутина | Что это | Пул |
+| Coroutine | What it is | Pool |
 |---|---|---|
-| `Create_UnitEnemySpecial` | шаг 5 с, список «Super» (`_List_ApplyUnitEnemyDistribution_Super`), `SpecialVarB`; на первых волнах список пуст | `List_BattleUnitEnemySpecial_Empty` (80) |
-| `Create_UnitEnemyEpic` | группа по кругу из 10 точек (`_SpawnPositions`), `SpecialVarA/B`; поля менеджера `CreateEpicEnemyID/Num/Delay` | `List_BattleUnitEnemyEpic_Empty` (15) |
-| `Play_Create_UnitEnemy_Transition` | подобранное усиление мобов (15 шт., varA 1 или UnitCreateID 3, красная обводка) | обычный |
+| `Create_UnitEnemySpecial` | 5 s step, the "Super" list (`_List_ApplyUnitEnemyDistribution_Super`), `SpecialVarB`; the list is empty on the first waves | `List_BattleUnitEnemySpecial_Empty` (80) |
+| `Create_UnitEnemyEpic` | a group on a circle of 10 points (`_SpawnPositions`), `SpecialVarA/B`; manager fields `CreateEpicEnemyID/Num/Delay` | `List_BattleUnitEnemyEpic_Empty` (15) |
+| `Play_Create_UnitEnemy_Transition` | the picked-up mob power-up (15 mobs, varA 1 or UnitCreateID 3, red outline) | normal |
 
-До 1.6.65 мод различал только «переход», остальные шли гостю обычными мобами того же типа; гость вдали от хоста оставлял
-свои особые и переходы у себя — у каждого были свои.
+Before 1.6.65 the mod only recognized "transition"; the rest went to the guest as normal mobs of the same type; a guest far
+from the host kept their own special and transition mobs, so each player had their own.
 
-1.6.65: шаг этих корутин (хук `MoveNext` до/после) помечает, откуда враг. Хост шлёт гостю метку и размер (элементы 12–13
-записи врага); гость свои особые и эпические мобы убирает всегда (кроме своей босс-волны), а переход от своего подбора
-пересылает хосту и вдали от него (в событии `dmg` — массив `so` с меткой к каждому врагу из `s`). В журнале — по одному
-снимку полей на вид у хоста («особый моб хоста: …») и у копии гостя («особая копия у гостя (особый): …») — сверить вид.
+1.6.65: a step of these coroutines (hook `MoveNext` before/after) tags where an enemy came from. The host sends the guest
+the tag and size (elements 12–13 of the enemy record); the guest always removes their own special and epic mobs (except
+during their own boss wave), and forwards transition mobs from their own pickup to the host, even when far from it (in the
+`dmg` event: the `so` array with a tag for each enemy in `s`). The log gets one field snapshot per kind at the host
+(«особый моб хоста: …», host's special mob) and at the guest's copy («особая копия у гостя (особый): …», special copy at
+the guest), to compare the look.
 
-1.6.66: переход игра создаёт `Start_Unit(тип, 0, 0)` с `UnitCreateID 1`, а `Unit_SpecialVarA = 1` и `UnitCreateID = 3`
-ставит позже (в хуке «создан 1», через секунду — 3), поэтому хост перечитывает эти поля в первых трёх отправках врага,
-а гость, если запись врага стала особой позже, повторяет на копии `Start_Unit` с видом особого. Раньше так терялось
-большинство мобов перехода (журнал 1.6.17: из 128 особых хоста с varA 1 ушли 15).
-Эпический моб (тип 6 в проверке) по полям — обычный моб своего типа (`UnitCreateID 1`, без обводки, varA/varB 0):
-особый он тем, что появляется пачкой по кругу; копия у гостя — обычная копия этого типа.
-1.6.67: и силу моба перехода игра ставит после `Start_Unit` (тип 16: `UnitApply_HpMax_Bonus` 10000, `UnitBase_HpMax` 2525
-против 500, сопротивления 0,5, отталкивание 0,85, `ApplyMoveSpeedRatioUVar` 0,65, размер 1 против 0,8); `Start_Unit(16, 1, 0)`
-с `UnitCreateID 3` даёт обычного по силе моба. Гость держит своего моба перехода 0,3 с, читает эти поля (`TransitionStats`)
-и шлёт хосту вместе с ним (`sf` в событии `dmg`), хост выставляет их своему мобу.
-1.6.68–1.6.72: на паузе (своей или хоста — выбор умения) мир гостя не выключается; свой моб перехода гостя, появившийся, пока мир
-был выключен, чистка отправляет хосту. `Unit_Destroy_Simple` моба перехода у гостя не убирает (во время появления) — свой враг
-гостя, переживший его, убирается `Unit_Disappear_Peace`.
-1.6.75: метка особого моба (`Obj_MonsterIcon`, `Sprite_MonsterIcon01/02`) и обводка есть только у заготовок пула особых
-(`List_BattleUnitEnemySpecial_Empty`); у заготовок пула боссов и обычного — нет. Особые копии у гостя и переход гостя у хоста
-создаются из заготовки пула особых (эпические — эпических), положенной в начало пула боссов перед `Create_UnitEnemyBoss`.
-1.6.77: размер метки (`MonsterIcon_Size`) и обводку (`Obj_UnitSprite_Back` с `Sprite_UnitEnemySpecial_Back`) ставит корутина
-перехода, а не `Start_Unit`: хост шлёт их (элементы 14–15 записи врага), гость включает на копии.
+1.6.66: the game creates a transition mob with `Start_Unit(type, 0, 0)` and `UnitCreateID 1`, and sets
+`Unit_SpecialVarA = 1` and `UnitCreateID = 3` later (in the hook it's "created 1", a second later 3), so the host re-reads
+these fields in the first three sends of an enemy, and the guest, if an enemy record became special later, repeats
+`Start_Unit` on the copy with the special kind. Previously most transition mobs were lost this way (log 1.6.17: of the
+host's 128 special mobs with varA 1, 15 were sent).
+An epic mob (type 6 in the test) is field-wise a normal mob of its type (`UnitCreateID 1`, no outline, varA/varB 0): it is
+special because it spawns in a batch on a circle; the copy at the guest is a normal copy of that type.
+1.6.67: the game also sets a transition mob's strength after `Start_Unit` (type 16: `UnitApply_HpMax_Bonus` 10000,
+`UnitBase_HpMax` 2525 vs 500, resistances 0.5, knockback 0.85, `ApplyMoveSpeedRatioUVar` 0.65, size 1 vs 0.8);
+`Start_Unit(16, 1, 0)` with `UnitCreateID 3` gives a mob of normal strength. The guest holds their transition mob for 0.3 s,
+reads these fields (`TransitionStats`) and sends them to the host with the mob (`sf` in the `dmg` event); the host applies
+them to its mob.
+1.6.68–1.6.72: on pause (own or the host's skill choice) the guest's world isn't turned off; the guest's own transition mob
+that appeared while the world was off is sent to the host by the sweep. `Unit_Destroy_Simple` doesn't remove a transition
+mob at the guest (while it is appearing); a guest's own enemy that outlived it is removed with `Unit_Disappear_Peace`.
+1.6.75: the special mob marker (`Obj_MonsterIcon`, `Sprite_MonsterIcon01/02`) and outline exist only on preforms of the
+special pool (`List_BattleUnitEnemySpecial_Empty`); preforms of the boss pool and the normal pool don't have them. Special
+copies at the guest and the guest's transition mobs at the host are created from a special-pool preform (epic ones from the
+epic pool) placed at the head of the boss pool before `Create_UnitEnemyBoss`.
+1.6.77: the marker size (`MonsterIcon_Size`) and the outline (`Obj_UnitSprite_Back` with `Sprite_UnitEnemySpecial_Back`)
+are set by the transition coroutine, not by `Start_Unit`: the host sends them (elements 14–15 of the enemy record), and the
+guest turns them on for the copy.
 
 
-## Заготовки боссов — 1.6.115 (телефоны, 01.11.2026)
+## Boss preforms: 1.6.115 (phones, 01.11.2026)
 
-Копию любого врага гость создаёт `Create_UnitEnemyBoss`, а та берёт заготовку из `List_BattleUnitEnemyBoss_Empty[0]`
-(и только при двух и больше в пуле). Настоящие заготовки боссов — с 3 дочерними объектами, у обычных мобов детей нет.
-До 1.6.115 обычные копии в первые минуты съедали все 14 заготовок боссов, мод доливал в пул обычных мобов, и на 5:00
-`Start_Unit(41)` на такой заготовке падал в игре с `NullReferenceException` (перехватчик гасит её — мод видел только
-«тип 41 не создался»). Теперь обычной копии мод кладёт заготовку из обычного пула в начало пула боссов; типы боссов
-узнаёт по своей босс-волне гостя и по неудаче (тогда испорченная заготовка выключается и возвращается в обычный пул,
-повтор — через 2 с).
+The guest creates a copy of any enemy with `Create_UnitEnemyBoss`, which takes a preform from
+`List_BattleUnitEnemyBoss_Empty[0]` (and only when the pool has two or more). Real boss preforms have 3 child objects;
+normal mob preforms have no children. Before 1.6.115 normal copies used up all 14 boss preforms in the first minutes, the
+mod topped up the pool with normal mobs, and at 5:00 `Start_Unit(41)` on such a preform failed inside the game with a
+`NullReferenceException` (the interceptor swallows it; the mod only saw «тип 41 не создался», type 41 not created). Now for
+a normal copy the mod puts a preform from the normal pool at the head of the boss pool; it learns the boss types from the
+guest's own boss wave and from failures (then the broken preform is turned off and returned to the normal pool, retry in
+2 s).
 
-Проверка спавна — журнал `сверка спавна` (SpawnAudit.cs): раз в 30 с часов боя хост пишет, сколько врагов создала игра
-и сколько ушло гостю, гость — сколько пришло номеров, сколько создано копий и сколько пропало у хоста до копии, по типам
-и по видам. Вызвать особых мобов у хоста через `coop_debug` — в docs/device-tests/1.6.116.md.
+Spawn check: the `сверка спавна` (spawn audit) log (SpawnAudit.cs). Every 30 s of battle clock the host writes how many
+enemies the game created and how many were sent to the guest; the guest writes how many ids arrived, how many copies were
+created and how many disappeared at the host before a copy was made, by type and by kind. How to summon special mobs at
+the host via `coop_debug` is in docs/device-tests/1.6.116.md.

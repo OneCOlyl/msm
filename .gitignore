@@ -5,3 +5,4 @@ coop_cheat_src/
 stubs/out/
 .idea/
 *.user
+__pycache__/

@@ -1,127 +1,130 @@
-# Для разработчиков
+# For developers
 
-Как устроен репозиторий, как собрать мод, прогнать тесты и выпустить релиз. Игрокам этот документ не нужен — им
-достаточно [установки](INSTALL.md) и [подключения](CONNECT.md).
+English | [Русский](DEVELOPMENT.ru.md)
 
-## Содержание
+How the repository is organized, how to build the mod, run the tests and publish a release. Players don't need this
+document: [installation](INSTALL.md) and [connecting](CONNECT.md) are enough for them.
 
-- [Структура репозитория](#структура-репозитория)
-- [Сборка и тесты](#сборка-и-тесты)
-- [Проверка на телефоне](#проверка-на-телефоне)
-- [Протокол v2](#протокол-v2)
-- [Выпуск новой версии](#выпуск-новой-версии)
-- [Исследования игры](#исследования-игры)
+## Contents
 
-## Структура репозитория
+- [Repository layout](#repository-layout)
+- [Build and tests](#build-and-tests)
+- [Testing on a phone](#testing-on-a-phone)
+- [Protocol v2](#protocol-v2)
+- [Publishing a new version](#publishing-a-new-version)
+- [Game research](#game-research)
 
-| Путь | Что там |
+## Repository layout
+
+| Path | Contents |
 |---|---|
-| `mod/coop/` | Исходники мода. `Net/` — сетевой код без зависимостей от Unity (клиент, встроенный сервер, протокол). |
-| `mod/coop_probe/` | Разведчик для разработки: записывает в `UserData/ModKit/coop_probe.txt`, как устроены нужные части игры. Игрокам не нужен. |
-| `mod/coop_debug/`, `tools/coop_dbg.py` | Отладочная консоль: порт 8770 на телефоне, читать и менять поля игры во время боя. Игрокам не нужна. |
-| `tools/release_notes.py` | Описание релиза: изменения из `.github/release_notes.md` с прошлого опубликованного релиза (его вызывает workflow `release`). |
-| `server/coop_server.py` | Отдельный сервер комнат (Python 3.8+) — если сервер нужен не внутри игры, а, например, в Termux или на ПК. |
-| `server/coop_client.py` | Проверка связи без игры. |
-| `tests/NetTest` | Тесты сети. Одни и те же проверки идут против встроенного сервера и `coop_server.py`: ответы, коды ошибок, слоты, переподключение и ограничения у обоих должны совпадать. |
-| `tests/server_test.py` | Проверки `coop_server.py` изнутри: счётчик входов с адреса (окно, забывание, предел адресов) и обратное давление по каждому получателю. |
-| `tests/ModSim` | Имитация игры: два экземпляра мода (хост и гость) в одном процессе. |
-| `tests/DebugSim` | Проверка отладочной консоли: разбор команд, закрытие порта при выключении. |
-| `tests/ProbeSim` | Проверка разведчика на фальшивых классах игры. |
-| `stubs/` | Заглушки Unity для сборки без телефона. |
-| `libs/` | `ModKit.dll` и `modkit_*.dll` из релиза MS_KIT 2.0 (MIT) — только для сборки. Хэши — в `libs/SHA256SUMS`, их проверяет CI. |
-| `docs/` | Документация, исследования игры, чек-лист и результаты проверок на телефонах. |
-| `.github/workflows/` | `ci.yml` — сборка и тесты на каждый push; `release.yml` — публикация релиза. |
-| `.github/release_notes.md` | Список изменений по версиям; в описание релиза попадают изменения с прошлого релиза. |
+| `mod/coop/` | Mod sources. `Net/` is network code with no Unity dependencies (client, embedded server, protocol). |
+| `mod/coop_probe/` | Development probe: writes to `UserData/ModKit/coop_probe.txt` how the relevant parts of the game work. Players don't need it. |
+| `mod/coop_debug/`, `tools/coop_dbg.py` | Debug console: port 8770 on the phone, read and change game fields during a battle. Players don't need it. |
+| `tools/release_notes.py` | Release description: changes from `.github/release_notes.md` since the last published release (called by the `release` workflow). |
+| `server/coop_server.py` | Standalone room server (Python 3.8+), for when the server shouldn't run inside the game, e.g. in Termux or on a PC. |
+| `server/coop_client.py` | Connection check without the game. |
+| `tests/NetTest` | Network tests. The same checks run against the embedded server and `coop_server.py`: responses, error codes, slots, reconnection and limits must match in both. |
+| `tests/server_test.py` | Internal checks of `coop_server.py`: the per-address join counter (window, expiry, address limit) and per-recipient backpressure. |
+| `tests/ModSim` | Game simulation: two mod instances (host and guest) in one process. |
+| `tests/DebugSim` | Debug console checks: command parsing, port closing on shutdown. |
+| `tests/ProbeSim` | Probe checks on fake game classes. |
+| `stubs/` | Unity stubs for building without a phone. |
+| `libs/` | `ModKit.dll` and `modkit_*.dll` from the MS_KIT 2.0 release (MIT), for building only. Hashes are in `libs/SHA256SUMS`; CI checks them. |
+| `docs/` | Documentation, game research, the checklist and phone test results. Each document exists in English (`*.md`) and Russian (`*.ru.md`); update both. |
+| `.github/workflows/` | `ci.yml`: build and tests on every push; `release.yml`: publishing a release. |
+| `.github/release_notes.md` | Changes by version; the release description gets the changes since the last release. |
 
-## Сборка и тесты
+## Build and tests
 
-Нужны .NET SDK 8, Python 3 и bash (на Windows — Git Bash).
+Requires .NET SDK 8, Python 3 and bash (Git Bash on Windows).
 
 ```bash
 bash build.sh
 ```
 
-Скрипт собирает заглушки Unity, проверяет совпадение версий, собирает `coop`, `coop_probe` и `coop_debug`, упаковывает
-их в `dist/coop.zip`, `dist/coop_probe.zip`, `dist/coop_debug.zip` и прогоняет все тесты. Если тесты не прошли или
-версии не совпадают, скрипт завершается с ошибкой. `SKIP_TESTS=1 bash build.sh` — только сборка и упаковка.
+The script builds the Unity stubs, checks that versions match, builds `coop`, `coop_probe` and `coop_debug`, packs them
+into `dist/coop.zip`, `dist/coop_probe.zip`, `dist/coop_debug.zip` and runs all tests. If tests fail or versions don't
+match, the script exits with an error. `SKIP_TESTS=1 bash build.sh` only builds and packs.
 
-Сборка против настоящих сборок игры (папки `net8/` и `il2cpp/`, скопированные с телефона после первого запуска
-Zombix):
+Building against the real game assemblies (the `net8/` and `il2cpp/` folders copied from the phone after Zombix's first
+launch):
 
 ```bash
-REF=/путь/к/ref bash build.sh
+REF=/path/to/ref bash build.sh
 ```
 
-## Проверка на телефоне
+## Testing on a phone
 
-Установить свежую сборку по USB:
+Install a fresh build over USB:
 
 ```bash
 adb push dist/coop.zip /sdcard/Download/
 ```
 
-Затем в Zombix: «Моды» → «+» → `coop`. Журнал мода:
+Then in Zombix: «Моды» (Mods) → «+» → `coop`. Mod log:
 
 ```bash
 adb shell cat /sdcard/MelonLoader/com.vkslrzm.Zombix/UserData/ModKit/modkit.log | grep "\[coop\]"
 ```
 
-Перед проверкой убедитесь, что в журнале есть строка `кооператив <версия> включён`.
+Before testing, make sure the log has the line `кооператив <версия> включён` (co-op <version> enabled).
 
-Отладочная консоль (`coop_debug` включён на телефоне) доступна только через USB:
+The debug console (with `coop_debug` enabled on the phone) is reachable over USB only:
 
 ```bash
 adb forward tcp:8771 tcp:8770
 python tools/coop_dbg.py 8771 "get mgr.Time_Sec"
 ```
 
-Отдельный сервер и проверка связи без игры:
+Standalone server and a connection check without the game:
 
 ```bash
 python server/coop_server.py --port 8766
-python server/coop_client.py <IP> 8766    # затем команда join
+python server/coop_client.py <IP> 8766    # then the join command
 ```
 
-## Протокол v2
+## Protocol v2
 
-JSON-строки (UTF-8, одна строка — одно сообщение, не длиннее 16 КБ) поверх TCP, порт по умолчанию 8766.
+JSON lines (UTF-8, one line is one message, at most 16 KB) over TCP, default port 8766.
 
-- **Клиент → сервер:** `CREATE_ROOM`, `JOIN_ROOM`, `PLAYER_STATE`, `EVENT`, `PING`, `LEAVE_ROOM`.
-- **Сервер → клиент:** `WELCOME`, `ROOM_CREATED`, `ROOM_JOINED`, `PLAYER_JOINED`, `PLAYER_LEFT`, `REMOTE_PLAYER_STATE`,
+- **Client → server:** `CREATE_ROOM`, `JOIN_ROOM`, `PLAYER_STATE`, `EVENT`, `PING`, `LEAVE_ROOM`.
+- **Server → client:** `WELCOME`, `ROOM_CREATED`, `ROOM_JOINED`, `PLAYER_JOINED`, `PLAYER_LEFT`, `REMOTE_PLAYER_STATE`,
   `REMOTE_EVENT`, `PONG`, `ERROR`.
 
-Хост отправляет `CREATE_ROOM` и после обрыва возвращается в свою комнату `JOIN_ROOM` с её кодом. `JOIN_ROOM` с пустым
-кодом заходит в комнату на сервере; если комнат нет, отдельный сервер создаёт её, а сервер в игре хоста отвечает
-`room_not_found` («Хост ещё не создал игру»), и клиент повторяет попытку. Если порт закрыт, клиент перебирает порты
-от заданного до +4.
+The host sends `CREATE_ROOM` and after a disconnect returns to its room with `JOIN_ROOM` and the room code. `JOIN_ROOM`
+with an empty code joins the room on the server; if there are no rooms, the standalone server creates one, while the
+server inside the host's game answers `room_not_found` («Хост ещё не создал игру», the host hasn't created the game yet),
+and the client retries. If the port is closed, the client tries ports from the given one up to +4.
 
-Поле `protocol` в `CREATE_ROOM`/`JOIN_ROOM`: нет поля — старый клиент, пускаем; иначе только целое `2`, всё остальное —
-`protocol_mismatch`. Версию самого мода сервер не сверяет.
+The `protocol` field in `CREATE_ROOM`/`JOIN_ROOM`: no field means an old client, let it in; otherwise only the integer
+`2` is accepted, anything else is `protocol_mismatch`. The server doesn't check the mod version itself.
 
-Коды ошибок: `room_full`, `room_not_found`, `protocol_mismatch`, `server_busy` (подключений или комнат слишком много),
-`rate_limited` (слишком частые входы), `not_in_room`, `invalid_json`, `invalid_message`, `message_too_large`,
+Error codes: `room_full`, `room_not_found`, `protocol_mismatch`, `server_busy` (too many connections or rooms),
+`rate_limited` (joining too often), `not_in_room`, `invalid_json`, `invalid_message`, `message_too_large`,
 `unknown_type`.
 
-Ограничения встроенного сервера: 32 подключения, 8 с одного адреса, 16 комнат, 60 входов в комнату в минуту с адреса,
-30 с на вход в комнату после подключения, 40 с без данных — отключение.
+Embedded server limits: 32 connections, 8 per address, 16 rooms, 60 room joins per minute per address, 30 s to join a
+room after connecting, disconnect after 40 s without data.
 
-## Выпуск новой версии
+## Publishing a new version
 
-1. Поднимите версию в трёх местах: `version` в `mod/coop/mod.json`, `ModVersion` в `mod/coop/CoopMod.cs` и `<Version>` в
-   `mod/coop/coop.csproj` (`build.sh` проверяет, что они совпадают).
-2. Допишите изменения в начало `.github/release_notes.md` разделом `## Кооператив <версия>`. В описание релиза попадают
-   только разделы, которых не было в прошлом опубликованном релизе (`tools/release_notes.py`). Остальная история
-   остаётся в файле.
-3. Проверьте сборку на двух или более телефонах по [чек-листу](RELEASE_CHECKLIST.md) и запишите результаты в
-   `docs/device-tests/<версия>.md`.
-4. На GitHub откройте Actions → release → Run workflow. GitHub соберёт мод, прогонит тесты и опубликует релиз
-   `v<версия>` с `coop.zip`; результаты проверки попадут в описание релиза. Без файла результатов релиз не
-   публикуется.
+1. Bump the version in three places: `version` in `mod/coop/mod.json`, `ModVersion` in `mod/coop/CoopMod.cs` and
+   `<Version>` in `mod/coop/coop.csproj` (`build.sh` checks that they match).
+2. Add the changes to the top of `.github/release_notes.md` as a `## Co-op <version>` section: English first, then the
+   same in Russian after a `**По-русски:**` line. The release description
+   gets only the sections that weren't in the last published release (`tools/release_notes.py`). The rest of the history
+   stays in the file.
+3. Test the build on two or more phones following the [checklist](RELEASE_CHECKLIST.md) and record the results in
+   `docs/device-tests/<version>.md` (English) and `docs/device-tests/<version>.ru.md` (Russian).
+4. On GitHub open Actions → release → Run workflow. GitHub builds the mod, runs the tests and publishes the
+   `v<version>` release with `coop.zip`; the test results go into the release description. Without the results file
+   the release isn't published; the Russian file is appended if present.
 
-## Исследования игры
+## Game research
 
-Журналы разведок и выводы о внутреннем устройстве Magic Survival:
+Probe logs and findings about Magic Survival's internals:
 
-- [ENEMY_SYNC.md](ENEMY_SYNC.md) — враги, спавн, режим «Общие враги».
-- [ORBITALS.md](ORBITALS.md) — Щит, Спутники, Духи (заклинания без снарядов).
-- [ARMAGEDDON.md](ARMAGEDDON.md) — Армагеддон.
+- [ENEMY_SYNC.md](ENEMY_SYNC.md): enemies, spawning, Shared enemies mode.
+- [ORBITALS.md](ORBITALS.md): Shield, Satellites, Spirits (spells without projectiles).
+- [ARMAGEDDON.md](ARMAGEDDON.md): Armageddon.

@@ -1,126 +1,131 @@
-# Проверка релиза на телефонах
+# Release testing on phones
 
-Автотесты (`bash build.sh`, CI) проверяют сеть, оба сервера и логику мода на ПК, без Unity и без Android. Они не заменяют
-проверку на настоящих телефонах: разметку экрана, работу через VPN, сворачивание игры, поведение Android при смене сети.
+English | [Русский](RELEASE_CHECKLIST.ru.md)
 
-**Правило:** релиз публикуется только с результатами проверки на двух или более телефонах. Результаты — файл
-`docs/device-tests/<версия>.md` (шаблон ниже). Без него workflow `release` останавливается, а сам файл попадает в описание
-релиза.
+Autotests (`bash build.sh`, CI) check the network, both servers and the mod logic on a PC, without Unity and without
+Android. They don't replace testing on real phones: screen layout, working over a VPN, minimizing the game, Android's
+behavior when the network changes.
 
-Перед проверкой убедитесь, что на всех телефонах стоит именно эта сборка: в `modkit.log` должна быть строка
-`кооператив <версия> включён`.
+**Rule:** a release is published only with test results from two or more phones. The results are the file
+`docs/device-tests/<version>.md` in English (template below) and the same in Russian, `docs/device-tests/<version>.ru.md`.
+Without the English file the `release` workflow stops; both files go into the release description.
 
-## Обязательные сценарии
+Before testing, make sure every phone runs exactly this build: `modkit.log` must have the line
+`кооператив <версия> включён` (co-op <version> enabled).
 
-Отметьте каждый: ✅ работает, ❌ не работает (что именно), — не проверялось (почему).
+## Required scenarios
 
-### Подключение
+Mark each one: ✅ works, ❌ doesn't work (what exactly), — not tested (why).
 
-| № | Сценарий | Что должно быть |
+### Connection
+
+| # | Scenario | Expected |
 |---|---|---|
-| 1 | 2 игрока, Anywherelan | Хост — слот 1, гость — слот 2; у обоих «на связи, пинг … мс» |
-| 2 | 3 игрока | Слоты 1–3, у каждого два союзника |
-| 3 | 4 игрока, затем пятый | Пятый получает «Комната заполнена» |
-| 4 | Другой VPN (Tailscale или ZeroTier) | То же, что в п. 1 |
-| 5 | Гость нажал «Подключиться» раньше, чем хост — «Создать игру» | Гость ждёт и сам входит к хосту, слот 2 |
-| 6 | Порт 8766 на телефоне хоста занят | Игра создана на соседнем порту, гость находит её сам |
+| 1 | 2 players, Anywherelan | Host is slot 1, guest is slot 2; both show «на связи, пинг … мс» (connected, ping … ms) |
+| 2 | 3 players | Slots 1–3, everyone has two allies |
+| 3 | 4 players, then a fifth | The fifth gets «Комната заполнена» (Room is full) |
+| 4 | Another VPN (Tailscale or ZeroTier) | Same as #1 |
+| 5 | Guest taps «Подключиться» (Connect) before the host taps «Создать игру» (Create game) | Guest waits and joins the host by itself, slot 2 |
+| 6 | Port 8766 is taken on the host's phone | Game is created on a neighboring port, the guest finds it by itself |
 
-### Обрыв и восстановление
+### Disconnect and recovery
 
-| № | Сценарий | Что должно быть |
+| # | Scenario | Expected |
 |---|---|---|
-| 7 | У гостя выключить Wi-Fi/мобильную сеть на 10–30 с посреди боя и включить | «Связь потеряна, переподключаюсь…», затем снова на связи, тот же слот, без двойника у хоста |
-| 8 | То же у хоста | Хост возвращается в свою комнату (тот же код), гости остаются в ней |
-| 9 | Переключение Wi-Fi ↔ мобильная сеть | Переподключение без действий игрока |
-| 10 | Свернуть игру у гостя на 30 с и вернуться | Переподключение; у хоста союзник гостя пропадает и появляется снова |
+| 7 | Turn off the guest's Wi-Fi/mobile data for 10–30 s mid-battle and turn it back on | «Связь потеряна, переподключаюсь…» (Connection lost, reconnecting…), then connected again, same slot, no duplicate at the host |
+| 8 | Same at the host | Host returns to its room (same code), guests stay in it |
+| 9 | Switching Wi-Fi ↔ mobile data | Reconnects without player action |
+| 10 | Guest minimizes the game for 30 s and comes back | Reconnects; at the host the guest's ally disappears and appears again |
 
-### Выключение и включение мода
+### Turning the mod off and on
 
-| № | Сценарий | Что должно быть |
+| # | Scenario | Expected |
 |---|---|---|
-| 11 | Выключить мод у гостя во время общей паузы (хост выбирает умение) | Игра гостя идёт с обычной скоростью |
-| 12 | Выключить мод у гостя при включённых «Общих врагах» | Копии врагов хоста исчезают, свои враги снова появляются |
-| 13 | Снова включить мод и подключиться | Новая игра работает как обычно |
-| 14 | Отладка (`coop_debug`) выключена | Порт 8770 закрыт: `adb forward tcp:8771 tcp:8770` + `python tools/coop_dbg.py 8771 "get mgr"` не подключается |
+| 11 | Turn the mod off at the guest during a shared pause (host is picking a skill) | The guest's game runs at normal speed |
+| 12 | Turn the mod off at the guest with Shared enemies on | Copies of the host's enemies disappear, own enemies spawn again |
+| 13 | Turn the mod back on and connect | A new game works as usual |
+| 14 | Debug (`coop_debug`) is off | Port 8770 is closed: `adb forward tcp:8771 tcp:8770` + `python tools/coop_dbg.py 8771 "get mgr"` doesn't connect |
 
-### Игра
+### Game
 
-| № | Сценарий | Что должно быть |
+| # | Scenario | Expected |
 |---|---|---|
-| 15 | Общая пауза | Пока любой выбирает умение, пауза у всех; после выбора — у всех продолжается |
-| 15а | Вход в бой: хост вошёл, гость ещё в меню (и наоборот) | Вошедший на паузе, «Ждём «Имя» — ещё не в бою…»; гость вошёл — у всех пошло, часы почти равны; гость потом вышел в меню — хост не встаёт на паузу |
-| 15б | Часы разошлись (вошёл в бой на 5+ с позже, у одного игра замедлена) | У того, кто впереди, паузы нет; у отстающего в журнале `часы: отстаю от «Имя» на N с — ускоряю до ×…`, затем `часы: догнал «Имя»` |
-| 16 | Общие враги (экспериментально) | У гостя враги хоста, урон гостя доходит до хоста, убийство у хоста убирает копию |
-| 16а | Общие враги: гость дальше 15 от хоста, до и после первой босс-волны | Вокруг гостя появляются свои враги и идут на него; вернулся к хосту — новые не появляются |
-| 16б | Общие враги: босс-волна, гость вдали от хоста («сбор на босса» выключен) | Своих врагов у гостя нет, мобы не исчезают на глазах, волна не лагает; после волны свои враги снова идут |
-| 16в | Общие враги: сбор на босса | На начале волны гость вдали сразу у хоста, граница арены — как у хоста, урона за её краем нет; после обелиска хоста мана долетает до гостя, через 2 с он на прежнем месте |
-| 16г | Общие враги: Terra, особый обелиск в начале боя | У гостя обелиска нет (`особый обелиск: у гостя убран`), у хоста лежит; хост поднял — у гостя окно выбора артефакта «Obelisk», мана не притягивается |
-| 16д | Общие враги: продавец артефактов после босса | Продавец появляется у гостя вместе с хостом, и после второго босса тоже; в журнале гостя после подбора хостом обелиска `Battle_ClearON 0 → 1` |
-| 16е | Общие враги: спавн всех видов мобов (Terra, до 5:00) | В журналах строки `сверка спавна` с одними часами: у гостя `пропущено` около 0, по видам (обычный, особый, эпический, переход) «пришло» как «ушло гостю» у хоста; на 5:00 копии боссов есть, `тип … не создался` нет |
-| 17 | Здоровье союзников | Под союзником — полоска здоровья, как у своего героя; союзник за краем экрана — стрелка его цвета в его сторону и плашка с именем, зелёная заливка убывает при уроне; «погиб» при смерти друга |
-| 18 | Лечение | Кнопка «Лечить» при здоровье друга меньше 70%, лечит на 25%, перезарядка 40 с |
-| 19 | Магия друга | Снаряды, Щит, Спутники, Духи, Электрозона, Маг. круг и Армагеддон друга видны у его союзника |
-| 20 | Разные экраны | Кнопки «Кооп», «Лечить», стрелки и плашки союзников не перекрывают интерфейс игры хотя бы на двух разных разрешениях |
+| 15 | Shared pause | While anyone picks a skill, everyone is paused; after the choice, everyone continues |
+| 15a | Battle entry: host entered, guest still in the menu (and vice versa) | The one who entered is paused with «Ждём «Имя» — ещё не в бою…» (Waiting for "Name", not in battle yet…); guest entered: everyone runs, clocks almost equal; guest then went back to the menu: the host doesn't pause |
+| 15b | Clocks drifted (entered the battle 5+ s later, one player's game runs slow) | The player ahead has no pause; the lagging player's log has `часы: отстаю от «Имя» на N с — ускоряю до ×…` (clock: N s behind "Name", speeding up to ×…), then `часы: догнал «Имя»` (clock: caught up with "Name") |
+| 16 | Shared enemies (experimental) | The guest has the host's enemies, the guest's damage reaches the host, a kill at the host removes the copy |
+| 16a | Shared enemies: guest further than 15 from the host, before and after the first boss wave | Own enemies spawn around the guest and go for them; back near the host, no new ones spawn |
+| 16b | Shared enemies: boss wave, guest far from the host (boss gathering off) | The guest has no own enemies, mobs don't vanish in plain sight, the wave doesn't lag; after the wave own enemies come again |
+| 16c | Shared enemies: boss gathering | At wave start a far guest is at the host right away, the arena border is the same as the host's, no damage beyond its edge; after the host's obelisk the mana reaches the guest, and 2 s later the guest is back in place |
+| 16d | Shared enemies: Terra, special obelisk at battle start | The guest has no obelisk (`особый обелиск: у гостя убран`, special obelisk: removed at the guest), the host has it; the host picks it up: the guest gets the «Obelisk» artifact choice window, mana isn't pulled in |
+| 16e | Shared enemies: artifact merchant after a boss | The merchant appears at the guest together with the host, after the second boss too; the guest's log after the host's obelisk pickup has `Battle_ClearON 0 → 1` |
+| 16f | Shared enemies: spawning of all mob kinds (Terra, up to 5:00) | Logs have `сверка спавна` (spawn audit) lines with the same clock time: at the guest `пропущено` (missed) is about 0, per kind (normal, special, epic, transition) "received" matches "sent to guest" at the host; at 5:00 boss copies exist, no `тип … не создался` (type … not created) |
+| 17 | Ally health | Under the ally, a health bar like your own hero's; an ally off screen has an arrow in its color pointing at it and a name plate whose green fill shrinks with damage; «погиб» (died) when the friend dies |
+| 18 | Heal | «Лечить» (Heal) button when a friend has less than 70% health, heals 25%, 40 s cooldown |
+| 19 | Friend's magic | Projectiles, Shield, Satellites, Spirits, Electric Zone, Magic Circle and Armageddon of the friend are visible at their ally |
+| 20 | Different screens | The «Кооп», «Лечить» buttons, ally arrows and plates don't cover the game UI on at least two different resolutions |
 
-## Журналы: что собрать
+## Logs: what to collect
 
-Выводы — по журналам, а не только «на глаз». Папка ModKit на телефоне: `/sdcard/MelonLoader/com.vkslrzm.Zombix/UserData/ModKit/`.
+Draw conclusions from logs, not just by eye. The ModKit folder on the phone: `/sdcard/MelonLoader/com.vkslrzm.Zombix/UserData/ModKit/`.
 
-| Файл | Что в нём |
+| File | Contents |
 |---|---|
-| `modkit.log` | Журнал ModKit и мода: строки `[coop]`, ошибки `ОШИБКА [coop] <где> (n/5)`, `медленный хук`, `мод выключен`, `отключён из-за ошибок` |
-| `lastrun.txt` | Где был код мода в момент падения игры: строка `inside`/`after` и кольцо последних меток (`ring`) — их ставит `ctx.Mark` |
-| `store/coop.json` | Сохранённое состояние мода: имя игрока и `clientId` |
-| `config.json` | Какие моды включены и их настройки |
-| `../../MelonLoader/Latest.log` | Журнал MelonLoader: нативные сбои и ошибки загрузки, которых нет в `modkit.log` |
+| `modkit.log` | ModKit and mod log: `[coop]` lines, errors `ОШИБКА [coop] <где> (n/5)`, `медленный хук` (slow hook), `мод выключен` (mod disabled), `отключён из-за ошибок` (disabled due to errors) |
+| `lastrun.txt` | Where the mod's code was when the game crashed: the `inside`/`after` line and the ring of recent marks (`ring`), set by `ctx.Mark` |
+| `store/coop.json` | Saved mod state: player name and `clientId` |
+| `config.json` | Which mods are on and their settings |
+| `../../MelonLoader/Latest.log` | MelonLoader log: native crashes and load errors that aren't in `modkit.log` |
 
-С ПК (Git Bash; `MSYS_NO_PATHCONV=1`, иначе `/sdcard` превратится в путь Windows):
+From a PC (Git Bash; `MSYS_NO_PATHCONV=1`, otherwise `/sdcard` turns into a Windows path):
 
 ```bash
 D=/sdcard/MelonLoader/com.vkslrzm.Zombix
 for f in UserData/ModKit/modkit.log UserData/ModKit/lastrun.txt UserData/ModKit/store/coop.json UserData/ModKit/config.json MelonLoader/Latest.log; do
-  MSYS_NO_PATHCONV=1 adb -s <серийник> pull "$D/$f" "$(basename "$f")"
+  MSYS_NO_PATHCONV=1 adb -s <serial> pull "$D/$f" "$(basename "$f")"
 done
 ```
 
-Сначала проверьте версию: в `modkit.log` должна быть строка `кооператив <версия> включён`.
+Check the version first: `modkit.log` must have the line `кооператив <версия> включён`.
 
-**Когда собирать и что искать:**
+**When to collect and what to look for:**
 
-| Случай | Что должно быть в журналах |
+| Case | What the logs should have |
 |---|---|
-| Игра упала | `lastrun.txt`: последняя метка `coop` — где упало (`союзник: создание`, `общие враги: создание копии врага (тип N)`, `общие враги: здоровье копии`, `общие враги: убираю своих врагов…`, `Армагеддон друга: …`, `возврат игры: …`). В `Latest.log` — нативная ошибка |
-| Мод выключен (вручную или ядром) | `мод выключен: coop`; при выключении посреди общих врагов — `общие враги: выключено (мод выключен)`. Если `отключён из-за ошибок` — 5 ошибок за 10 с, причина в строках `ОШИБКА [coop]` перед ней |
-| Потеря связи | `клиент: соединение (IP:порт): …` с причиной; после восстановления — `в комнате <код>: слот N` с тем же кодом и слотом |
-| Конец боя | `кадр за бой (N кадров), среднее мс: …; максимум мс: …` — какая часть кадра дорогая; `медленный кадр … мс: …` — первые 5 кадров дольше 8 мс с раскладкой и числом врагов; `ошибки обработчиков за бой: …` — если обработчики хуков падали |
+| The game crashed | `lastrun.txt`: the last `coop` mark shows where it crashed (`союзник: создание`, `общие враги: создание копии врага (тип N)`, `общие враги: здоровье копии`, `общие враги: убираю своих врагов…`, `Армагеддон друга: …`, `возврат игры: …`). `Latest.log` has the native error |
+| The mod was turned off (manually or by the core) | `мод выключен: coop`; when turned off during shared enemies, `общие враги: выключено (мод выключен)`. If `отключён из-за ошибок`: 5 errors within 10 s, the cause is in the `ОШИБКА [coop]` lines before it |
+| Connection lost | `клиент: соединение (IP:порт): …` with the reason; after recovery, `в комнате <код>: слот N` with the same code and slot |
+| End of battle | `кадр за бой (N кадров), среднее мс: …; максимум мс: …` (frame per battle: average/max ms) shows which part of the frame is expensive; `медленный кадр … мс: …` (slow frame) shows the first 5 frames over 8 ms with a breakdown and enemy count; `ошибки обработчиков за бой: …` (handler errors per battle) if hook handlers failed |
 
-Нагрузка: в итоге боя `кадр за бой` и строки `медленный кадр` показывают, сколько мс уходит на сеть и паузу, отправку состояния (у хоста — с врагами), Армагеддон, общих врагов, часы и союзников. Для релиза с общими врагами приложите эти строки за бой с 100+ врагами у хоста и гостя.
+Load: in the battle summary, `кадр за бой` and the `медленный кадр` lines show how many ms go to network and pause,
+sending state (with enemies at the host), Armageddon, shared enemies, clocks and allies. For a release with shared
+enemies, attach these lines from a battle with 100+ enemies at both host and guest.
 
-## Шаблон `docs/device-tests/<версия>.md`
+## Template for `docs/device-tests/<version>.md`
 
 ```markdown
-# Проверка <версия> на телефонах
+# Testing <version> on phones
 
-Дата: ГГГГ-ММ-ДД. Проверял: <кто>.
+Date: YYYY-MM-DD. Tested by: <who>.
 
-| Телефон | Android | Разрешение | Роль |
+| Phone | Android | Resolution | Role |
 |---|---|---|---|
-| <модель> | <версия> | <ширина×высота> | хост |
-| <модель> | <версия> | <ширина×высота> | гость |
+| <model> | <version> | <width×height> | host |
+| <model> | <version> | <width×height> | guest |
 
 VPN: <Anywherelan / Tailscale / ZeroTier>.
 
-| № | Результат | Заметки |
+| # | Result | Notes |
 |---|---|---|
 | 1 | ✅ | |
 | … | | |
 
-## Журналы
+## Logs
 
-- Нагрузка (итог боя, хост / гость): `кадр за бой …`
-- Ошибки `ОШИБКА [coop]` и `ошибки обработчиков за бой`: <нет / какие>
+- Load (battle summary, host / guest): `кадр за бой …`
+- Errors `ОШИБКА [coop]` and `ошибки обработчиков за бой`: <none / which>
 
-## Известные ограничения
+## Known limitations
 
-- <что не работает или не проверено и почему>
+- <what doesn't work or wasn't tested, and why>
 ```

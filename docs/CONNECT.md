@@ -1,222 +1,229 @@
-# Подключение игроков
+# Connecting players
 
-Как собрать игру на 2–4 человек, в том числе из разных городов и сетей. Перед этим мод должен быть установлен на всех
-телефонах — см. [установку на Android](INSTALL.md).
+English | [Русский](CONNECT.ru.md)
 
-## Содержание
+How to set up a game for 2–4 people, including from different cities and networks. The mod must already be installed on
+every phone: see [installing on Android](INSTALL.md).
 
-- [Как это устроено](#как-это-устроено)
-- [Перед игрой](#перед-игрой)
-- [Виртуальная сеть](#виртуальная-сеть)
+## Contents
+
+- [How it works](#how-it-works)
+- [Before you play](#before-you-play)
+- [Virtual network](#virtual-network)
   - [Anywherelan](#anywherelan)
   - [Tailscale](#tailscale)
   - [ZeroTier](#zerotier)
-  - [Игроки в одной Wi-Fi-сети](#игроки-в-одной-wi-fi-сети)
-- [Создание игры (хост)](#создание-игры-хост)
-- [Подключение к игре (остальные)](#подключение-к-игре-остальные)
-- [Проверка соединения](#проверка-соединения)
-- [Если не подключается](#если-не-подключается)
+  - [Players on the same Wi-Fi network](#players-on-the-same-wi-fi-network)
+- [Creating a game (host)](#creating-a-game-host)
+- [Joining a game (other players)](#joining-a-game-other-players)
+- [Connection check](#connection-check)
+- [If you can't connect](#if-you-cant-connect)
 
-## Как это устроено
+## How it works
 
-- Один игрок — **хост**. Он нажимает «Создать игру», и в его Zombix запускается сервер на порту **8766**. Отдельный
-  сервер или VPS не нужен.
-- Остальные подключаются к хосту по его IP-адресу. Хост всегда игрок № 1, остальные получают номера 2–4 по очереди.
-- Телефоны в разных сетях (дома, у друга, на мобильном интернете) напрямую друг друга не видят. Поэтому все игроки
-  входят в одну **виртуальную сеть** — Anywherelan, Tailscale или ZeroTier. В ней у каждого телефона свой постоянный
-  адрес, и друзья подключаются к хосту по этому адресу.
+- One player is the **host**. They tap «Создать игру» (Create game), and a server starts inside their Zombix on port
+  **8766**. You don't need a separate server or VPS.
+- The others connect to the host by IP address. The host is always player 1; the others get numbers 2–4 in turn.
+- Phones on different networks (at home, at a friend's, on mobile data) can't see each other directly. So all players
+  join one **virtual network**: Anywherelan, Tailscale or ZeroTier. In it each phone has its own permanent address, and
+  friends connect to the host at that address.
 
-## Перед игрой
+## Before you play
 
-- На всех телефонах стоит одна и та же версия мода «Кооператив».
-- Все выбрали **одно** VPN-приложение и вошли в **одну** сеть.
-- Android держит включённым только один VPN. Выключите другие VPN-приложения и прокси, иначе виртуальная сеть
-  отключится.
-- Отключите для VPN-приложения и для Zombix экономию заряда (Настройки → Приложения → … → Батарея → «Без ограничений»),
-  иначе Android может остановить их в фоне.
-- **Хост держит игру открытой** весь сеанс. Свёрнутую игру Android приостанавливает: через 40 секунд без данных сервер
-  отключает игроков, а мод переподключает их, когда хост вернётся.
+- Every phone has the same version of the Co-op mod.
+- Everyone picked **one** VPN app and joined **one** network.
+- Android keeps only one VPN on at a time. Turn off other VPN apps and proxies, or the virtual network disconnects.
+- Turn off battery saving for the VPN app and for Zombix (Settings → Apps → … → Battery → "Unrestricted"), or Android
+  may stop them in the background.
+- **The host keeps the game open** for the whole session. Android suspends a minimized game: after 40 seconds without
+  data the server disconnects players, and the mod reconnects them when the host comes back.
 
-## Виртуальная сеть
+## Virtual network
 
-Настройте сеть один раз: в следующий раз достаточно включить VPN в приложении.
+Set up the network once: next time, just turn on the VPN in the app.
 
 ### Anywherelan
 
-Бесплатно, без регистрации, телефоны соединяются напрямую. Это единственная сеть, проверенная с модом на телефонах.
+Free, no sign-up, phones connect directly. It's the only network tested with the mod on phones.
 
-1. Установите Anywherelan на каждый телефон: [F-Droid](https://f-droid.org/packages/com.anywherelan.awl/) или APK из
-   [релизов на GitHub](https://github.com/anywherelan/awl/releases).
-2. Запустите приложение и включите VPN. Android спросит разрешение на VPN-подключение — разрешите.
-3. Добавьте друзей. Хост отправляет каждому игроку свою ссылку, QR-код или ID устройства (peer ID). Игрок открывает
-   ссылку или добавляет ID в приложении, и хосту приходит запрос в друзья — хост его **принимает**. Ссылка-приглашение
-   добавляет устройство сразу, без подтверждения.
-4. В списке устройств друг должен быть на связи. Адреса в Anywherelan обычно вида `10.66.0.X`. У хоста адрес видно
-   в окне «Кооп», в строке с пометкой «← VPN».
+1. Install Anywherelan on every phone: [F-Droid](https://f-droid.org/packages/com.anywherelan.awl/) or an APK from the
+   [GitHub releases](https://github.com/anywherelan/awl/releases).
+2. Open the app and turn on the VPN. Android asks for permission to set up a VPN connection: allow it.
+3. Add friends. The host sends each player their link, QR code or device ID (peer ID). The player opens the link or adds
+   the ID in the app, and the host gets a friend request, which the host **accepts**. An invite link adds the device
+   right away, without confirmation.
+4. The friend must be online in the device list. Anywherelan addresses usually look like `10.66.0.X`. The host's address
+   is shown in the «Кооп» window, on the line marked «← VPN».
 
-Гостям достаточно дружить с хостом: все данные игры идут через хоста, связь гостей между собой не нужна.
+Guests only need to be friends with the host: all game data goes through the host, and guests don't need to connect to
+each other.
 
-Если оба телефона за строгим NAT (например, у некоторых мобильных операторов), Anywherelan передаёт данные через
-промежуточный узел. Игра работает, но пинг может быть выше.
+If both phones are behind a strict NAT (some mobile carriers, for example), Anywherelan relays data through an
+intermediate node. The game works, but ping may be higher.
 
 ### Tailscale
 
-Нужен аккаунт (Google, Microsoft, GitHub, Apple и др.). Бесплатного тарифа хватает.
+You need an account (Google, Microsoft, GitHub, Apple and others). The free plan is enough.
 
-1. Установите [Tailscale](https://tailscale.com/download/android) на каждый телефон, войдите и включите подключение.
-2. Объедините устройства одним из способов:
-   - **Поделиться телефоном хоста (проще всего).** Хост открывает [консоль Tailscale](https://login.tailscale.com/admin/machines)
-     → Machines → свой телефон → «Share…» и отправляет приглашение (письмо или ссылку) каждому другу. Друг принимает
-     приглашение в своём аккаунте, и телефон хоста появляется в его списке устройств. Друзья смогут подключаться к хосту,
-     а большего игре не нужно.
-   - **Пригласить друзей в свою сеть.** Хост открывает [Users](https://login.tailscale.com/admin/users) → «Invite users».
-     Друзья входят в сеть хоста, и все устройства видят друг друга.
-3. Адрес хоста — вида `100.X.Y.Z`. Он показан в приложении Tailscale и в окне «Кооп» с пометкой «← VPN».
+1. Install [Tailscale](https://tailscale.com/download/android) on every phone, sign in and connect.
+2. Join the devices in one of two ways:
+   - **Share the host's phone (easiest).** The host opens the [Tailscale console](https://login.tailscale.com/admin/machines)
+     → Machines → their phone → "Share…" and sends an invite (email or link) to each friend. The friend accepts the invite
+     in their own account, and the host's phone appears in their device list. Friends can then connect to the host, which
+     is all the game needs.
+   - **Invite friends to your network.** The host opens [Users](https://login.tailscale.com/admin/users) → "Invite users".
+     Friends join the host's network, and all devices see each other.
+3. The host's address looks like `100.X.Y.Z`. It's shown in the Tailscale app and in the «Кооп» window, marked «← VPN».
 
-Не входите всей компанией в один аккаунт: так сложнее разобраться, чьё устройство чьё, и проще случайно отключить чужое.
+Don't sign the whole group into one account: it's harder to tell whose device is whose, and easier to disconnect someone
+else's by accident.
 
 ### ZeroTier
 
-Хосту нужен аккаунт, чтобы создать сеть; остальным — только приложение.
+The host needs an account to create the network; the others only need the app.
 
-1. Хост входит на [my.zerotier.com](https://my.zerotier.com/), нажимает **Create A Network** и копирует **Network ID** —
-   16 символов вида `d5e04297a16fa690`. Его нужно сообщить друзьям.
-2. Каждый игрок устанавливает приложение **ZeroTier One** ([zerotier.com/download](https://www.zerotier.com/download/)),
-   нажимает «+», вводит Network ID и включает сеть. Android спросит разрешение на VPN — разрешите.
-3. Хост на странице сети в разделе **Members** ставит галочку **Auth** у каждого нового устройства. Пока устройство не
-   одобрено, сеть у него пишет «Access Denied».
-4. Адрес устройства — в колонке **Managed IPs** на странице сети и в приложении ZeroTier One. Диапазон адресов задаётся
-   в настройках сети на my.zerotier.com.
+1. The host signs in at [my.zerotier.com](https://my.zerotier.com/), clicks **Create A Network** and copies the
+   **Network ID**: 16 characters like `d5e04297a16fa690`. Send it to your friends.
+2. Each player installs the **ZeroTier One** app ([zerotier.com/download](https://www.zerotier.com/download/)), taps "+",
+   enters the Network ID and turns the network on. Android asks for VPN permission: allow it.
+3. On the network page, under **Members**, the host ticks **Auth** for each new device. Until a device is authorized, its
+   network shows "Access Denied".
+4. A device's address is in the **Managed IPs** column on the network page and in the ZeroTier One app. The address range
+   is set in the network settings on my.zerotier.com.
 
-### Игроки в одной Wi-Fi-сети
+### Players on the same Wi-Fi network
 
-Если все телефоны подключены к одному роутеру, можно обойтись без виртуальной сети: в окне «Кооп» хоста будет адрес
-вида `192.168.X.Y` (без пометки «← VPN»), и друзья вводят его. Если подключиться не получается, роутер, скорее всего,
-изолирует устройства друг от друга (часто так бывает в гостевых и общественных сетях) — тогда включите виртуальную сеть.
+If all phones are connected to the same router, you can do without a virtual network: the host's «Кооп» window shows an
+address like `192.168.X.Y` (without the «← VPN» mark), and friends enter it. If connecting fails, the router most likely
+isolates devices from each other (common in guest and public networks); then turn on a virtual network.
 
-## Создание игры (хост)
+## Creating a game (host)
 
-1. Включите VPN на своём телефоне.
-2. Запустите Zombix и в главном меню нажмите **«Кооп»** (вверху по центру). Если кнопки не видно: «Моды» → карточка
-   «Кооператив» → «Настройки».
-3. Нажмите **«Создать игру (я хост)»**. В строке статуса вверху окна появится «Создаю игру…», затем «Игра создана.
-   Сообщите друзьям IP, отмеченный «← VPN».».
-4. В блоке «Ваш IP» найдите адрес с пометкой **«← VPN»** — это адрес в виртуальной сети. Сообщите его друзьям.
-   Остальные адреса (`192.168…`, адрес мобильной сети) друзьям из других сетей не подойдут.
-5. Не закрывайте и не сворачивайте игру, пока все не подключатся и не закончат бой.
+1. Turn on the VPN on your phone.
+2. Start Zombix and tap **«Кооп»** (Co-op) in the main menu (top center). If you can't see the button: «Моды» (Mods) →
+   the «Кооператив» card → «Настройки» (Settings).
+3. Tap **«Создать игру (я хост)»** (Create game, I'm the host). The status line at the top of the window shows
+   «Создаю игру…» (Creating game…), then «Игра создана. Сообщите друзьям IP, отмеченный «← VPN».» (Game created. Give
+   your friends the IP marked «← VPN».).
+4. In the «Ваш IP» (Your IP) block find the address marked **«← VPN»**: it's your address in the virtual network. Give
+   it to your friends. The other addresses (`192.168…`, the mobile network address) won't work for friends on other
+   networks.
+5. Don't close or minimize the game until everyone has joined and finished the battle.
 
-Порт по умолчанию — `8766`. Если его заняла другая программа на телефоне, мод возьмёт следующий свободный (до `8770`)
-и напишет об этом. Друзьям менять порт не нужно: мод найдёт игру сам.
+The default port is `8766`. If another program on the phone took it, the mod takes the next free one (up to `8770`) and
+says so. Friends don't need to change the port: the mod finds the game by itself.
 
-В списке «Игроки» рядом с вашим именем показан код комнаты (`комната ABC123`). Вводить его не нужно: друзья
-подключаются только по IP.
+The «Игроки» (Players) list shows the room code next to your name (`комната ABC123`, room ABC123). You don't need to
+enter it: friends connect by IP only.
 
-## Подключение к игре (остальные)
+## Joining a game (other players)
 
-1. Включите VPN и убедитесь, что телефон хоста виден в VPN-приложении.
-2. Запустите Zombix и нажмите **«Кооп»**.
-3. В строке «Подключиться к хосту — IP и порт» введите четыре числа IP хоста, например `10` . `66` . `0` . `2`.
-   Порт оставьте `8766`, если хост не говорил другого.
-4. Нажмите **«Подключиться»**. В статусе появится «подключаюсь…», затем «Хост …: на связи, пинг N мс», а в списке
-   «Игроки» — все участники.
-5. Начните бой — каждый у себя. Друзья появятся у вас союзниками. Кто войдёт в бой первым, будет ждать на паузе, пока
-   не войдут остальные (не дольше 2 минут).
+1. Turn on the VPN and make sure the host's phone is visible in the VPN app.
+2. Start Zombix and tap **«Кооп»**.
+3. On the «Подключиться к хосту — IP и порт» (Connect to host: IP and port) line, enter the four numbers of the host's
+   IP, for example `10` . `66` . `0` . `2`. Leave the port at `8766` unless the host said otherwise.
+4. Tap **«Подключиться»** (Connect). The status shows «подключаюсь…» (connecting…), then «Хост …: на связи, пинг N мс»
+   (Host …: connected, ping N ms), and the «Игроки» list shows all participants.
+5. Start a battle, each player in their own game. Friends appear in your battle as allies. Whoever enters the battle
+   first waits on pause until the others enter (2 minutes at most).
 
-Можно нажать «Подключиться» и раньше, чем хост создаст игру: мод напишет «Хост ещё не создал игру» и сам войдёт, когда
-игра появится.
+You can tap «Подключиться» even before the host creates the game: the mod says «Хост ещё не создал игру» (The host
+hasn't created the game yet) and joins by itself when the game appears.
 
-Введённый IP сохраняется: в следующий раз достаточно нажать «Подключиться».
+The IP you entered is saved: next time just tap «Подключиться».
 
-В одной игре до 4 игроков. Пятый получит «Комната заполнена».
+One game holds up to 4 players. A fifth gets «Комната заполнена» (Room is full).
 
-## Проверка соединения
+## Connection check
 
-Проверяйте по порядку: каждый шаг имеет смысл, только если прошёл предыдущий.
+Check in order: each step makes sense only if the previous one passed.
 
-### 1. Виртуальная сеть работает
+### 1. The virtual network works
 
-- **Anywherelan:** друг в списке устройств на связи.
-- **Tailscale:** устройство хоста есть в списке и не помечено как отключённое.
-- **ZeroTier:** в приложении сеть в состоянии OK; на my.zerotier.com у всех участников стоит Auth и недавнее время Last Seen.
+- **Anywherelan:** the friend is online in the device list.
+- **Tailscale:** the host's device is in the list and isn't marked as offline.
+- **ZeroTier:** the app shows the network as OK; on my.zerotier.com every member has Auth and a recent Last Seen time.
 
-### 2. Вы знаете верный IP хоста
+### 2. You know the right host IP
 
-- У хоста: окно «Кооп» → «Ваш IP» → строка с пометкой «← VPN». Адрес должен совпадать с адресом его телефона в
-  VPN-приложении.
-- Сверьте с типичным видом: Anywherelan — `10.66.0.X`, Tailscale — `100.X.Y.Z`, ZeroTier — из колонки Managed IPs.
-- Не используйте `127.0.0.1`, `192.168.…` (если вы не в одной Wi-Fi-сети) и адреса мобильного интернета.
+- On the host: «Кооп» window → «Ваш IP» → the line marked «← VPN». The address must match the phone's address in the
+  VPN app.
+- Compare with the usual form: Anywherelan `10.66.0.X`, Tailscale `100.X.Y.Z`, ZeroTier from the Managed IPs column.
+- Don't use `127.0.0.1`, `192.168.…` (unless you're on the same Wi-Fi network) or mobile internet addresses.
 
-### 3. Телефон хоста отвечает (ping)
+### 3. The host's phone responds (ping)
 
-Нужен [Termux](https://f-droid.org/packages/com.termux/) на телефоне гостя или компьютер в той же виртуальной сети:
+You need [Termux](https://f-droid.org/packages/com.termux/) on the guest's phone or a computer in the same virtual
+network:
 
 ```bash
 ping -c 4 10.66.0.2
 ```
 
-На Windows: `ping -n 4 10.66.0.2`. Если ответов нет, проблема в виртуальной сети, а не в игре: вернитесь к шагу 1.
-Учтите, что отдельные сети и устройства могут не отвечать на ping, даже когда всё работает. Тогда переходите к шагу 4.
+On Windows: `ping -n 4 10.66.0.2`. If there are no replies, the problem is in the virtual network, not the game: go
+back to step 1. Note that some networks and devices don't answer ping even when everything works. Then go on to step 4.
 
-### 4. Порт игры открыт
+### 4. The game port is open
 
-Хост должен уже нажать «Создать игру» и держать игру открытой.
+The host must have tapped «Создать игру» already and keep the game open.
 
-- **Termux на телефоне гостя:**
+- **Termux on the guest's phone:**
 
   ```bash
   pkg install netcat-openbsd
   nc -zv 10.66.0.2 8766
   ```
 
-  `succeeded` или `open` — порт доступен. `Connection refused` — хост не создал игру или свернул её.
-  Нет ответа долго — порт закрыт виртуальной сетью, или IP неверный.
+  `succeeded` or `open` means the port is reachable. `Connection refused` means the host didn't create the game or
+  minimized it. A long wait with no answer means the virtual network blocks the port, or the IP is wrong.
 
-- **Windows (PowerShell), компьютер в той же виртуальной сети:**
+- **Windows (PowerShell), a computer in the same virtual network:**
 
   ```powershell
   Test-NetConnection 10.66.0.2 -Port 8766
   ```
 
-  `TcpTestSucceeded : True` — порт доступен.
+  `TcpTestSucceeded : True` means the port is reachable.
 
-- **Проверка, что отвечает именно сервер мода** (Python 3 в Termux или на компьютере, файл
+- **Check that the mod's server is the one answering** (Python 3 in Termux or on a computer, file
   [`server/coop_client.py`](../server/coop_client.py)):
 
   ```bash
   python coop_client.py 10.66.0.2 8766
   ```
 
-  Строка `< {"type":"WELCOME","protocol":2,…}` означает, что сервер мода работает. Наберите `quit`.
-  **Не набирайте `join`**: так вы займёте место игрока, и у хоста появится лишний участник.
+  The line `< {"type":"WELCOME","protocol":2,…}` means the mod's server works. Type `quit`.
+  **Don't type `join`**: it takes a player slot, and an extra participant appears for the host.
 
-### 5. Связь в игре
+### 5. In-game connection
 
-В окне «Кооп» у гостя в статусе «на связи, пинг N мс». Чем выше пинг, тем заметнее запаздывают союзники. Если интернет
-слабый, уменьшите в настройках мода «Обновлений позиции в секунду» до 10.
+In the guest's «Кооп» window the status reads «на связи, пинг N мс» (connected, ping N ms). The higher the ping, the
+more the allies lag behind. On a weak connection, lower the mod setting «Обновлений позиции в секунду» (Position updates
+per second) to 10.
 
-## Если не подключается
+## If you can't connect
 
-Сообщения из строки статуса окна «Кооп» и подписей на экране:
+Messages from the status line of the «Кооп» window and on-screen labels:
 
-| Сообщение | Что сделать |
+| Message | What to do |
 |---|---|
-| «хост не принимает подключения» | Хост не нажал «Создать игру» или свернул игру. Игра у хоста должна быть открыта. |
-| «адрес недоступен (VPN выключен или IP неверный)» | Включите VPN на обоих телефонах, проверьте IP (шаги 1–2 проверки). |
-| «время ожидания истекло» или «сервер не ответил за 8 с» | Телефон хоста не отвечает: VPN выключен у кого-то из двоих, хост не в той же сети или IP неверный. |
-| «нет ответа 20 с» | Связь пропала посреди игры. Мод переподключится сам, когда сеть вернётся. |
-| «на порту … отвечает не сервер кооператива» | На этом адресе и порту работает другая программа. Проверьте IP и порт. |
-| Нажатие «Создать игру» ничего не дало | Посмотрите строку статуса вверху окна «Кооп» — там написана причина. |
-| «Хост ещё не создал игру» | Ничего делать не нужно: мод подождёт и войдёт в игру хоста сам. |
-| «Комната заполнена (максимум 4 игрока)» | В игре уже 4 игрока. |
-| «Версия «Кооператива» не совпадает с хостом» | Установите у всех игроков последнюю версию мода. |
-| «Слишком много подключений с вашего адреса», «Сервер переполнен» | Закройте лишние копии игры или подождите — мод повторит попытку сам. |
-| «Слишком частые подключения, попробуйте через минуту» | Подключались больше 60 раз в минуту. Подождите минуту. |
-| «Порт 8766 занят другой программой, игра создана на порту 8767» | Ничего делать не нужно: друзья с портом 8766 найдут игру сами. |
-| «Не удалось создать игру: порты 8766–8770 заняты» | Порты заняты другой программой на телефоне хоста (например, сервером в Termux). Закройте её или укажите в окне «Кооп» другой порт — и сообщите его друзьям. |
-| «Связь потеряна, переподключаюсь…» | Ничего делать не нужно: мод переподключается сам каждые 3 секунды. |
+| «хост не принимает подключения» (host isn't accepting connections) | The host didn't tap «Создать игру» or minimized the game. The host's game must be open. |
+| «адрес недоступен (VPN выключен или IP неверный)» (address unreachable: VPN off or wrong IP) | Turn on the VPN on both phones, check the IP (check steps 1–2). |
+| «время ожидания истекло» (timed out) or «сервер не ответил за 8 с» (server didn't answer within 8 s) | The host's phone doesn't respond: one of the two has the VPN off, the host isn't in the same network, or the IP is wrong. |
+| «нет ответа 20 с» (no answer for 20 s) | The connection dropped mid-game. The mod reconnects by itself when the network comes back. |
+| «на порту … отвечает не сервер кооператива» (the port … isn't answered by a co-op server) | Another program runs at this address and port. Check the IP and port. |
+| Tapping «Создать игру» did nothing | Look at the status line at the top of the «Кооп» window: it shows the cause. |
+| «Хост ещё не создал игру» (The host hasn't created the game yet) | Nothing to do: the mod waits and joins the host's game by itself. |
+| «Комната заполнена (максимум 4 игрока)» (Room is full, 4 players max) | The game already has 4 players. |
+| «Версия «Кооператива» не совпадает с хостом» (Co-op version doesn't match the host) | Install the latest mod version for all players. |
+| «Слишком много подключений с вашего адреса» (Too many connections from your address), «Сервер переполнен» (Server is full) | Close extra copies of the game or wait: the mod retries by itself. |
+| «Слишком частые подключения, попробуйте через минуту» (Connecting too often, try again in a minute) | More than 60 connections per minute. Wait a minute. |
+| «Порт 8766 занят другой программой, игра создана на порту 8767» (Port 8766 is taken by another program, game created on port 8767) | Nothing to do: friends with port 8766 find the game by themselves. |
+| «Не удалось создать игру: порты 8766–8770 заняты» (Couldn't create the game: ports 8766–8770 are taken) | Another program on the host's phone holds the ports (a server in Termux, for example). Close it, or set another port in the «Кооп» window and give it to your friends. |
+| «Связь потеряна, переподключаюсь…» (Connection lost, reconnecting…) | Nothing to do: the mod reconnects by itself every 3 seconds. |
 
-Журнал мода: `/sdcard/MelonLoader/com.vkslrzm.Zombix/UserData/ModKit/modkit.log` (строки с `[coop]`). Если создаёте
-[issue](https://github.com/OneCOlyl/msm/issues), приложите последние строки журнала хоста и гостя и укажите VPN.
+Mod log: `/sdcard/MelonLoader/com.vkslrzm.Zombix/UserData/ModKit/modkit.log` (lines with `[coop]`). If you open an
+[issue](https://github.com/OneCOlyl/msm/issues), attach the last lines of the host's and guest's logs and name the VPN.
 
-Соединение не шифруется и не защищено паролем. Играйте только внутри виртуальной сети и не открывайте порт 8766 в
-интернет на роутере. Подробнее — в разделе [«Безопасность»](FEATURES.md#безопасность).
+The connection is not encrypted and has no password. Play only inside the virtual network and don't open port 8766 to
+the internet on your router. More in [Security](FEATURES.md#security).

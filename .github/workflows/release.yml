@@ -45,6 +45,8 @@ jobs:
           echo "прошлый релиз: ${PREV:-нет}"
           python3 tools/release_notes.py .github/release_notes.md "${{ steps.ver.outputs.ver }}" "$PREV" > changes.md
           { cat changes.md; echo; echo "---"; echo; cat "$F"; } > release_notes_full.md
+          RU="${F%.md}.ru.md"
+          if [ -f "$RU" ]; then { echo; echo "---"; echo; cat "$RU"; } >> release_notes_full.md; fi
 
       - name: Сборка и тесты
         run: |

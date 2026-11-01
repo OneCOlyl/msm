@@ -1,183 +1,201 @@
-# Возможности, настройки и ограничения
+# Features, settings and limitations
 
-Описание соответствует версии мода **1.6.64**. Что изменилось в каждой версии — в [описании релизов](../.github/release_notes.md)
-и на [странице релизов](https://github.com/OneCOlyl/msm/releases).
+English | [Русский](FEATURES.ru.md)
 
-## Содержание
+This description matches mod version **1.6.116**. Changes in each version are in the [release notes](../.github/release_notes.md)
+and on the [releases page](https://github.com/OneCOlyl/msm/releases).
 
-- [Главное: у каждого свой мир](#главное-у-каждого-свой-мир)
-- [Возможности](#возможности)
-- [Что синхронизируется](#что-синхронизируется)
-- [Настройки](#настройки)
-- [Совместимость версий](#совместимость-версий)
-- [Известные ограничения](#известные-ограничения)
-- [Безопасность](#безопасность)
-- [Что проверено](#что-проверено)
+## Contents
 
-## Главное: у каждого свой мир
+- [Key point: everyone has their own world](#key-point-everyone-has-their-own-world)
+- [Features](#features)
+- [What is synced](#what-is-synced)
+- [Settings](#settings)
+- [Version compatibility](#version-compatibility)
+- [Known limitations](#known-limitations)
+- [Security](#security)
+- [What has been tested](#what-has-been-tested)
 
-Каждый игрок играет в **своём** бою: у него свои враги, свой уровень, свои заклинания, артефакты и опыт. Враги, урон и
-прокачка считаются внутри закрытого кода игры, поэтому полностью общий бой мод не делает. Друг приходит в ваш бой
-**союзником** — цветной копией героя, которая двигается и колдует так же, как друг у себя.
+## Key point: everyone has their own world
 
-Исключение — экспериментальный режим [«Общие враги»](#общие-враги-экспериментально): в нём у всех игроков враги хоста.
+Each player plays in **their own** battle: their own enemies, level, spells, artifacts and experience. Enemies, damage
+and leveling are computed inside the game's closed code, so the mod doesn't make a fully shared battle. A friend comes
+to your battle as an **ally**: a colored copy of the hero that moves and casts the same way the friend does in their
+own game.
 
-## Возможности
+The exception is the experimental [Shared enemies](#shared-enemies-experimental) mode: in it every player fights the
+host's enemies.
 
-### Союзники
+## Features
 
-- Друзья, которые сейчас в бою, появляются в вашем бою союзниками. Союзник двигается по пути друга; движение
-  плавное — между обновлениями мод достраивает путь сам.
-- Цвет союзника — по номеру игрока: 1 — золотой, 2 — голубой, 3 — зелёный, 4 — розовый.
-- Союзник **повторяет магию друга**: каждый снаряд героя друга (Огненный шар, Метеорит, Молния и большинство других
-  заклинаний) вылетает у вас из союзника. Урон повторённых заклинаний считается по характеристикам **вашего** героя и
-  настройке «Урон магии друга у вас».
-- **Щит, Спутники, Духи и Электрозона** друга видны вокруг его союзника.
-- **Армагеддон друга** срабатывает и у вас — с анимацией и уроном.
-- Погибший друг пропадает из вашего боя. Друг, от которого 3 секунды нет данных, тоже пропадает и вернётся, когда
-  связь восстановится.
+### Allies
 
-### Здоровье и помощь
+- Friends who are in a battle right now appear in your battle as allies. An ally follows the friend's path; movement is
+  smooth because the mod fills in the path between updates.
+- An ally's color depends on the player number: 1 gold, 2 light blue, 3 green, 4 pink.
+- An ally **repeats the friend's magic**: every projectile of the friend's hero (Fireball, Meteor, Lightning and most
+  other spells) is fired from the ally in your game. Damage of repeated spells is computed from **your** hero's stats
+  and the «Урон магии друга у вас» (Friend's magic damage in your game) setting.
+- The friend's **Shield, Satellites, Spirits, Electric Zone and Magic Circle** are shown around their ally.
+- The friend's **Armageddon** also goes off in your game, with animation and damage.
+- A friend who dies disappears from your battle. A friend with no data for 3 seconds also disappears and comes back when
+  the connection recovers.
 
-- Под каждым союзником — **полоска здоровья**, такая же, как у вашего героя.
-- Если союзник ушёл за край экрана, у края появляется **стрелка в его сторону** и плашка с именем, залитая зелёным по
-  его здоровью. На паузе метки скрыты.
-- Когда у друга меньше 70% здоровья, появляется кнопка **«Лечить»**. Она восстанавливает ему 25% от его максимального здоровья
-  (настройка «Лечение друга, %» того, кто лечит), перезарядка 40 секунд. Если раненых друзей несколько, лечится тот, у кого
-  меньше доля здоровья.
-- Если у вас меньше 25% здоровья, друзьям приходит сигнал **«нужна помощь!»** — не чаще раза в 20 секунд.
-- Подписи на экране: «присоединился», «начал бой — заходите!», «погиб!», «вышел».
+### Health and help
 
-### Общая пауза
+- Each ally has a **health bar** under it, the same as your hero's.
+- When an ally goes off screen, an **arrow pointing towards it** appears at the screen edge, with a name plate filled
+  green by its health. Markers are hidden while paused.
+- When a friend has less than 70% health, a **«Лечить»** (Heal) button appears. It restores 25% of their max health
+  (the healer's «Лечение друга, %» setting), with a 40-second cooldown. If several friends are wounded, the one with the
+  lowest health share is healed.
+- When you have less than 25% health, friends get a **«нужна помощь!»** (need help!) signal, at most once every 20 seconds.
+- On-screen labels: «присоединился» (joined), «начал бой — заходите!» (started a battle, come in!), «погиб!» (died!),
+  «вышел» (left).
 
-- Пока кто-то выбирает умение или стоит в меню паузы, игра на паузе у всех, и часы боя не расходятся.
-  Пауза держится, сколько бы друг ни выбирал, пока он на связи. Если от друга 3 секунды нет данных, пауза снимается.
-- **Общий старт боя:** кто первым вошёл в бой, ждёт на паузе с надписью «Ждём «Имя» — ещё не в бою…», пока не
-  войдут все игроки комнаты, но не дольше 2 минут. Когда все вошли, ожидание до конца боя выключено.
-- **Часы боя догоняются без пауз:** если часы разошлись (кто-то вошёл в бой позже или у него игра замедлена), у
-  отстающего игра ускоряется: ×1,25 при отставании от 2 секунд, ×1,5 от 4, ×2 от 8 — пока не догонит. Тот, кто впереди,
-  не ждёт. За 30 секунд до босс-волны ускорение включается уже с 1 секунды и на ступень сильнее, чтобы волна началась
-  у всех почти вместе. Игра сама замедляет время, когда телефон не успевает рисовать кадры, — поэтому часы на слабом
-  телефоне и отстают; на время догона мод это замедление снимает.
-- Работает у того, у кого включена настройка «Общая пауза»: выключите её — и ваш бой не будет вставать на паузу из-за
-  друзей.
+### Shared pause
 
-### Общие враги (экспериментально)
+- While someone picks a skill or is in the pause menu, the game is paused for everyone, and battle clocks don't drift
+  apart. The pause holds however long the friend takes to choose, as long as they're connected. If there is no data from
+  the friend for 3 seconds, the pause is lifted.
+- **Shared battle start:** whoever enters the battle first waits on pause with the label «Ждём «Имя» — ещё не в бою…»
+  (Waiting for "Name", not in battle yet…) until every player in the room enters, but no longer than 2 minutes. Once
+  everyone is in, this wait is off until the end of the battle.
+- **Battle clocks catch up without pauses:** if clocks drift apart (someone entered the battle later or their game runs
+  slow), the lagging player's game speeds up: ×1.25 when 2+ seconds behind, ×1.5 from 4, ×2 from 8, until it catches
+  up. The player ahead doesn't wait. In the 30 seconds before a boss wave the speed-up starts at 1 second and is one step
+  stronger, so the wave starts for everyone at almost the same time. The game slows time down by itself when the phone
+  can't render frames fast enough, which is why clocks on a weak phone fall behind; the mod lifts this slowdown while
+  catching up.
+- Works for players who have the «Общая пауза» (Shared pause) setting on: turn it off and your battle won't pause
+  because of friends.
 
-Настройка «Общие враги», по умолчанию выключена. **Включите её у всех игроков.**
+### Shared enemies (experimental)
 
-- У гостей свои враги не появляются: вместо них копии врагов хоста в тех же местах. Враг убит у хоста — убит и у
-  гостя, с опытом. Урон гостя по врагам засчитывается у хоста.
-- Гость, отошедший от хоста дальше настройки «Общие враги: гость дальше этого от хоста» (по умолчанию 15), получает
-  своих врагов: игра гостя снова их создаёт, и они идут на него. Хост этих врагов не видит, гость добивает их сам.
-  Когда гость возвращается ближе (на 2 ближе границы, чтобы не переключалось туда-обратно), новые свои враги перестают
-  появляться. Те, что пришли с ним издалека, остаются, пока он их не убьёт. Во время босс-волны своих врагов у гостя нет и вдали от хоста.
-- Гость, который на начале босс-волны далеко от хоста, сразу переносится к нему, и арена босса у него ставится как у
-  хоста. Когда хост поднимает обелиск, к гостю притягивается вся мана с поля, и через 2 с он возвращается туда, где
-  стоял. Выключается настройкой «на босс-волну гость вдали переносится к хосту».
-- Союзник в этом режиме стоит там же, где друг на самом деле, без ограничения «Дальность призрака друга».
-- Босс и обелиск идут за хостом: когда хост поднимает обелиск, у гостей кончается босс-волна, часы выравниваются по
-  хосту, и гость получает то же, что дал бы подбор, — выбор легендарного артефакта и притянутую ману. Ход боя у гостя
-  после босса идёт дальше, как у хоста: растёт сила врагов, появляется продавец артефактов.
-- Особый обелиск в начале боя на Terra есть только у хоста. Когда хост его поднимает, гость получает то же, что дал бы
-  подбор, — выбор артефакта и смену области.
-- Ограничения режима — в [известных ограничениях](#известные-ограничения) и в [docs/ENEMY_SYNC.md](ENEMY_SYNC.md).
+The «Общие враги» (Shared enemies) setting, off by default. **Turn it on for every player.**
 
-## Что синхронизируется
+- Guests don't get their own enemies: instead they have copies of the host's enemies in the same places. An enemy killed
+  at the host is killed at the guest too, with experience. A guest's damage to enemies counts at the host.
+- A guest who moves further from the host than the «Общие враги: гость дальше этого от хоста» (Shared enemies: guest
+  further than this from the host) setting (15 by default) gets their own enemies: the guest's game spawns them again,
+  and they go for the guest. The host doesn't see these enemies; the guest finishes them off alone. When the guest comes
+  back closer (2 units inside the border, so it doesn't flip back and forth), new own enemies stop spawning. Those that
+  followed the guest from afar stay until the guest kills them. During a boss wave the guest has no own enemies even far
+  from the host.
+- A guest who is far from the host when a boss wave starts is moved to the host right away, and the guest's boss arena
+  is set the same as the host's. When the host picks up the obelisk, all mana on the field is pulled to the guest, and
+  2 s later the guest returns to where they stood. Turned off with the «на босс-волну гость вдали переносится к хосту»
+  (on a boss wave a far guest is moved to the host) setting.
+- In this mode an ally stands where the friend really is, without the «Дальность призрака друга» (Friend ghost range)
+  limit.
+- The boss and obelisk follow the host: when the host picks up the obelisk, the guests' boss wave ends, their clocks align
+  with the host, and the guest gets what a pickup would give: a legendary artifact choice and pulled-in mana. After the
+  boss the guest's battle progresses like the host's: enemies get stronger, the artifact merchant appears.
+- The special obelisk at the start of a battle on Terra exists only at the host. When the host picks it up, the guest
+  gets what a pickup would give: an artifact choice and an area change.
+- The host's bosses (for example, the three big bosses on Terra at 5:00) appear at the guest too.
+- The mode's limitations are in [Known limitations](#known-limitations) and in [docs/ENEMY_SYNC.md](ENEMY_SYNC.md).
 
-| Что | Как передаётся |
+## What is synced
+
+| What | How it's sent |
 |---|---|
-| Положение героя | Смещение от точки старта боя, 15 раз в секунду (настройка «Обновлений позиции в секунду»), с меткой времени для плавного движения |
-| Здоровье, гибель, убийства | В каждом обновлении состояния |
-| Вход в бой, пауза, окно выбора умения | В каждом обновлении состояния; на этом построены общая пауза и общий старт боя |
-| Часы боя | В каждом обновлении состояния во время боя |
-| Заклинания | Выпущенные снаряды — пачками событий; у друга каждый повторяется из союзника |
-| Щит, Спутники, Духи, Электрозона | В обновлении состояния во время боя |
-| Армагеддон | Отдельным событием |
-| Лечение и «нужна помощь» | Отдельными событиями |
-| Враги хоста (режим «Общие враги») | Положения и здоровье врагов хоста — в его обновлениях; урон гостя — событием хосту |
+| Hero position | Offset from the battle start point, 15 times per second (the «Обновлений позиции в секунду» setting), with a timestamp for smooth movement |
+| Health, death, kills | In every state update |
+| Battle entry, pause, skill choice window | In every state update; shared pause and shared battle start are built on this |
+| Battle clock | In every state update during a battle |
+| Spells | Fired projectiles, in batches of events; the friend's game repeats each one from the ally |
+| Shield, Satellites, Spirits, Electric Zone, Magic Circle | In the state update during a battle |
+| Armageddon | A separate event |
+| Heal and "need help" | Separate events |
+| Host's enemies (Shared enemies mode) | Positions and health of the host's enemies in the host's updates; the guest's damage as an event to the host |
 
-**Не синхронизируется:** уровень героя и выбранные умения, уровни заклинаний, артефакты, предметы и золото, опыт (кроме
-убийств в режиме «Общие враги»), сохранения и прогресс между боями, выбор героя и локации. Каждый выбирает героя и
-локацию у себя.
+**Not synced:** hero level and chosen skills, spell levels, artifacts, items and gold, experience (except kills in
+Shared enemies mode), saves and progress between battles, hero and location choice. Each player picks a hero and a
+location in their own game.
 
-## Настройки
+## Settings
 
-Настройки — в окне «Моды» → карточка «Кооператив». Они действуют на вашем телефоне.
+Settings are in the «Моды» (Mods) window → the «Кооператив» card. They apply to your phone.
 
-| Настройка | По умолчанию | Диапазон | Что меняет |
+| Setting | Default | Range | What it changes |
 |---|---|---|---|
-| Дальность призрака друга | 6 | 2–12 | Как далеко от вас может отойти союзник. |
-| Лечение друга, % | 25 | 0–50 | Сколько восстанавливает кнопка «Лечить». 0 — убрать кнопку. |
-| Перезарядка лечения, с | 40 | 10–120 | Как часто можно лечить. |
-| Урон магии друга у вас, % | 100 | 0–200 | Сила повторённых заклинаний друга в вашем бою. 0 — только эффект, без урона. |
-| Показывать Щит, Спутников и Духов друга | 1 | 0–1 | 1 — показывать их вокруг союзника, 0 — нет. |
-| Общая пауза | 1 | 0–1 | 1 — ваш бой встаёт на паузу, пока друг выбирает умение, и ждёт друзей на старте; 0 — у вас своя пауза. |
-| Общие враги | 0 | 0–1 | 1 — у всех игроков враги хоста (экспериментально). Включайте у всех игроков. |
-| Общие враги: гость дальше этого от хоста — у него свои враги | 15 | 0–40 | Действует у гостя. Дальше этого расстояния от хоста у гостя появляются свои враги и идут на него; 0 — никогда. |
-| Общие враги: на босс-волну гость вдали переносится к хосту | 1 | 0–1 | Действует у гостя. 1 — на босс-волну перенос к хосту, после волны мана притягивается и гость возвращается; 0 — остаётся где стоит. |
-| Обновлений позиции в секунду | 15 | 5–30 | Как часто ваш телефон сообщает друзьям, где вы. Больше — союзники точнее повторяют движения, но больше трафика (при 15 — около 3 КБ/с). 20–30 — при хорошем интернете, 10 — при слабом. |
+| «Дальность призрака друга» (Friend ghost range) | 6 | 2–12 | How far from you an ally can go. |
+| «Лечение друга, %» (Friend heal, %) | 25 | 0–50 | How much the «Лечить» button restores. 0 removes the button. |
+| «Перезарядка лечения, с» (Heal cooldown, s) | 40 | 10–120 | How often you can heal. |
+| «Урон магии друга у вас, %» (Friend's magic damage in your game, %) | 100 | 0–200 | Strength of the friend's repeated spells in your battle. 0 means effect only, no damage. |
+| «Показывать Щит, Спутников и Духов друга» (Show friend's Shield, Satellites and Spirits) | 1 | 0–1 | 1 shows them around the ally, 0 doesn't. |
+| «Общая пауза» (Shared pause) | 1 | 0–1 | 1: your battle pauses while a friend picks a skill and waits for friends at the start; 0: you have your own pause. |
+| «Общие враги» (Shared enemies) | 0 | 0–1 | 1: every player fights the host's enemies (experimental). Turn it on for every player. |
+| «Общие враги: гость дальше этого от хоста — у него свои враги» (Shared enemies: guest further than this from the host gets own enemies) | 15 | 0–40 | Applies at the guest. Beyond this distance from the host the guest's own enemies spawn and go for the guest; 0 means never. |
+| «Общие враги: на босс-волну гость вдали переносится к хосту» (Shared enemies: on a boss wave a far guest is moved to the host) | 1 | 0–1 | Applies at the guest. 1: moved to the host for the boss wave, after the wave mana is pulled in and the guest goes back; 0: stays put. |
+| «Обновлений позиции в секунду» (Position updates per second) | 15 | 5–30 | How often your phone tells friends where you are. Higher means allies repeat movement more precisely, but more traffic (about 3 KB/s at 15). 20–30 on a good connection, 10 on a weak one. |
 
-IP-адрес и порт хоста задаются в окне «Кооп» и сохраняются между запусками.
+The host's IP address and port are set in the «Кооп» window and saved between launches.
 
-## Совместимость версий
+## Version compatibility
 
-- **Игра:** только Zombix на MelonLoader (`com.vkslrzm.Zombix`), arm64. Оригинальная Magic Survival и Frida-версия
-  Zombix не поддерживаются.
-- **ModKit:** мод собран против `ModKit.dll` и библиотек из MS_KIT 2.0. Нужны библиотеки `modkit_combat`,
-  `modkit_hero`, `modkit_spells`, `modkit_companions` версии от 1.0 и ниже 2.0. С библиотеками 2.x мод не запустится и
-  напишет причину.
-- **Между игроками:** мод сверяет только версию сетевого протокола (сейчас 2; она не менялась с версии 1.0). Если
-  протокол не совпадает, сервер отвечает «Версия «Кооператива» не совпадает с хостом». Разные версии мода с одним
-  протоколом соединятся, но функции, которых нет у одного из игроков, работать не будут:
+- **Game:** only Zombix on MelonLoader (`com.vkslrzm.Zombix`), arm64. The original Magic Survival and the Frida version
+  of Zombix aren't supported.
+- **ModKit:** the mod is built against `ModKit.dll` and the libraries from MS_KIT 2.0. It needs the `modkit_combat`,
+  `modkit_hero`, `modkit_spells`, `modkit_companions` libraries, version 1.0 or later and below 2.0. With 2.x libraries
+  the mod won't start and says why.
+- **Between players:** the mod checks only the network protocol version (currently 2; unchanged since version 1.0). If
+  the protocol doesn't match, the server answers «Версия «Кооператива» не совпадает с хостом» (Co-op version doesn't
+  match the host). Different mod versions with the same protocol connect, but features missing at one of the players
+  won't work:
 
-  | Функция | Нужна версия у обоих |
+  | Feature | Version needed by both |
   |---|---|
-  | Повтор всей магии друга (у старых версий союзник стреляет одним лучшим заклинанием друга) | 1.3 |
-  | Щит, Спутники, Духи, Электрозона друга | 1.4.6 |
-  | Армагеддон друга | 1.4.8 |
-  | Общие враги | 1.5.0 |
-  | Общая пауза | 1.6.0 |
+  | Repeating all of the friend's magic (in older versions the ally fires only the friend's single best spell) | 1.3 |
+  | Friend's Shield, Satellites, Spirits, Electric Zone | 1.4.6 |
+  | Friend's Armageddon | 1.4.8 |
+  | Shared enemies | 1.5.0 |
+  | Shared pause | 1.6.0 |
 
-  Поэтому ставьте всем игрокам одну и ту же, последнюю версию.
+  So install the same, latest version for every player.
 
-## Известные ограничения
+## Known limitations
 
-- **Без хоста игры нет.** Сервер работает в игре хоста: если хост закрыл или свернул игру, у остальных пропадает
-  связь. Мод переподключается сам, когда хост вернётся.
-- **Свёрнутая игра.** Android приостанавливает свёрнутые приложения. Через 40 секунд без данных сервер отключает
-  игрока; когда тот вернётся в игру, мод сам вернёт его в комнату с тем же номером.
-- **Общая пауза без предела времени.** Если друг ушёл в меню паузы и отошёл от телефона, остальные ждут, пока он вернётся
-  или выйдет из боя (или выключите у себя «Общую паузу»).
-- **Имя игрока** («Игрок» и случайное число) мод выбирает сам при первом включении; поменять его в интерфейсе нельзя.
-- **Одна игра на хоста**, до 4 игроков. Подключение — только по IP; поиска игр в сети нет.
-- **Общие враги** ещё дорабатываются: свой босс гостя спрятан до подбора обелиска хостом; снаряды врагов и часть особых
-  врагов передаются не полностью; первые кадры боя у гостя могут подтормаживать, пока создаются копии врагов.
-- **Экраны.** Положение кнопок и меток проверено на двух разрешениях (1440×3200 и 1080×2220); на других может
-  потребоваться подстройка.
-- **Вылет среды Mono** (`mono-threads-posix.c`) встречался у гостя на 1.6.46 и 1.6.56. В 1.6.57 приём сообщений
-  переделан, после этого вылет не повторялся, но устранённым он не считается: проверок пока мало.
+- **No host, no game.** The server runs inside the host's game: if the host closes or minimizes it, everyone else loses
+  the connection. The mod reconnects by itself when the host comes back.
+- **Minimized game.** Android suspends minimized apps. After 40 seconds without data the server disconnects the player;
+  when they return to the game, the mod puts them back in the room with the same number.
+- **Shared pause has no time limit.** If a friend opened the pause menu and walked away from the phone, the others wait
+  until they come back or leave the battle (or turn off «Общая пауза» in your own game).
+- **Player name** («Игрок» and a random number) is picked by the mod the first time it's turned on; you can't change it
+  in the interface.
+- **One game per host**, up to 4 players. Connection is by IP only; there's no game discovery on the network.
+- **Shared enemies** is still in progress: the guest's own boss is hidden until the host picks up the obelisk; enemy
+  projectiles and some special enemies aren't fully transferred; the first frames of a battle may stutter at the guest
+  while enemy copies are created.
+- **Screens.** Button and marker placement is tested on two resolutions (1440×3200 and 1080×2220); others may need
+  adjustment.
+- **Mono runtime crash** (`mono-threads-posix.c`) happened at the guest on 1.6.46 and 1.6.56. Message receiving was
+  reworked in 1.6.57, and the crash hasn't recurred since, but it's not considered fixed: there have been few checks so far.
 
-## Безопасность
+## Security
 
-Соединение **не шифруется и не защищено паролем**. Играйте только внутри виртуальной сети (Anywherelan, Tailscale,
-ZeroTier) и не открывайте порт 8766 в интернет на роутере. Сами виртуальные сети шифруют трафик между устройствами.
+The connection is **not encrypted and has no password**. Play only inside the virtual network (Anywherelan, Tailscale,
+ZeroTier) and don't open port 8766 to the internet on your router. The virtual networks themselves encrypt traffic
+between devices.
 
-Сервер ограничивает число подключений (32 всего, 8 с одного адреса), число комнат (16), частоту входов в комнату
-(60 в минуту с адреса) и длину сообщения (16 КБ), а соединение, которое за 30 секунд не вошло в комнату, закрывает.
-Это защита от случайной перегрузки, а не от злоумышленника: для публичного сервера в интернете нужны вход по паролю и
-шифрование.
+The server limits the number of connections (32 total, 8 per address), rooms (16), room join rate (60 per minute per
+address) and message length (16 KB), and closes a connection that hasn't joined a room within 30 seconds. This protects
+against accidental overload, not against an attacker: a public server on the internet would need password login and
+encryption.
 
-## Что проверено
+## What has been tested
 
-**На двух телефонах** (Android 16 и Android 12, Anywherelan, хост и гость), 22–26.10.2026: вход в игру по IP,
-союзник и его плавное движение, повтор магии друга, Щит, Спутники, Духи и Электрозона, Армагеддон друга, общая пауза
-(в том числе долгий выбор умения), общий старт боя, общие враги в бою до 7:00 с двумя босс-волнами, обрыв сети у гостя,
-переход VPN с Wi-Fi на мобильную сеть и обратно, сворачивание игры гостем. Подробности по версиям — в
-[docs/device-tests/](device-tests/).
+**On two phones** (Android 16 and Android 12, Anywherelan, host and guest), 22.10–01.11.2026: joining by IP, the ally
+and its smooth movement, repeating the friend's magic, Shield, Satellites, Spirits and Electric Zone, the friend's
+Armageddon, shared pause (including a long skill choice), shared battle start, clock catch-up by speeding up, shared
+enemies in a battle up to 7:00 with two boss waves, special mobs, the Terra special obelisk, the artifact merchant after
+a boss, 5:00 bosses at the guest, network loss at the guest, VPN switching from Wi-Fi to mobile data and back, the guest
+minimizing the game. Per-version details are in [docs/device-tests/](device-tests/).
 
-**Только автотестами на ПК:** 3 и 4 игрока, отказ пятому, повторный вход того же игрока, выключение мода посреди боя,
-ограничения сервера, переполнение очередей клиента, отдельный сервер `coop_server.py`.
+**PC autotests only:** 3 and 4 players, rejecting a fifth, the same player rejoining, turning the mod off mid-battle,
+server limits, client queue overflow, the standalone `coop_server.py` server.
 
-**Пока не проверено на телефонах:** Tailscale и ZeroTier, 3–4 игрока, обрыв связи у хоста, выключение мода посреди
-боя. Каждый релиз проходит проверку на телефонах по [чек-листу](RELEASE_CHECKLIST.md).
+**Not yet tested on phones:** Tailscale and ZeroTier, 3–4 players, network loss at the host, turning the mod off
+mid-battle. Every release goes through the [checklist](RELEASE_CHECKLIST.md) on phones.

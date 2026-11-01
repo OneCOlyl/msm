@@ -1,40 +1,42 @@
-# Щит, Спутники, Духи — заклинания без снарядов
+# Shield, Satellites, Spirits: spells without projectiles
 
-Цель: показать их у союзника-друга. Пересылка снарядов (`Bullet_Create`) их не покрывает: это объекты, которые висят или крутятся вокруг героя.
-Данные — разведка героя (`coop_probe` 0.4.0–0.5.0, 2026-10-22), герой с прокачанными всеми 21 заклинаниями (выданы читом).
+English | [Русский](ORBITALS.ru.md)
 
-## Как устроено у героя (`C_Battle_AllyUnit`)
+Goal: show them on the friend's ally. Forwarding projectiles (`Bullet_Create`) doesn't cover them: they are objects that hover or circle around the hero.
+Data: hero probe (`coop_probe` 0.4.0–0.5.0, 2026-10-22), a hero with all 21 spells leveled up (granted by a cheat).
 
-**Спутники** (заклинание 4)
-- Контейнер `Obj_UnitSatelliteMid` («Unit_SatelliteMid», 14 детей `Center_SatelliteNN` → `Unit_SatelliteNN`), второй круг — `Obj_UnitSatelliteMidBack` (`…b`).
-- Массивы: `Array_Obj_UnitSatellitesA/B` (GameObject[14]), `Array_Transform_ObjSatellitesA/B`, `Array_Transform_Center_UnitSatellitesA/B`, флаги `Array_IsSatelliteA_P/B_P` (bool[14]).
-- Включено `UnitApply_SatelliteNum` штук (8 при уровне 8): первые N флагов `True`, объекты активны, стоят по кругу **радиусом 2,25** вокруг героя с равным шагом.
-- Вращение — корутина `Play_SatelliteMid_Rotation` (есть варианты `_AntiGravity01/02`, `_Com02_A/B`, `_NuclearFusion`, `RotationBack`); скорость `UnitApply_SatelliteSpeed` (0,03). Раскладку делает `ApplySatelliteGroup` из `StartInformation_B`.
-- Урон — `UnitApply_SatelliteDamage`, размер — `UnitApply_SatelliteSize`.
+## How it works on the hero (`C_Battle_AllyUnit`)
 
-**Щит** (заклинание 6)
-- Объект `Obj_Shield` («1100», 1 ребёнок) на герое; флаг `IsShield_P`; корутины `Play_Shield`, `Play_Shield_Com01`.
-- Включённый: объект активен, картинка `SpriteRenderer_Shield` = «Shield2_03»; заряды `UnitApply_ShieldMaxNum` (2), `ShieldDelay` — перезарядка, `ShieldFirstON`.
-- Пока заклинания нет, картинка щита пустая (спрайт задаёт корутина).
+**Satellites** (spell 4)
+- Container `Obj_UnitSatelliteMid` ("Unit_SatelliteMid", 14 children `Center_SatelliteNN` → `Unit_SatelliteNN`); the second ring is `Obj_UnitSatelliteMidBack` (`…b`).
+- Arrays: `Array_Obj_UnitSatellitesA/B` (GameObject[14]), `Array_Transform_ObjSatellitesA/B`, `Array_Transform_Center_UnitSatellitesA/B`, flags `Array_IsSatelliteA_P/B_P` (bool[14]).
+- `UnitApply_SatelliteNum` of them are on (8 at level 8): the first N flags are `True`, the objects are active and stand on a circle of **radius 2.25** around the hero at equal spacing.
+- Rotation is the `Play_SatelliteMid_Rotation` coroutine (variants `_AntiGravity01/02`, `_Com02_A/B`, `_NuclearFusion`, `RotationBack` exist); speed `UnitApply_SatelliteSpeed` (0.03). The layout is done by `ApplySatelliteGroup` from `StartInformation_B`.
+- Damage is `UnitApply_SatelliteDamage`, size is `UnitApply_SatelliteSize`.
 
-**Духи** (заклинание 3)
-- Контейнер `Obj_UnitSpiritMid` (15 детей), `List_ObjSpirit` / `List_Transform_ObjSpirit` / `List_SpriteRenderer_Spirit` (индекс 0 — `null`, духи 1..14), флаги `List_IsSpirit_P`.
-- Включено `UnitApply_SpiritNum` (7): флаги 1..7 `True`. Картинка «UnitSpirit1MotionA» есть и у выключенных.
-- Стреляют снарядом `BulletID_Spirit` (19) из своих объектов (`Unit_Spirit01`…) — пересылается с «Кооператива» 1.3.2.
+**Shield** (spell 6)
+- Object `Obj_Shield` ("1100", 1 child) on the hero; flag `IsShield_P`; coroutines `Play_Shield`, `Play_Shield_Com01`.
+- When on: the object is active, the sprite `SpriteRenderer_Shield` = "Shield2_03"; charges `UnitApply_ShieldMaxNum` (2), `ShieldDelay` is the recharge, `ShieldFirstON`.
+- Without the spell the shield sprite is empty (the coroutine sets it).
 
-**Двойники** — `Obj_UnitDoppelganger01..09`; 9-й занимает союзник-друг (`modkit_companions`).
+**Spirits** (spell 3)
+- Container `Obj_UnitSpiritMid` (15 children), `List_ObjSpirit` / `List_Transform_ObjSpirit` / `List_SpriteRenderer_Spirit` (index 0 is `null`, spirits 1..14), flags `List_IsSpirit_P`.
+- `UnitApply_SpiritNum` (7) are on: flags 1..7 are `True`. The "UnitSpirit1MotionA" sprite is set on the inactive ones too.
+- They fire the `BulletID_Spirit` (19) projectile from their objects (`Unit_Spirit01`…), forwarded since Co-op 1.3.2.
 
-## Грабли
-- `Renderer.enabled` читать нельзя: `ICall UnityEngine.Renderer::get_enabled was not resolved` (в этой сборке Unity).
-- `UnityEngine.Object.Instantiate(obj)` работает, но возвращает обёртку `UnityEngine.Object` — у неё нет методов `GameObject` (`SetActive` → `MissingMethodException`). Нужна обёртка `GameObject` по адресу: `new GameObject(ptr)` (`Activator.CreateInstance(typeof(GameObject), ptr)`).
+**Doppelgangers**: `Obj_UnitDoppelganger01..09`; the 9th is taken by the friend's ally (`modkit_companions`).
 
-## План показа у союзника
-1. Друг передаёт: число спутников (A и B), угол поворота круга, число духов, включён ли щит.
-2. У получателя — копии его собственных объектов-шаблонов (`Instantiate`) вокруг союзника: спутники по кругу 2,25 с тем же углом, духи рядом, щит на союзнике.
-3. Опыт копий (`coop_probe` 0.5.1): копии создаются, включаются, игра их не двигает — подтверждено.
-4. Сделано в «Кооперативе» 1.4.0 (`mod/coop/Orbitals.cs`): поле `orb` в состоянии (`sa`, `sb`, `sp`, `sh`, `aa`, `ab`), 4 раза в секунду; угол экстраполируется по оценённой скорости вращения.
+## Pitfalls
+- You can't read `Renderer.enabled`: `ICall UnityEngine.Renderer::get_enabled was not resolved` (in this Unity build).
+- `UnityEngine.Object.Instantiate(obj)` works but returns a `UnityEngine.Object` wrapper, which lacks `GameObject` methods (`SetActive` → `MissingMethodException`). You need a `GameObject` wrapper by address: `new GameObject(ptr)` (`Activator.CreateInstance(typeof(GameObject), ptr)`).
 
-## Уточнения по журналам 1.4.5 (2026-10-23)
-- Картинку Щита рисует `SpriteRenderer_Shield`, и он **не** внутри `Obj_Shield` («1100» — без рендера: `GetComponentInChildren` пуст у героя и у копии). Включён Щит — `IsShield_P` и непустая картинка (`Shield2_01…04` меняются с зарядами). С 1.4.6 копируется `SpriteRenderer_Shield.gameObject`, смещение и масштаб — от друга.
-- Картинки Спутников и Духов — кадры анимации (`UnitSpirit4MotionA/B/C` у Спутника, `UnitSpirit1MotionA…D` у Духа), меняются постоянно; свою картинку у копии не трогаем.
-- `Obj_ElectricZone` вспыхивает (активен не всё время) при `IsElectricZone_P = True`: «есть» — по флагу, «видна» — `activeSelf` при каждой отправке.
+## Plan for showing them on the ally
+1. The friend sends: number of satellites (A and B), ring rotation angle, number of spirits, whether the shield is on.
+2. The receiver makes copies of their own template objects (`Instantiate`) around the ally: satellites on a 2.25 circle at the same angle, spirits nearby, the shield on the ally.
+3. Copy experiment (`coop_probe` 0.5.1): copies are created and activated, the game doesn't move them. Confirmed.
+4. Done in Co-op 1.4.0 (`mod/coop/Orbitals.cs`): the `orb` field in the state (`sa`, `sb`, `sp`, `sh`, `aa`, `ab`), 4 times per second; the angle is extrapolated from the estimated rotation speed.
+
+## Findings from the 1.4.5 logs (2026-10-23)
+- The Shield sprite is drawn by `SpriteRenderer_Shield`, and it is **not** inside `Obj_Shield` ("1100" has no renderer: `GetComponentInChildren` is empty on both the hero and the copy). Shield on means `IsShield_P` plus a non-empty sprite (`Shield2_01…04` change with charges). Since 1.4.6 `SpriteRenderer_Shield.gameObject` is copied, with offset and scale taken from the friend.
+- Satellite and Spirit sprites are animation frames (`UnitSpirit4MotionA/B/C` for a Satellite, `UnitSpirit1MotionA…D` for a Spirit) and change constantly; the copy's own sprite is left alone.
+- `Obj_ElectricZone` flashes (isn't active all the time) when `IsElectricZone_P = True`: "present" comes from the flag, "visible" from `activeSelf` at each send.
