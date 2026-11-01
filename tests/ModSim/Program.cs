@@ -15,6 +15,12 @@ int passes = 0, fails = 0;
 void Check(bool ok, string what) { if (ok) { passes++; Console.WriteLine("  PASS " + what); } else { fails++; Console.WriteLine("  FAIL " + what); } }
 
 var A = new Player("Хост"); var B = new Player("Друг");
+
+Console.WriteLine("0. общие враги по умолчанию: при обновлении с 1.6 включаются один раз");
+Check(A.WorldOnEnable == 1, $"сохранённый world = 0 без отметки — включён (вышло {A.WorldOnEnable})");
+var M = new Player("Выключил сам", savedWorld: 0, worldMigrated: true);
+Check(M.WorldOnEnable == 0, $"отметка уже есть — выбор игрока не трогаем (вышло {M.WorldOnEnable})");
+M.Disable();
 void TickAll(int ms) { for (int t = 0; t < ms / 50; t++) { A.Tick(); B.Tick(); Thread.Sleep(50); } }
 
 Console.WriteLine("1. порт 28766 занят другой программой: хост берёт соседний, друг находит его сам");
@@ -777,7 +783,9 @@ class Player
     static readonly Dictionary<ModContext, Player> ByCtx = new();
     public List<string> Toasts => Ctx.Toasts; public List<string> Errors => Ctx.Errors;
     private readonly ModDef _def; private object _session;
-    public Player(string name)
+    public readonly double WorldOnEnable;
+    /// <summary>savedWorld и worldMigrated — что лежало в config.json и хранилище мода до включения (обновление с 1.6).</summary>
+    public Player(string name, double savedWorld = 0, bool worldMigrated = false)
     {
         Ctx = new FakeCtx(name, this);
         Game = new GameHero(this); ByCtx[Ctx] = this;
@@ -786,8 +794,12 @@ class Player
         _def = new MagicSurvivalCoop.CoopMod().Define();
         foreach (var o in _def.Options) Ctx.Set[o.Key] = o.Default;
         Ctx.Set["port"] = 28766; Ctx.Set["ip1"] = 127; Ctx.Set["ip2"] = 0; Ctx.Set["ip3"] = 0; Ctx.Set["ip4"] = 1;
+        Ctx.Set["world"] = savedWorld;
         Ctx.StoreData["name"] = name;
+        if (worldMigrated) Ctx.StoreData["worldDefault170"] = "1";
         _def.OnEnable(Ctx);
+        WorldOnEnable = Ctx.Set["world"];
+        Ctx.Set["world"] = 0;   // проверки до раздела «общие враги» рассчитаны на свой мир у каждого
         var mod = _def.OnEnable.Target;
         _session = mod.GetType().GetField("_session", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(mod);
     }

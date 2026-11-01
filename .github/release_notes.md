@@ -1,10 +1,12 @@
 ## Co-op 1.7.0
 
 - **Lobby.** The host picks the area, difficulty and mode (normal or Infinite Mode); each player still picks their own character. On a guest's area screen the host's choice is shown, the area arrows are hidden, and the enter buttons stay hidden until the host starts. A guest waiting on that screen enters the battle automatically, through the same button the host pressed. The host's area screen shows how many guests are ready. A guest enters the host's area even if they haven't unlocked it.
+- **Shared enemies are on by default.** When updating from 1.6 the mod turns the setting on once; after that the player's choice is kept. Shared pause was already on by default.
 
 **По-русски:**
 
 - **Лобби.** Локацию, сложность и режим (обычный или Infinite Mode) выбирает хост, персонажа каждый выбирает сам. У гостя на экране локации стоит выбор хоста, стрелки скрыты, а кнопки входа появляются только после старта хоста. Гость, ждавший на этом экране, входит в бой сам, той же кнопкой, что нажал хост. У хоста на экране локации видно, сколько гостей готовы. Гость входит в локацию хоста, даже если у себя её не открыл.
+- **Общие враги включены по умолчанию.** При обновлении с 1.6 мод один раз включает настройку сам, дальше выбор игрока сохраняется. Общая пауза и так была включена по умолчанию.
 
 ## Co-op 1.6.116
 

@@ -86,7 +86,8 @@ The host picks the area, difficulty and mode (normal or Infinite Mode). Each pla
 
 ### Shared enemies (experimental)
 
-The «Общие враги» (Shared enemies) setting, off by default. **Turn it on for every player.**
+The «Общие враги» (Shared enemies) setting, on by default. When updating from 1.6 the mod turns it on once; after
+that the player's choice is kept. **It must be on for every player.**
 
 - Guests don't get their own enemies: instead they have copies of the host's enemies in the same places. An enemy killed
   at the host is killed at the guest too, with experience. A guest's damage to enemies counts at the host.
@@ -140,7 +141,7 @@ Settings are in the «Моды» (Mods) window → the «Кооператив» 
 | «Урон магии друга у вас, %» (Friend's magic damage in your game, %) | 100 | 0–200 | Strength of the friend's repeated spells in your battle. 0 means effect only, no damage. |
 | «Показывать Щит, Спутников и Духов друга» (Show friend's Shield, Satellites and Spirits) | 1 | 0–1 | 1 shows them around the ally, 0 doesn't. |
 | «Общая пауза» (Shared pause) | 1 | 0–1 | 1: your battle pauses while a friend picks a skill and waits for friends at the start; 0: you have your own pause. |
-| «Общие враги» (Shared enemies) | 0 | 0–1 | 1: every player fights the host's enemies (experimental). Turn it on for every player. |
+| «Общие враги» (Shared enemies) | 1 | 0–1 | 1: every player fights the host's enemies (experimental). Turn it on for every player. |
 | «Общие враги: гость дальше этого от хоста — у него свои враги» (Shared enemies: guest further than this from the host gets own enemies) | 15 | 0–40 | Applies at the guest. Beyond this distance from the host the guest's own enemies spawn and go for the guest; 0 means never. |
 | «Общие враги: на босс-волну гость вдали переносится к хосту» (Shared enemies: on a boss wave a far guest is moved to the host) | 1 | 0–1 | Applies at the guest. 1: moved to the host for the boss wave, after the wave mana is pulled in and the guest goes back; 0: stays put. |
 | «Обновлений позиции в секунду» (Position updates per second) | 15 | 5–30 | How often your phone tells friends where you are. Higher means allies repeat movement more precisely, but more traffic (about 3 KB/s at 15). 20–30 on a good connection, 10 on a weak one. |

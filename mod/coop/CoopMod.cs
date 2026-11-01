@@ -50,7 +50,7 @@ namespace MagicSurvivalCoop
                 new ModOption { Key = "mirrorDmg", Label = "Урон магии друга у вас, % (0 — только эффект)", Default = 100, Min = 0, Max = 200, Step = 25 },
                 new ModOption { Key = "orbitals", Label = "Показывать Щит, Спутников и Духов друга (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "sharedPause", Label = "Общая пауза: пока друг выбирает умение, пауза у всех (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
-                new ModOption { Key = "world", Label = "Общие враги: у всех враги хоста (1 — да, 0 — нет; включить у всех игроков)", Default = 0, Min = 0, Max = 1, Step = 1 },
+                new ModOption { Key = "world", Label = "Общие враги: у всех враги хоста (1 — да, 0 — нет; включить у всех игроков)", Default = 1, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "worldZone", Label = "Общие враги: гость дальше этого от хоста — у него свои враги (0 — никогда)", Default = 15, Min = 0, Max = 40, Step = 5 },
                 new ModOption { Key = "bossGather", Label = "Общие враги: на босс-волну гость вдали переносится к хосту, потом обратно (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "clockSync", Label = "Общие враги: часы боя гостя по хосту (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
@@ -194,6 +194,9 @@ namespace MagicSurvivalCoop
                 _myName = "Игрок " + new Random().Next(10, 100);
                 ctx.Store.Set("name", _myName);
             }
+
+            // ModKit хранит все значения настроек, у обновившихся с 1.6 записан прежний world = 0
+            if (ctx.Store.Get("worldDefault170", "") == "") { ctx.SetSetting("world", 1); ctx.Store.Set("worldDefault170", "1"); }
 
             _clientId = ctx.Store.Get("clientId", "");
             if (string.IsNullOrEmpty(_clientId)) { _clientId = Guid.NewGuid().ToString("N"); ctx.Store.Set("clientId", _clientId); }
