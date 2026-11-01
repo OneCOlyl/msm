@@ -2,7 +2,7 @@
 
 English | [Русский](FEATURES.ru.md)
 
-This description matches mod version **1.6.116**. Changes in each version are in the [release notes](../.github/release_notes.md)
+This description matches mod version **1.7.0**. Changes in each version are in the [release notes](../.github/release_notes.md)
 and on the [releases page](https://github.com/OneCOlyl/msm/releases).
 
 ## Contents
@@ -27,6 +27,20 @@ The exception is the experimental [Shared enemies](#shared-enemies-experimental)
 host's enemies.
 
 ## Features
+
+### Lobby
+
+The host picks the area, difficulty and mode (normal or Infinite Mode). Each player picks their own character.
+
+- **Guest's area screen.** It shows the host's area; the area arrows are hidden. If the guest taps another difficulty,
+  the mod switches it back to the host's. A label at the top reads «Локацию выбирает <host name>, ждём старта».
+- **Start.** Until the host starts the battle, the guest's enter buttons are hidden. A guest waiting on the area screen
+  enters the battle automatically once the host starts, through the same button the host pressed. A guest who reaches
+  the screen later sees the enter buttons and the label «<host name> в бою — входите».
+- **Host's area screen.** The label «Готовы к бою: N из M» shows how many guests are waiting on the area screen. The
+  host also gets a pop-up when a guest is ready.
+- **Locked area.** A guest enters the host's area even if they haven't unlocked it: the game checks unlocking only with
+  the arrows on the selection screen.
 
 ### Allies
 
@@ -173,6 +187,8 @@ The host's IP address and port are set in the «Кооп» window and saved betw
   adjustment.
 - **Mono runtime crash** (`mono-threads-posix.c`) happened at the guest on 1.6.46 and 1.6.56. Message receiving was
   reworked in 1.6.57, and the crash hasn't recurred since, but it's not considered fixed: there have been few checks so far.
+- **Lobby and locked areas.** Whether the game credits a guest with progress (journal, best score) in an area they
+  haven't unlocked is untested. Terra difficulty and paid area entry at the guest are untested too.
 
 ## Security
 

@@ -95,7 +95,7 @@ Repository layout, protocol v2, testing on a phone and publishing a release: [do
 
 ## Project status
 
-The repository version is **1.6.116**. If the [releases page](https://github.com/OneCOlyl/msm/releases) doesn't have it
+The repository version is **1.7.0**. If the [releases page](https://github.com/OneCOlyl/msm/releases) doesn't have it
 yet, the latest published release is older; install that one on every player's phone. The mod is built against
 `ModKit.dll` and the libraries from MS_KIT 2.0.
 

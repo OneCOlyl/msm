@@ -31,6 +31,7 @@ namespace UnityEngine
     public class GameObject : Object
     {
         public bool activeSelf { get; set; }
+        public bool activeInHierarchy => activeSelf;
         public Transform transform { get; set; } = new Transform();
         public Component TestComponent;
         public void SetActive(bool v) => activeSelf = v;

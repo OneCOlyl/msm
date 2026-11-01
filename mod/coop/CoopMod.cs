@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.6.116";
+        public const string ModVersion = "1.7.0";
         /// <summary>
         /// Версии библиотек ModKit: в MS_KIT 2.0 все четыре — 1.0, и мод написан под их интерфейсы 1.x. Верхняя граница — чтобы
         /// с несовместимой 2.x ModKit не запускал мод, а писал «нужен … >=1.0 &lt;2, установлена …». Те же строки — в mod.json
@@ -175,6 +175,8 @@ namespace MagicSurvivalCoop
             public Marker Mk;                  // полоска здоровья под союзником и стрелка к нему за краем экрана (1.6.50)
             public double WorldX, WorldY, WorldZ;   // где союзник в нашем мире (последний PlaceGhost)
             public bool HasWorldPos;
+            public int LobbyArea = -1, LobbyLevel, LobbyLoop = -1, LobbyButton = -1;   // выбор хоста на экране локации (1.7.0)
+            public bool Ready;                 // гость ждёт старта хоста на экране локации
         }
 
         public Session(ModContext ctx)
@@ -216,6 +218,7 @@ namespace MagicSurvivalCoop
             InstallTimeDiag();
             InstallClockDiag();
             InstallItemDiag();
+            InstallLobby();
             try { ctx.Before("C_Battle_Manager", "Update", 0, Hook("кадр боя", (self, args) => { if (self != null) _battleMgr = self; FrameStep(); })); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
             ctx.Log($"кооператив {CoopMod.ModVersion} включён, имя «{_myName}»");
@@ -277,6 +280,7 @@ namespace MagicSurvivalCoop
             _hosting = false; _hostNotice = null;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             _partners.Clear();
+            ResetLobby();
             try { DestroyMarkers(); } catch { }
             DestroyBtn(ref _menuBtn);
             DestroyBtn(ref _healBtn);
@@ -365,6 +369,7 @@ namespace MagicSurvivalCoop
             _myId = null; _roomCode = null; _mySlot = 0;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             _partners.Clear();
+            ResetLobby();
         }
 
         // ============================================================ главный цикл
@@ -381,7 +386,7 @@ namespace MagicSurvivalCoop
             MaybeSend();
 
             _ctx.Guard("союзники", UpdateGhosts);
-            if (!_inRun) Safe("стрелка из меню", _arrowAction);
+            if (!_inRun) { Safe("стрелка из меню", _arrowAction); Safe("лобби", _lobbyAction); }
 
             if (_clockMs >= _nextHud) { _nextHud = _clockMs + 250; UpdateHud(); }
             if (_windowOpen && _clockMs >= _nextWin) { _nextWin = _clockMs + 500; UpdateWindow(); }
@@ -538,6 +543,7 @@ namespace MagicSurvivalCoop
             ReadOrbits(p, s, Clock.Elapsed.TotalSeconds);
             ReadEnemies(p, s);
             ReadClock(p, s);
+            ReadLobby(p, s);
             p.HasState = true;
             p.StateAt = _clockMs;
 
@@ -632,6 +638,7 @@ namespace MagicSurvivalCoop
             foreach (var p in _partners.Values) p.GhostTr = null;
             foreach (var p in _partners.Values) { p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; }
             DestroyBtn(ref _menuBtn);
+            ResetLobby();
             _nextSend = 0;
         }
 
@@ -720,7 +727,8 @@ namespace MagicSurvivalCoop
                 if (_worldActive) w.WriteNumber("wg", 1);
                 if (_inRun) WriteClock(w);
                 _send.Lap(3);
-                if (_inRun && OwnPause()) w.WriteNumber("op", 1);                    // мы пересылаем свою магию — пусть наш союзник у друзей не стреляет сам
+                if (_inRun && OwnPause()) w.WriteNumber("op", 1);
+                WriteLobby(w);                    // мы пересылаем свою магию — пусть наш союзник у друзей не стреляет сам
                 w.WriteNumber("t", Math.Round(Clock.Elapsed.TotalSeconds, 4));   // время снятия позиции — для интерполяции у друзей
             }));
             _send.Lap(4);
@@ -1041,7 +1049,7 @@ namespace MagicSurvivalCoop
         private string PartnerLine(Partner p)
         {
             if (!p.HasState || _clockMs - p.StateAt > 3000) return $"{p.Name}: нет связи";
-            if (!p.Run) return $"{p.Name}: в меню";
+            if (!p.Run) return p.Ready ? $"{p.Name}: готов к бою" : $"{p.Name}: в меню";
             if (p.Dead) return $"{p.Name}: погиб · {p.Kills:0} убийств";
             string where = p.Paused ? " · пауза" : "";
             return $"{p.Name} · {p.Hp:0}/{p.HpMax:0} · {p.Kills:0} уб.{where}";
@@ -1136,8 +1144,8 @@ namespace MagicSurvivalCoop
             _winPlayers = UiKit.Label(root, PlayersText(), 30, y, 660, 200, 24, 0);
             y += 210;
 
-            UiKit.Label(root, "У каждого свой мир игры: друзья приходят к вам союзниками и стреляют своим лучшим заклинанием. " +
-                              "Кнопка «Лечить» в бою появляется, когда другу плохо.", 30, y, 660, 110, 20, 0);
+            UiKit.Label(root, "Локацию и сложность выбирает хост, персонажа — каждый сам. Гость на экране локации ждёт, " +
+                              "пока хост начнёт бой, и входит следом. Кнопка «Лечить» в бою появляется, когда другу плохо.", 30, y, 660, 110, 20, 0);
         }
 
         /// <summary>Кнопка окна: ошибка не теряется молча, а показывается в окне и пишется в журнал; окно перерисовывается всегда.</summary>
