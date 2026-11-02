@@ -43,7 +43,7 @@ namespace MagicSurvivalCoop.Debug
         private object _mgr, _abil;
         private readonly Dictionary<string, object> _iters = new Dictionary<string, object>();
         private readonly List<Action> _unhooks = new List<Action>();
-        private readonly List<TcpClient> _clients = new List<TcpClient>();   // открытые сессии консоли — закрыть при выключении
+        private readonly List<TcpClient> _clients = new List<TcpClient>();   // Закрыть при выключении
         private readonly List<object> _found = new List<object>();
         private MethodInfo _findAll; private object _goType; private bool _findFailed;
 
@@ -119,8 +119,6 @@ namespace MagicSurvivalCoop.Debug
             _unhooks.Clear();
         }
 
-        // ------------------------------------------------------------ сеть (фоновый поток)
-
         private void AcceptLoop()
         {
             while (!_stop)
@@ -162,8 +160,6 @@ namespace MagicSurvivalCoop.Debug
             catch { }
             lock (_clients) _clients.Remove(c);
         }
-
-        // ------------------------------------------------------------ главный поток
 
         private void Pump()
         {
@@ -242,7 +238,7 @@ namespace MagicSurvivalCoop.Debug
             foreach (var mi in t.GetMethods(decl))
             {
                 if (mi.IsGenericMethodDefinition || mi.IsAbstract || mi.Name.StartsWith("<") || PerFrame.IsMatch(mi.Name) || !rx.IsMatch(mi.Name)) continue;
-                // методы, создающие корутины (IEnumerator), не трогаем: перехват их у предметов при подборе обелиска уронил игру (24.10)
+                // методы, создающие корутины (IEnumerator), не трогаем: перехват их у предметов при подборе обелиска уронил игру
                 if (typeof(System.Collections.IEnumerator).IsAssignableFrom(mi.ReturnType) || mi.ReturnType.Name.Contains("IEnumerator")) continue;
                 var label = $"{t.Name}.{mi.Name}/{mi.GetParameters().Length}";
                 try
@@ -251,7 +247,7 @@ namespace MagicSurvivalCoop.Debug
                     {
                         var line = $"{DateTime.Now:HH:mm:ss.fff} {label}" + (args != null && args.Length > 0 ? "(" + string.Join(", ", args.Select(x => Convert.ToString(x))) + ")" : "");
                         lock (_calls) { if (_calls.Count < 400) _calls.Add(line); }
-                        _ctx.Log("вызов: " + line);   // сразу в журнал — при падении игры список в памяти пропадает
+                        _ctx.Log("вызов: " + line);   // Сразу в журнал: при падении игры список в памяти пропадает
                     }));
                     done.Add(label);
                 }
@@ -259,8 +255,6 @@ namespace MagicSurvivalCoop.Debug
             }
             return done.Count == 0 ? "методов не найдено" : $"слежу ({done.Count}): " + string.Join(", ", done);
         }
-
-        // ------------------------------------------------------------ Unity без опасных обёрток
 
         private static IntPtr PtrOf(object o) => o?.GetType().GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance)?.GetValue(o) is IntPtr p ? p : IntPtr.Zero;
 

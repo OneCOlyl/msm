@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Text.Json;
 using MagicSurvivalCoop.Net;
 using UnityEngine;
@@ -7,11 +6,8 @@ using UnityEngine;
 namespace MagicSurvivalCoop
 {
     /// <summary>
-    /// Маг. круг (заклинание 19) друга у его союзника (1.5.9). Снарядов у круга нет — повтор магии его не видит.
-    /// На герое (разведка 0.5.1): флаг IsMagicCircle_P, объект Obj_MagicCircleMid («Unit_MagicCircleMid», три круга-ребёнка),
-    /// круги Transform_ObjMagicCircleA/B/C с рендерами SpriteRenderer_MagicCircleA/B/C (кадры MagicCircle1…5).
-    /// Друг шлёт: включён ли Mid, масштаб, кадры и поворот трёх кругов; у получателя — копия его Obj_MagicCircleMid на союзнике.
-    /// Урон круга друга уже идёт хосту через здоровье копий врагов (общие враги) — копия только для вида.
+    /// Маг. круг друга (заклинание 19). Снарядов у круга нет, и повтор магии его не видит. Друг шлёт включение, масштаб, кадры
+    /// и поворот трёх кругов, а у получателя копия его Obj_MagicCircleMid на союзнике, только для вида.
     /// </summary>
     internal sealed partial class Session
     {
@@ -24,7 +20,6 @@ namespace MagicSurvivalCoop
         private double _myMcScale = 1;
         private bool _mcLogged;
 
-        /// <summary>Отправитель, при каждой отправке: есть ли круг, включён ли, кадры, повороты, масштаб.</summary>
         private static readonly string[] McRendererNames = { "SpriteRenderer_MagicCircleA", "SpriteRenderer_MagicCircleB", "SpriteRenderer_MagicCircleC" };
         private static readonly string[] McTransformNames = { "Transform_ObjMagicCircleA", "Transform_ObjMagicCircleB", "Transform_ObjMagicCircleC" };
         private double _mcLookAt;
@@ -38,8 +33,8 @@ namespace MagicSurvivalCoop
             if (!_myMcOn) return;
             try
             {
-                // поворот — каждую отправку (вращение у друга плавное); масштаб и кадры меняются редко — не чаще 10 раз в секунду:
-                // это десяток обращений к игре через рефлексию (1.6.19, телефоны: свои орбиты — 1,2–1,4 мс на отправку при 30 в секунду)
+                // Поворот читаем каждую отправку, чтобы вращение у друга было плавным. Масштаб и кадры не чаще 10 раз в секунду:
+                // это десяток обращений к игре через рефлексию
                 double now = Clock.Elapsed.TotalSeconds;
                 bool look = now >= _mcLookAt;
                 if (look)
@@ -80,7 +75,6 @@ namespace MagicSurvivalCoop
                 for (int i = 0; i < 3 && i < rr.GetArrayLength(); i++) st.McRot[i] = rr[i].TryGetDouble(out var d) ? d : 0;
         }
 
-        /// <summary>Получатель, каждый кадр: копия круга (создать, включить, кадры, повороты).</summary>
         private void UpdateCircleCopy(Partner p, OrbVisuals v, OrbState st, object hero, double now)
         {
             if (st.Mc && v.Mc == null && !v.McFailed)
@@ -103,7 +97,7 @@ namespace MagicSurvivalCoop
             {
                 var k = v.McKids[i];
                 if (!string.IsNullOrEmpty(st.McImg[i])) ApplyImage(k, st.McImg[i], now, "маг. круг");
-                try { k.Tr.GetType().GetProperty("localEulerAngles")?.SetValue(k.Tr, new Vector3(0, 0, (float)st.McRot[i])); } catch { }
+                try { SetMember(k.Tr, "localEulerAngles", new Vector3(0, 0, (float)st.McRot[i])); } catch { }
             }
             if (!v.McLogged) { v.McLogged = true; _ctx.Log($"маг. круг «{p.Name}»: копия {TreeOf(v.Mc.Go)}; кадры от друга {string.Join(", ", st.McImg)}"); }
         }
@@ -115,7 +109,7 @@ namespace MagicSurvivalCoop
             if (st.McS != v.McS)
             {
                 v.McS = st.McS;
-                try { v.Mc.Tr.GetType().GetProperty("localScale")?.SetValue(v.Mc.Tr, new Vector3((float)st.McS, (float)st.McS, 1f)); } catch { }
+                try { SetMember(v.Mc.Tr, "localScale", new Vector3((float)st.McS, (float)st.McS, 1f)); } catch { }
             }
         }
     }

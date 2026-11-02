@@ -3,7 +3,7 @@
 English | [Русский](ENEMY_SYNC.ru.md)
 
 Goal: shared enemies for all players ("host's world"). The host plays as usual; the others get copies of the host's
-enemies. This document collects what the `mod/coop_probe` probe found out on the device.
+enemies. This document collects what the `mod/coop_probe` probe found out on the device. The probe was removed after the research, its code is in git history.
 
 ## Probe 1 (coop_probe 0.1.0, 2026-10-22, two phones)
 
@@ -141,7 +141,4 @@ a normal copy the mod puts a preform from the normal pool at the head of the bos
 guest's own boss wave and from failures (then the broken preform is turned off and returned to the normal pool, retry in
 2 s).
 
-Spawn check: the `сверка спавна` (spawn audit) log (SpawnAudit.cs). Every 30 s of battle clock the host writes how many
-enemies the game created and how many were sent to the guest; the guest writes how many ids arrived, how many copies were
-created and how many disappeared at the host before a copy was made, by type and by kind. How to summon special mobs at
-the host via `coop_debug` is in docs/device-tests/1.6.116.md.
+How to summon special mobs at the host via `coop_debug` is in docs/device-tests/1.6.116.md.

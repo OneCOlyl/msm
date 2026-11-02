@@ -6,9 +6,8 @@ using UnityEngine;
 namespace MagicSurvivalCoop
 {
     /// <summary>
-    /// Видимость рендеров напрямую через IL2CPP (Raw): Renderer.enabled и цвет обёртка на телефоне не читает
-    /// («icall Renderer::get_enabled не разрешается»), а игра мигает Электрозоной и рисует Армагеддон именно ими.
-    /// Без Unity (тесты) — обычные свойства заглушек.
+    /// Renderer.enabled и цвет напрямую через IL2CPP: обёртка на телефоне их не читает, icall Renderer::get_enabled не
+    /// разрешается. В тестах без Unity работают свойства заглушек.
     /// </summary>
     internal sealed partial class Session
     {
@@ -35,7 +34,7 @@ namespace MagicSurvivalCoop
             return !_visFailed;
         }
 
-        /// <summary>enabled рендера (SpriteRenderer) или компонента (Image); null — не прочитать.</summary>
+        /// <summary>enabled рендера или, при behaviour, компонента вроде Image. null, если не прочитать.</summary>
         private static bool? EnabledOf(object comp, bool behaviour = false)
         {
             if (comp == null) return null;
@@ -61,7 +60,7 @@ namespace MagicSurvivalCoop
             if (p != IntPtr.Zero) Raw.InvokeInt(_rSetEnabled, p, on ? 1 : 0);   // bool в первом байте int
         }
 
-        /// <summary>Цвет (r, g, b, a) SpriteRenderer или Graphic (Image); null — не прочитать.</summary>
+        /// <summary>r, g, b, a у SpriteRenderer или, при graphic, у Graphic. null, если не прочитать.</summary>
         private static float[] ColorOf(object comp, bool graphic = false)
         {
             if (comp == null) return null;
@@ -75,7 +74,7 @@ namespace MagicSurvivalCoop
                 var box = Raw.Invoke(m, p);
                 if (box == IntPtr.Zero) return null;
                 var f = new float[4];
-                Marshal.Copy(box + 2 * IntPtr.Size, f, 0, 4);                     // данные структуры — после заголовка объекта
+                Marshal.Copy(box + 2 * IntPtr.Size, f, 0, 4);                     // Данные структуры после заголовка объекта
                 return f;
             }
             catch { return null; }
@@ -91,15 +90,6 @@ namespace MagicSurvivalCoop
             var mem = Marshal.AllocHGlobal(16);
             try { Marshal.Copy(c, 0, mem, 4); Raw.Invoke(_srSetColor, p, mem); }
             finally { Marshal.FreeHGlobal(mem); }
-        }
-
-        /// <summary>Для журнала: «рендер вкл, α 0.50».</summary>
-        private static string VisOf(object comp, bool ui = false)
-        {
-            if (comp == null) return "рендера нет";
-            var en = EnabledOf(comp, ui);
-            var c = ColorOf(comp, ui);
-            return $"рендер {(en == null ? "?" : en.Value ? "вкл" : "выкл")}, α {(c == null ? "?" : c[3].ToString("0.00"))}";
         }
     }
 }

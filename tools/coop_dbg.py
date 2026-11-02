@@ -5,7 +5,8 @@
 Затем:  python tools/coop_dbg.py 8771 "get mgr.Time_Sec" "ls hero Circle"
 Без команд — интерактивный режим (строка — команда, пустая строка — выход).
 """
-import socket, sys
+import socket
+import sys
 
 def run(port, cmds):
     with socket.create_connection(("127.0.0.1", port), timeout=20) as s:

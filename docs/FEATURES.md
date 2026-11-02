@@ -48,8 +48,9 @@ The host picks the area, difficulty and mode (normal or Infinite Mode). Each pla
   smooth because the mod fills in the path between updates.
 - An ally's color depends on the player number: 1 gold, 2 light blue, 3 green, 4 pink.
 - An ally **repeats the friend's magic**: every projectile of the friend's hero (Fireball, Meteor, Lightning and most
-  other spells) is fired from the ally in your game. Damage of repeated spells is computed from **your** hero's stats
-  and the «Урон магии друга у вас» (Friend's magic damage in your game) setting.
+  other spells) is fired from the ally in your game. Size, area, speed and number of projectiles come from the friend's
+  hero, so their upgrades and combinations look the same as in their game. Damage of repeated spells is computed from
+  **your** hero's stats and the «Урон магии друга у вас» (Friend's magic damage in your game) setting.
 - The friend's **Shield, Satellites, Spirits, Electric Zone and Magic Circle** are shown around their ally.
 - The friend's **Armageddon** also goes off in your game, with animation and damage.
 - A friend who dies disappears from your battle. A friend with no data for 3 seconds also disappears and comes back when
@@ -119,7 +120,7 @@ that the player's choice is kept. **It must be on for every player.**
 | Health, death, kills | In every state update |
 | Battle entry, pause, skill choice window | In every state update; shared pause and shared battle start are built on this |
 | Battle clock | In every state update during a battle |
-| Spells | Fired projectiles, in batches of events; the friend's game repeats each one from the ally |
+| Spells | Fired projectiles, in batches of events; the friend's game repeats each one from the ally. The hero's projectile size, area, speed and number once a second in the state update |
 | Shield, Satellites, Spirits, Electric Zone, Magic Circle | In the state update during a battle |
 | Armageddon | A separate event |
 | Heal and "need help" | Separate events |

@@ -9,7 +9,7 @@ using UnityEngine;
 // Имитация игры: два настоящих экземпляра мода «Кооператив» (хост и друг) в одном процессе.
 // Unity здесь нет, поэтому вызовы интерфейса падают и ловятся модом — проверяется сеть и игровая логика.
 // Windows: шаг системного таймера ~15,6 мс — Sleep(16) длился бы ~31 мс, а на Linux (CI) — 16. Точный таймер — чтобы тесты
-// шли одинаково везде (1.5.11 упал на GitHub, а на ПК проходил).
+// шли одинаково везде.
 if (OperatingSystem.IsWindows()) WinTimer.timeBeginPeriod(1);
 int passes = 0, fails = 0;
 void Check(bool ok, string what) { if (ok) { passes++; Console.WriteLine("  PASS " + what); } else { fails++; Console.WriteLine("  FAIL " + what); } }
@@ -156,6 +156,23 @@ Console.WriteLine("2д. магия друга: каждый снаряд гер�
     var gp4 = g.Tr.position;
     Check(rt.Count == 1 && Math.Abs(rt[0].x - (gp3.x + 2.8f)) < 0.05 && Math.Abs(rt[0].y - (gp3.y + 1.6f)) < 0.05, $"снаряд друга наведён на врага рядом с целью: ({(rt.Count > 0 ? rt[0].x - gp3.x : 0):0.00}, {(rt.Count > 0 ? rt[0].y - gp3.y : 0):0.00})");
     A.Combat.Enemies.Clear();
+
+    // Электричество, Метель и другие: игра создаёт снаряд в (0, 0), цель он выбирает сам. Друг далеко от центра карты
+    int c0 = A.Game.Calls.Count;
+    B.Game.Bullet_Create(B.Combat.HeroTr, 17, 0, 0, 0, 0, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
+    for (int fr = 0; fr < 40; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var np = A.Game.Calls.Skip(c0).ToList();
+    Check(np.Count == 1 && np[0].id == 17 && np[0].x == 0 && np[0].y == 0, $"снаряд без позиции повторён тоже в (0, 0): {string.Join(",", np.Select(x => $"{x.id} ({x.x:0.0}; {x.y:0.0})"))}");
+
+    // Bullet_Create берёт размер из героя, на котором вызван: у хоста повтор должен идти с размером друга
+    B.Game.UnitApply_IncinerateSize = 1.25f; B.Game.UnitApply_TornadoNum = 3;
+    TickAll(1200);
+    int c1 = A.Game.Calls.Count;
+    B.Game.Bullet_Create(B.Combat.HeroTr, 15, bh.x + 2, bh.y, 0, 0, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
+    for (int fr = 0; fr < 40; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var lk = A.Game.Looks.Skip(c1).ToList();
+    Check(lk.Count == 1 && lk[0] == (1.25f, 3), $"повтор у хоста с размером и числом снарядов друга: {string.Join(",", lk)}");
+    Check(A.Game.UnitApply_IncinerateSize == 1.05f && A.Game.UnitApply_TornadoNum == 1, $"после повтора у героя хоста свои значения: {A.Game.UnitApply_IncinerateSize}, {A.Game.UnitApply_TornadoNum}");
 }
 
 Console.WriteLine("2е. Щит, Спутники и Духи друга видны у его союзника");
@@ -343,7 +360,7 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
         Check(boss.Unit_IsLive && !boss.DestroyedSimple, "хост победил — свой босс гостя не убит (смерть закончила бы этап и положила обелиск): ждёт обелиска хоста");
         bm.Battle_ClearWaveON = 0;
     }
-    {   // 1.6.59: гость отошёл от хоста дальше «worldZone» — свой спавн включён, его враги остаются; вернулся — спавн погашен
+    {   // Гость отошёл от хоста дальше «worldZone» — свой спавн включён, его враги остаются; вернулся — спавн погашен
         var home = B.Combat.Pos;
         bm.EnemyCreateNum = 5; Frames(40);                                   // новая волна у гостя: игра подняла число в пачке
         Check(bm.EnemyCreateNum == 0, "рядом с хостом спавн гостя погашен и на новой волне");
@@ -369,7 +386,7 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
         Check(bm.EnemyCreateNum == 0 && (bool)B.Get("_away") && !(bool)B.Get("_ownSpawn"), $"вдали от хоста в босс-волну свой спавн погашен: {bm.EnemyCreateNum}");
         bm.Battle_ClearWaveON = 0; Frames(20);
         Check(bm.EnemyCreateNum == 5 && (bool)B.Get("_ownSpawn"), $"босс-волна кончилась — свой спавн вдали снова включён: {bm.EnemyCreateNum}");
-        {   // 1.6.63: сбор на босса — гость вдали переносится к хосту (арена — как у хоста), после волны обратно
+        {   // Сбор на босса — гость вдали переносится к хосту (арена — как у хоста), после волны обратно
             B.Ctx.Set["bossGather"] = 1;
             void For(double sec) { var w = System.Diagnostics.Stopwatch.StartNew(); while (w.Elapsed.TotalSeconds < sec) Frames(1); }
             var away = B.Combat.Pos; var hostPos = A.Combat.Pos;
@@ -427,7 +444,7 @@ Console.WriteLine("2и. общая пауза: друг выбирает уме�
     own.Remove(B.Ctx);                                                    // друг выбрал умение
     Frames(20);
     Check(!(bool)A.Get("_pauseForced") && Time.timeScale > 0.5f, $"друг выбрал — пауза снята, скорость вернулась: {Time.timeScale}");
-    // друг вышел из игры прямо в окне выбора: состояние больше не приходит — пауза не должна висеть вечно (1.6.0 висела)
+    // друг вышел из игры прямо в окне выбора: состояние больше не приходит — пауза не должна висеть вечно
     own.Add(B.Ctx); Frames(20);
     Check((bool)A.Get("_pauseForced"), "друг снова выбирает — пауза");
     var swGone = System.Diagnostics.Stopwatch.StartNew();
@@ -500,7 +517,7 @@ Console.WriteLine("2и. общая пауза: друг выбирает уме�
         A.Set("_battleStartSec", -1000.0);
     }
     {   // после босса: у хоста бой кончился (поднял обелиск), у друга ещё идёт — хост ждёт
-        // начало: у хоста босс-волна началась раньше — друг (часы ещё не 3:00) НЕ ждёт (1.6.14 вставал — взаимная блокировка)
+        // начало: у хоста босс-волна началась раньше — друг (часы ещё не 3:00) НЕ ждёт, иначе взаимная блокировка
         var am5 = new FakeManager { Owner = A, Time_Min = 3, Time_Sec = 0, Battle_ClearWaveON = 1 }; var bm5 = new FakeManager { Owner = B, Time_Min = 2, Time_Sec = 58 };
         A.Set("_battleMgr", am5); B.Set("_battleMgr", bm5); Time.timeScale = 1;
         Frames(20);
@@ -617,8 +634,7 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         Check(!(bool)G.Get("_catchUp"), "гость догнал — обычная скорость");
         Time.timeScale = 1;
     }
-    {   // 1.6.45: первый босс — вступление гостя кончилось раньше, чем хост поднял обелиск: своего обелиска гостю игра не кладёт
-        // (1.6.44 держал счётчик боссов только с первого обелиска хоста — на 3:00 обелиск ложился, и убрать его не выходило)
+    {   // Первый босс: вступление гостя кончилось раньше, чем хост поднял обелиск, и своего обелиска гостю игра не кладёт
         FakeManager.ApplyBossNum = 0;
         F(20);                                                            // шаг часов — раз в 0,25 с
         Check(FakeManager.ApplyBossNum == 1, "общие враги: счётчик боссов гостя держится 1 ещё до первого босса");
@@ -629,7 +645,7 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         gm.Obj_MonsterClearBar.SetActive(false); gm.Text_Time.color = new Color(1, 1, 1, 1);
         F(10);
     }
-    {   // босс-волна (1.6.42): хост убил босса и поднял обелиск — у гостя сразу: волна снята, часы как у хоста (за порогом босса),
+    {   // босс-волна: хост убил босса и поднял обелиск — у гостя сразу: волна снята, часы как у хоста (за порогом босса),
         // смена области, награда; конец его вступления не кладёт второй обелиск (ApplyBossNum держится 1)
         void FS(int n) { for (int k = 0; k < n; k++) { hm.Step(); gm.Step(); F(1); } }
         void Wait(double sec, Func<bool> until) { var sw = System.Diagnostics.Stopwatch.StartNew(); while (sw.Elapsed.TotalSeconds < sec && !until()) FS(5); }
@@ -767,14 +783,12 @@ Console.WriteLine("9. ошибки обработчиков хуков: в жу�
     gf0 = P.Ctx.GuardFails;
     h(null, null);
     Check(P.Ctx.GuardFails == gf0, "после выключения мода обработчик ничего не делает");
-    Check(P.Ctx.Handlers.ContainsKey("bossSpawn") && P.Ctx.Handlers.ContainsKey("areaChange") && !P.Ctx.Hooks.Keys.Any(k => k.Contains("Create_UnitEnemyBoss") || k.Contains("Start_AreaChange")),
-          "журнал боссов и смены области — через события ModKit, без своих хуков");
+    Check(P.Ctx.Handlers.ContainsKey("bossSpawn") && !P.Ctx.Hooks.Keys.Any(k => k.Contains("Create_UnitEnemyBoss") || k.Contains("Start_AreaChange")),
+          "типы боссов — через событие ModKit bossSpawn, без своих хуков");
 }
 
 Console.WriteLine($"ИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
-
-// ============================================================ фейки
 
 class Player
 {
@@ -958,10 +972,14 @@ class GameHero
     public CloneGo Obj_MagicCircleMid = new CloneGo("circle");
     public SpriteRenderer SpriteRenderer_MagicCircleA = new SpriteRenderer { sprite = new Sprite { name = "MagicCircle3" } }, SpriteRenderer_MagicCircleB = new SpriteRenderer(), SpriteRenderer_MagicCircleC = new SpriteRenderer();
     public SpriteRenderer SpriteRenderer_Shield => Obj_Shield.Sr;
+    public float UnitApply_IncinerateSize { get; set; } = 1.05f;
+    public int UnitApply_TornadoNum { get; set; } = 1;
+    public readonly List<(float size, int num)> Looks = new();
     public void Bullet_Create(Transform src, int id, float x, float y, float z, float aim, float p1, float p2, float s1, float s2, float s3, float s4, float dr)
     {
         _p.Ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", this, new object[] { src, id, x, y, z, aim, p1, p2, s1, s2, s3, s4, dr });
         Calls.Add((src, id, x, y, dr));
+        Looks.Add((UnitApply_IncinerateSize, UnitApply_TornadoNum));
     }
 }
 static class WinTimer { [System.Runtime.InteropServices.DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint ms); }

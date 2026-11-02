@@ -7,9 +7,8 @@ using System.Text.Json;
 namespace MagicSurvivalCoop.Net
 {
     /// <summary>
-    /// Протокол v2: TCP, UTF-8, один JSON-объект на строку. Надмножество v1 из прототипа
-    /// (CREATE_ROOM / JOIN_ROOM / PLAYER_STATE / PING / LEAVE_ROOM), добавлены EVENT/REMOTE_EVENT и слоты игроков.
-    /// JSON пишется вручную через Utf8JsonWriter: без рефлексии, чтобы работало в любом рантайме.
+    /// Протокол v2: TCP, UTF-8, один JSON-объект на строку. JSON пишется вручную через Utf8JsonWriter, без рефлексии, чтобы
+    /// работать в любом рантайме.
     /// </summary>
     public static class Protocol
     {
@@ -18,7 +17,7 @@ namespace MagicSurvivalCoop.Net
         public const int MaxPlayers = 4;
         public const int MaxLineBytes = 16 * 1024;
 
-        // клиент → сервер
+        // Клиент → сервер
         public const string CreateRoom = "CREATE_ROOM";
         public const string JoinRoom = "JOIN_ROOM";
         public const string PlayerState = "PLAYER_STATE";
@@ -26,7 +25,7 @@ namespace MagicSurvivalCoop.Net
         public const string Ping = "PING";
         public const string LeaveRoom = "LEAVE_ROOM";
 
-        // сервер → клиент
+        // Сервер → клиент
         public const string Welcome = "WELCOME";
         public const string RoomCreated = "ROOM_CREATED";
         public const string RoomJoined = "ROOM_JOINED";
@@ -37,7 +36,7 @@ namespace MagicSurvivalCoop.Net
         public const string Pong = "PONG";
         public const string Error = "ERROR";
 
-        /// <summary>Собрать одну строку JSON (без перевода строки).</summary>
+        /// <summary>Одна строка JSON без перевода строки.</summary>
         public static string Build(Action<Utf8JsonWriter> body)
         {
             var buf = new ArrayBufferWriter<byte>(256);
@@ -72,7 +71,7 @@ namespace MagicSurvivalCoop.Net
         public static JsonElement Obj(JsonElement e, string key) =>
             e.ValueKind == JsonValueKind.Object && e.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Object ? v : default;
 
-        /// <summary>Чистит имя игрока: без управляющих символов, до 20 знаков.</summary>
+        /// <summary>Без управляющих символов, до 20 знаков.</summary>
         public static string CleanName(string s)
         {
             var sb = new StringBuilder();
@@ -87,7 +86,7 @@ namespace MagicSurvivalCoop.Net
         }
     }
 
-    /// <summary>Чтение строк с ограничением длины (защита от «бесконечной строки»).</summary>
+    /// <summary>Строки с ограничением длины, против «бесконечной строки».</summary>
     public sealed class LineReader
     {
         private readonly Stream _s;
@@ -98,8 +97,8 @@ namespace MagicSurvivalCoop.Net
         public LineReader(Stream s) { _s = s; }
 
         /// <summary>
-        /// Следующая строка или null, если соединение закрыто. Слишком длинная строка — IOException.
-        /// Хвост без '\n' перед закрытием — оборванное сообщение: он отбрасывается (тоже null), парсеру не отдаётся.
+        /// null, если соединение закрыто. Хвост без '\n' перед закрытием считается оборванным и тоже даёт null. Слишком длинная
+        /// строка даёт IOException.
         /// </summary>
         public string ReadLine()
         {
@@ -116,7 +115,7 @@ namespace MagicSurvivalCoop.Net
                 while (_pos < _len && _buf[_pos] != (byte)'\n') _pos++;
                 _line.Write(_buf, start, _pos - start);
                 if (_line.Length > Protocol.MaxLineBytes) throw new IOException("строка длиннее " + Protocol.MaxLineBytes + " байт");
-                if (_pos < _len) { _pos++; return Encoding.UTF8.GetString(_line.ToArray()).TrimEnd('\r'); }
+                if (_pos < _len) { _pos++; return Encoding.UTF8.GetString(_line.GetBuffer(), 0, (int)_line.Length).TrimEnd('\r'); }
             }
         }
     }

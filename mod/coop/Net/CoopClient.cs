@@ -9,13 +9,10 @@ using System.Threading;
 namespace MagicSurvivalCoop.Net
 {
     /// <summary>
-    /// Клиент протокола. Вся сеть — в фоновых потоках; игра забирает сообщения из <see cref="Incoming"/> на главном потоке.
-    /// Сам переподключается при обрыве (мобильный интернет, смена Wi-Fi) и снова входит в комнату.
-    /// Состояние игрока не копится в очереди: отправляется только самое свежее. События копятся, но не больше
-    /// <see cref="MaxPendingEvents"/>: дальше связь считается зависшей и клиент переподключается (см. <see cref="SendEvent"/>).
-    /// Входящие — в <see cref="Inbox"/>: по порядку, состояний от друга не больше предела, остальное ограничено.
-    /// Каждый <see cref="Start"/> — отдельное подключение (<see cref="Worker"/>) со своим сокетом, очередями и потоками;
-    /// <see cref="Stop"/> закрывает его и ждёт, пока оба его потока закончатся, поэтому старое подключение не живёт рядом с новым.
+    /// Клиент протокола. Сеть в фоновых потоках, игра забирает сообщения из <see cref="Incoming"/> на главном потоке. При обрыве
+    /// сам переподключается и снова входит в комнату. Из состояний игрока уходит только самое свежее. Каждый <see cref="Start"/>
+    /// создаёт отдельное подключение <see cref="Worker"/>, а <see cref="Stop"/> ждёт конца его потоков, чтобы старое не жило
+    /// рядом с новым.
     /// </summary>
     public sealed class CoopClient : IDisposable
     {
@@ -23,23 +20,21 @@ namespace MagicSurvivalCoop.Net
 
         private static readonly Stopwatch Clock = Stopwatch.StartNew();
         private static int _liveThreads;
-        /// <summary>Сколько потоков клиентов (рабочих и читающих) живо во всём процессе — для тестов.</summary>
+        /// <summary>Для тестов: живые потоки всех клиентов процесса.</summary>
         public static int LiveThreads => Volatile.Read(ref _liveThreads);
         private const int JoinTimeoutMs = 3000;
         /// <summary>
-        /// Сколько событий (и прочих сообщений, кроме состояния) может ждать отправки. Очередь растёт, только когда запись
-        /// в сокет стоит (сеть зависла или сервер не читает): события и так пачки за шаг отправки, ~20–30 в секунду, так что
-        /// это ~10 с без связи. Каждое ≤ <see cref="Protocol.MaxLineBytes"/>, всего ≤ 4 МБ.
+        /// Очередь растёт, только когда запись в сокет стоит. События идут пачками, 20–30 в секунду, так что это около 10 с без
+        /// связи. Дальше связь считается зависшей, и клиент переподключается.
         /// </summary>
         public const int MaxPendingEvents = 256;
 
-        private readonly object _ctl = new object();     // Start/Stop — по очереди
-        private readonly object _lock = new object();    // смена текущего подключения и всё, что оно публикует
+        private readonly object _ctl = new object();     // Start и Stop по очереди
+        private readonly object _lock = new object();    // Смена текущего подключения и всё, что оно публикует
         private Worker _w;
         private string _host;
         private int _port, _portIdx;
 
-        /// <summary>Сообщения сервера (разобранные JSON), читать на главном потоке.</summary>
         public readonly Inbox Incoming = new Inbox();
         public Action<string> Log = _ => { };
 
@@ -47,17 +42,15 @@ namespace MagicSurvivalCoop.Net
         public volatile string LastError;
         public volatile int PingMs = -1;
         public string Host => _host;
-        /// <summary>Порт, к которому клиент подключается сейчас (с учётом перебора соседних портов).</summary>
+        /// <summary>С учётом перебора соседних портов.</summary>
         public int Port => _port + Volatile.Read(ref _portIdx);
-        /// <summary>Сколько секунд ждать перед повторным подключением.</summary>
         public double RetrySec = 3;
-        /// <summary>Нет данных столько секунд — соединение считается оборванным.</summary>
-        public double DeadSec = 20;   // загрузка боя у хоста или ретранслятор VPN могут молчать дольше 10 с
+        /// <summary>Загрузка боя у хоста или ретранслятор VPN могут молчать дольше 10 с.</summary>
+        public double DeadSec = 20;
 
         /// <summary>
-        /// Подключиться и войти в комнату. roomCode пустой — «любая комната на сервере» (режим «по IP»). create — создать новую
-        /// комнату (хост): после обрыва клиент возвращается в неё по коду, а если её уже нет — создаёт заново, а не входит в чужую.
-        /// portSpan > 0 — если порт закрыт, пробовать следующие (port+1 … port+portSpan): хост мог занять соседний, когда основной был занят.
+        /// Пустой roomCode значит любую комнату на сервере. create создаёт комнату (хост): после обрыва клиент вернётся в неё по
+        /// коду, а если её уже нет, создаст заново. portSpan перебирает порты до port + portSpan: хост мог занять соседний.
         /// </summary>
         public void Start(string host, int port, string name, string roomCode = "", bool create = false, int portSpan = 0, string clientId = "")
         {
@@ -102,7 +95,7 @@ namespace MagicSurvivalCoop.Net
 
         public bool Connected => State == Status.Connected;
 
-        /// <summary>Отправить состояние игрока (JSON-объект). Старое неотправленное состояние заменяется новым.</summary>
+        /// <summary>Старое неотправленное состояние заменяется новым.</summary>
         public void SendState(string stateJson)
         {
             var w = _w;
@@ -112,9 +105,8 @@ namespace MagicSurvivalCoop.Net
         }
 
         /// <summary>
-        /// Событие для всех (to = null) или одного игрока. События не схлопываются и не выбрасываются по одному: если
-        /// в очереди уже <see cref="MaxPendingEvents"/>, связь рвётся и клиент переподключается (друзья получат PLAYER_LEFT,
-        /// игра — DISCONNECTED), а очередь сбрасывается. false — событие не принято.
+        /// События не выбрасываются по одному: при <see cref="MaxPendingEvents"/> в очереди связь рвётся, очередь сбрасывается,
+        /// и клиент переподключается. false, если событие не принято.
         /// </summary>
         public bool SendEvent(string eventJson)
         {
@@ -125,13 +117,11 @@ namespace MagicSurvivalCoop.Net
 
         public bool SendRaw(string line) { var w = _w; return w != null && Connected && w.TryQueue(line); }
 
-        /// <summary>Сколько сообщений ждёт отправки — для тестов.</summary>
         public int PendingEvents => _w?.OutCount ?? 0;
 
-        /// <summary>Запомнить код комнаты, в которую мы вошли, чтобы вернуться в неё после обрыва.</summary>
         public void RememberRoom(string code) { var w = _w; if (w != null && !string.IsNullOrEmpty(code)) w.RoomCode = code; }
 
-        /// <summary>Действие от имени подключения w — только если оно ещё текущее (старое после Stop ничего не меняет).</summary>
+        /// <summary>Подключение после Stop уже ничего не меняет.</summary>
         private bool Publish(Worker w, Action a)
         {
             lock (_lock)
@@ -142,14 +132,12 @@ namespace MagicSurvivalCoop.Net
             }
         }
 
-        // ------------------------------------------------------------ одно подключение (от Start до Stop)
-
         private sealed class Worker
         {
             private readonly CoopClient _c;
             private readonly ConcurrentQueue<string> _out = new ConcurrentQueue<string>();
             private int _outCount;
-            private volatile bool _outOverflow;         // очередь переполнилась: эта сессия рвётся, очередь сбрасывается
+            private volatile bool _outOverflow;         // Сессия рвётся, очередь сбрасывается
             public readonly AutoResetEvent Wake = new AutoResetEvent(false);
             public volatile string LatestState;
             public volatile string RoomCode;
@@ -158,10 +146,10 @@ namespace MagicSurvivalCoop.Net
             public string Name, ClientId;
             public int PortSpan;
             private volatile bool _running = true;
-            private volatile string _refuse;           // причина отказа сервера в этой попытке
+            private volatile string _refuse;           // Причина отказа сервера в этой попытке
             private int _portIdx, _refusedInRow;
             private readonly object _tcpLock = new object();
-            private TcpClient _tcp;                     // сокет только этого подключения; закрывает его только оно само или Abort
+            private TcpClient _tcp;                     // Закрывает только само подключение или Abort
             private Thread _thread;
 
             public Worker(CoopClient c) { _c = c; }
@@ -174,7 +162,7 @@ namespace MagicSurvivalCoop.Net
                 _thread.Start();
             }
 
-            /// <summary>Остановить: дальше ни одной попытки, сокет закрыт (это будит и чтение, и подключение).</summary>
+            /// <summary>Закрытие сокета будит и чтение, и подключение.</summary>
             public void Abort()
             {
                 _running = false;
@@ -186,7 +174,7 @@ namespace MagicSurvivalCoop.Net
 
             public int OutCount => Volatile.Read(ref _outCount);
 
-            /// <summary>В очередь отправки; переполнение — связь зависла: закрыть сокет (запись проснётся с ошибкой) и переподключиться.</summary>
+            /// <summary>При переполнении закрывает сокет: запись проснётся с ошибкой, и клиент переподключится.</summary>
             public bool TryQueue(string line)
             {
                 if (_outOverflow) return false;
@@ -236,15 +224,14 @@ namespace MagicSurvivalCoop.Net
                             bool refused = be is SocketException se && se.SocketErrorCode == SocketError.ConnectionRefused;
                             if ((refused || be is WrongServerException) && PortSpan > 0)
                             {
-                                // порт закрыт — пробуем соседний; полный круг без ответа — обычная пауза
+                                // Порт закрыт: пробуем соседний, а после полного круга обычная пауза
                                 _refusedInRow++;
                                 _portIdx = (_portIdx + 1) % (PortSpan + 1);
                                 _c.Publish(this, () => Volatile.Write(ref _c._portIdx, _portIdx));
                                 if (_refusedInRow <= PortSpan) retry = 0.2;
                                 else _refusedInRow = 0;
                             }
-                            // сервер отказал с причиной (занят, частые входы…) — показать её, а не ошибку закрытого сокета,
-                            // на которую в это время могла наткнуться запись
+                            // Причину отказа сервера, а не ошибку закрытого сокета, на которую могла наткнуться запись
                             var msg = _refuse ?? Friendly(e);
                             _c.Publish(this, () => _c.LastError = msg);
                             _c.Log($"соединение ({_c._host}:{Port}): {msg}");
@@ -253,12 +240,12 @@ namespace MagicSurvivalCoop.Net
                     finally { CloseTcp(); }
                     if (_outOverflow)
                     {
-                        // то, что не ушло за ~10 с, после переподключения устарело: друзья нас потеряли и встретят заново
+                        // Не ушедшее за ~10 с после переподключения устарело
                         while (TryTake(out _)) { }
                         _outOverflow = false;
                     }
                     if (!_running) break;
-                    // сообщаем только об обрыве живой связи, не о каждой неудачной попытке
+                    // Только об обрыве живой связи, не о каждой неудачной попытке
                     _c.Publish(this, () => { _c.State = Status.Waiting; if (hadRoom) _c.Incoming.Enqueue(Local("DISCONNECTED")); });
                     var until = Clock.Elapsed.TotalSeconds + retry;
                     while (_running && Clock.Elapsed.TotalSeconds < until) Wake.WaitOne(200);
@@ -287,11 +274,11 @@ namespace MagicSurvivalCoop.Net
                 _c.Publish(this, () => _c.LastError = null);
                 double lastRx = Clock.Elapsed.TotalSeconds;
                 double connectedAt = lastRx;
-                bool ours = false;            // ответил именно сервер кооператива (WELCOME / вход в комнату / его ошибка)
+                bool ours = false;            // Ответил именно сервер кооператива
                 bool joined = false;
-                string refuse = null;         // сервер отказал так, что надо переподключиться позже (комнаты ещё нет, занят)
+                string refuse = null;         // Отказ, после которого переподключаться позже
 
-                // чтение — отдельный поток, запись и пинги — этот
+                // Чтение в отдельном потоке, запись и пинги в этом
                 var reader = new Thread(() => Counted(() =>
                 {
                     try
@@ -308,7 +295,7 @@ namespace MagicSurvivalCoop.Net
                             catch (JsonException) { continue; }
                             int size = line.Length;
                             bool full = false;
-                            // в очередь игры; переполнена — игра давно её не разбирает: рвём связь, а не копим память
+                            // Переполненная очередь значит, что игра давно её не разбирает: рвём связь, а не копим память
                             bool Deliver(Action before = null)
                             {
                                 if (!_c.Publish(this, () => { before?.Invoke(); full = !_c.Incoming.TryEnqueue(el, size); })) return false;
@@ -328,8 +315,8 @@ namespace MagicSurvivalCoop.Net
                             if (type == Protocol.RoomJoined || type == Protocol.RoomCreated)
                             {
                                 var code = Protocol.Str(el, "roomCode");
-                                if (!string.IsNullOrEmpty(code)) RoomCode = code;   // вернуться в неё после обрыва — сразу, не дожидаясь игры
-                                Create = false;                                    // комната есть — дальше только входим в неё
+                                if (!string.IsNullOrEmpty(code)) RoomCode = code;   // Для возврата после обрыва, не дожидаясь игры
+                                Create = false;
                                 Volatile.Write(ref joined, true);
                                 if (!Deliver(() => _c.State = Status.Connected)) break;
                                 continue;
@@ -339,7 +326,7 @@ namespace MagicSurvivalCoop.Net
                                 var code = Protocol.Str(el, "code");
                                 if (code == "room_not_found" && RoomCode.Length > 0)
                                 {
-                                    // старой комнаты нет (хост перезапустил игру или комната опустела): хост создаёт её заново, гость входит в ту, что есть
+                                    // Старой комнаты нет: хост создаёт её заново, гость входит в ту, что есть
                                     RoomCode = "";
                                     Create = Creator;
                                     TryQueue(EnterMessage());
@@ -347,7 +334,7 @@ namespace MagicSurvivalCoop.Net
                                 }
                                 if (code == "room_not_found" || code == "server_busy" || code == "rate_limited")
                                 {
-                                    // хост ещё не создал игру / сервер перегружен — переподключимся через паузу
+                                    // Хост ещё не создал игру или сервер перегружен: переподключимся через паузу
                                     Volatile.Write(ref refuse, Protocol.Str(el, "message", code));
                                     _refuse = refuse;
                                     Deliver();
@@ -392,11 +379,10 @@ namespace MagicSurvivalCoop.Net
                 {
                     hadRoom = Volatile.Read(ref joined);
                     try { tcp.Close(); } catch { }
-                    reader.Join(JoinTimeoutMs);   // чтение этого сокета кончается вместе с ним — следующая попытка начнётся без него
+                    reader.Join(JoinTimeoutMs);   // Следующая попытка начнётся без старого чтения
                 }
             }
 
-            /// <summary>Вход: создать комнату (хост, пока её нет) или войти в комнату по коду (пустой — в любую).</summary>
             private string EnterMessage() => Create
                 ? Protocol.Build(w => { w.WriteString("type", Protocol.CreateRoom); w.WriteString("name", Name); w.WriteString("clientId", ClientId); w.WriteNumber("protocol", Protocol.Version); })
                 : Protocol.Build(w => { w.WriteString("type", Protocol.JoinRoom); w.WriteString("roomCode", RoomCode); w.WriteString("name", Name); w.WriteString("clientId", ClientId); w.WriteNumber("protocol", Protocol.Version); });

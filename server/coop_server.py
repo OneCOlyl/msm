@@ -150,7 +150,6 @@ class Server:
         self.drain_timeout = drain_timeout
         self.clock = clock
 
-    # ---------------------------------------------------------------- комнаты
     def new_code(self):
         while True:
             code = "".join(secrets.choice(ALPHABET) for _ in range(6))
@@ -240,7 +239,6 @@ class Server:
         for k in [k for k, q in self.room_ops.items() if not q or now - q[-1] > self.room_ops_window]:
             del self.room_ops[k]
 
-    # ---------------------------------------------------------------- сообщения
     def handle(self, c, m):
         kind = m.get("type")
         if kind in ("CREATE_ROOM", "JOIN_ROOM"):
@@ -311,7 +309,6 @@ class Server:
         else:
             self.error(c, "unknown_type", f"Неизвестный тип сообщения: {kind}")
 
-    # ---------------------------------------------------------------- сеть
     async def reject(self, reader, writer, code, message):
         """Ошибка без регистрации соединения: дописать, закрыть отправку, дочитать присланное (иначе сброс съест ошибку)."""
         try:

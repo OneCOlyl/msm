@@ -7,32 +7,28 @@ using ModKit;
 namespace MagicSurvivalCoop
 {
     /// <summary>
-    /// Обелиск у гостя в режиме общих врагов (1.6.42). Своего обелиска у гостя нет: хост поднял свой — гость сразу получает то же,
-    /// что дал бы подбор (выбор легендарного артефакта, притянутую ману, смену области), его босс-волна снимается, а часы ставятся
-    /// как у хоста. Раньше (1.6.29–1.6.41) гость сперва дожидался конца своего вступления босс-волны (до ~1 мин после хоста).
+    /// Обелиск гостя в общих врагах. Своего обелиска у гостя нет: хост поднял свой, и гость сразу получает то же, что дал бы
+    /// подбор, а его босс-волна снимается.
     ///
-    /// Как устроено в игре (консоль на телефоне 25.10):
-    /// - часы боя — Z_Database.Game_SurvivalTime (ObscuredFloat), Time_Min/Time_Sec игра выводит из него; подставить можно;
-    /// - босс-этап начинается, когда часы ровно на пороге (3:00, 6:00…), и часы стоят до смены области (Start_AreaChange);
-    ///   перескочить порог — этапа нет вовсе; Start_AreaChange на самом пороге запускает вступление заново (1.6.40);
-    /// - конец вступления (BossWave_EnforceVar дорос до 0,999) при ApplyBossNum 0 заканчивает волну и кладёт обелиск
-    ///   (CreateItem_Character(18, 1)), часы снова встают; при ApplyBossNum 1 — ничего не делает. Вернуть 0 и после конца
-    ///   вступления нельзя: через 5 с игра всё равно заканчивает этап (телефоны 25.10, 1.6.42) — держим 1 весь бой, с самого
-    ///   начала (1.6.45: с первого обелиска хоста было поздно — на 3:00 гостю ложился свой обелиск, и убрать его не выходило).
+    /// Как устроено в игре:
+    /// - часы боя хранит Z_Database.Game_SurvivalTime (ObscuredFloat), Time_Min/Time_Sec игра выводит из него;
+    /// - босс-этап начинается, когда часы ровно на пороге (3:00, 6:00…), и часы стоят до Start_AreaChange. Перескочить порог
+    ///   значит пропустить этап, а Start_AreaChange на самом пороге запускает вступление заново;
+    /// - конец вступления при ApplyBossNum 0 заканчивает волну и кладёт обелиск, при 1 ничего не делает. Вернуть 0 после
+    ///   вступления нельзя: через 5 с игра всё равно заканчивает этап. Поэтому держим 1 весь бой.
     /// </summary>
     internal sealed partial class Session
     {
-        private const int ObeliskItemId = 10;            // Z_Database.ArtifactType после обелиска у хоста — легендарные артефакты
-        private const int ObeliskObjType = 4;            // Type_ObjItem обелиска (предмет «18»)
+        private const int ObeliskItemId = 10;            // Z_Database.ArtifactType легендарных артефактов после обелиска
+        private const int ObeliskObjType = 4;            // Type_ObjItem обелиска
         private const string ObeliskName = "18";
         private static MethodInfo _findObjectsOfType, _il2cppTypeOf;
         private static bool _findFailed;
-        private int _obelisksRemoved, _obeliskRewards;
 
-        /// <summary>Только для тестов на ПК: объекты сцены по имени типа (в тесте Unity нет).</summary>
+        /// <summary>Для тестов на ПК: в тесте Unity нет.</summary>
         internal static Func<ModContext, string, List<object>> FindAllOverride;
 
-        /// <summary>Все объекты сцены типа игры typeName (UnityEngine.Object.FindObjectsOfType), приведённые к нему.</summary>
+        /// <summary>UnityEngine.Object.FindObjectsOfType с приведением к типу игры typeName.</summary>
         private List<object> FindAllOfType(string typeName)
         {
             if (FindAllOverride != null) return FindAllOverride(_ctx, typeName);
@@ -41,7 +37,6 @@ namespace MagicSurvivalCoop
             return t == null ? new List<object>() : FindAllOfType(t, typeName);
         }
 
-        /// <summary>То же для типа t (игры или Unity); what — подпись для журнала.</summary>
         private List<object> FindAllOfType(Type t, string what)
         {
             var res = new List<object>();
@@ -61,7 +56,7 @@ namespace MagicSurvivalCoop
                 int n = Convert.ToInt32(arr.GetType().GetProperty("Length")?.GetValue(arr) ?? 0);
                 var item = arr.GetType().GetMethod("get_Item", new[] { typeof(int) });
                 var idx = new object[1];
-                Type castFor = null; MethodInfo cast = null;      // TryCast<t> — один раз, а не на каждый из сотен предметов (1.6.46)
+                Type castFor = null; MethodInfo cast = null;      // Предметов сотни, TryCast<t> ищем один раз
                 for (int i = 0; i < n; i++)
                 {
                     idx[0] = i;
@@ -75,7 +70,7 @@ namespace MagicSurvivalCoop
             return res;
         }
 
-        /// <summary>Вид предмета: ObtainItemType, а не прочитать — имя объекта (у предметов оно и есть номер вида: «1», «10»…).</summary>
+        /// <summary>ObtainItemType, а если не прочитать, имя объекта: у предметов оно и есть номер вида.</summary>
         private static int ItemType(object item)
         {
             try { var v = GetMember(item, "ObtainItemType"); if (v != null) return Convert.ToInt32(v); } catch { }
@@ -83,8 +78,7 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Обелиски на карте гостя — убрать. Обелиск — предмет «18» с Type_ObjItem 4 (журнал 1.6.16); тот же вид бывает и у других
-        /// предметов (1.6.42 в 2:00 убрал что-то ещё по CreateItem_Character(18)) — поэтому только при флаге обелиска и по имени.
+        /// Обелиск это предмет «18» с Type_ObjItem 4, но тот же вид бывает и у других предметов. Поэтому только при флаге обелиска.
         /// </summary>
         private void RemoveObelisks(string why)
         {
@@ -105,14 +99,12 @@ namespace MagicSurvivalCoop
                 }
                 catch { }
             }
-            _obelisksRemoved += n;
             if (n > 0) _ctx.Log($"обелиск: {why} — убрал с карты ({n})");
         }
 
-        /// <summary>Только для тестов на ПК: тип игры по имени (Hooks.FindType ищет в сборке игры).</summary>
+        /// <summary>Для тестов на ПК: Hooks.FindType ищет только в сборке игры.</summary>
         internal static Func<string, Type> TypeOverride;
 
-        /// <summary>Статическое поле типа игры (Z_Database.ArtifactType и т.п.).</summary>
         private static void SetStatic(string typeName, string field, object value)
         {
             var t = TypeOverride?.Invoke(typeName) ?? Hooks.FindType(typeName);
@@ -125,10 +117,7 @@ namespace MagicSurvivalCoop
         private static PropertyInfo _survivalTime;
         private static MethodInfo _survivalFromFloat;
 
-        /// <summary>
-        /// Часы боя гостя = sec: Z_Database.Game_SurvivalTime (ObscuredFloat, из числа — неявным приведением). Без Z_Database
-        /// (имитация на ПК) — поля менеджера.
-        /// </summary>
+        /// <summary>Без Z_Database (имитация на ПК) пишет поля менеджера.</summary>
         private void SetClock(int sec)
         {
             try
@@ -151,25 +140,22 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Хост поднял обелиск — у гостя сразу: босс-волна снята, часы как у хоста, смена области, выбор легендарного артефакта и
-        /// притянутая мана (reward false — без награды: игра у гостя сама закончила этап, награду он уже получил). Счётчик боссов
-        /// держим 1 (BossHoldStep), иначе конец вступления закончит этап ещё раз и положит обелиск.
+        /// Хост поднял обелиск: у гостя снята босс-волна, часы как у хоста, смена области, выбор артефакта и притянутая мана.
+        /// reward false, когда игра гостя сама закончила этап и награду он уже получил.
         /// </summary>
         private void CatchUpBoss(bool reward)
         {
-            if (reward) _obeliskRewards++;
             int before = MyClock(), acBefore = MyAreaChange();
             bool wave = MyBossWave() != 0;
             KillHeldQuietly();
             _bossHold = true;
             BossHoldStep();
-            // часы за порог босса: Start_AreaChange на самом пороге начал бы вступление заново
+            // Часы за порог босса: Start_AreaChange на самом пороге начал бы вступление заново
             int target = Math.Max(_hostClock, before + 1);
             try { _ctx.Mark("обелиск: часы гостя как у хоста"); SetClock(target); }
             catch (Exception e) { _ctx.Log("обелиск: часы: " + Inner(e).Message); }
-            // смена области, как у хоста после подбора; счётчик смен — как у хоста. С наградой область меняет само окно артефакта:
-            // Create_Artifact при ArtifactType 9 и 10 зовёт Start_AreaChange (libil2cpp, 30.10). До 1.6.106 мод менял её и сам —
-            // у гостя область менялась дважды, и уровни за смену на Terra (+12 у хоста) он получал дважды
+            // С наградой область меняет само окно артефакта: Create_Artifact при ArtifactType 9 и 10 зовёт Start_AreaChange.
+            // Вторая смена дала бы двойные уровни за смену на Terra
             try
             {
                 int id = Convert.ToInt32(GetAny(_battleMgr, "AreaChangeID") ?? -1);
@@ -177,9 +163,8 @@ namespace MagicSurvivalCoop
                 if (num >= 0) SetMember(_battleMgr, "AreaChangeNum", num);
             }
             catch (Exception e) { _ctx.Log("обелиск: счётчик смен области: " + Inner(e).Message); }
-            // особый обелиск Terra (TreasureStep): лежит с начала боя и тоже ставит ApplyObeliskON; подбор — артефакты вида 9 и смена
-            // области, ману не притягивает (C_Battle_Item_TreasureBox.OnCollisionEnter). Обелиск после босса идёт за босс-волной хоста —
-            // особый только первый, пока босс-волны у хоста не было (по часам нельзя: на Terra босс в 2:30, 1.6.106 спутал)
+            // Особый обелиск Terra лежит с начала боя: артефакты вида 9, смена области, ману не притягивает. Особый только первый,
+            // пока у хоста не было босс-волны. По часам нельзя: на Terra босс в 2:30
             bool special = reward && !_hostHadBoss && _treasureRewards == 0;
             bool artifact = false, legend = false;
             if (reward)
@@ -193,7 +178,7 @@ namespace MagicSurvivalCoop
                 try { _ctx.Mark("обелиск: смена области у гостя"); CallMethod(_battleMgr, "Start_AreaChange"); area = true; }
                 catch (Exception e) { _ctx.Log("обелиск: смена области: " + Inner(e).Message); }
             }
-            RemoveObelisks("остался у гостя");                  // до сброса ApplyObeliskON: без флага RemoveObelisks ничего не ищет
+            RemoveObelisks("остался у гостя");                  // До сброса ApplyObeliskON: без флага RemoveObelisks ничего не ищет
             try
             {
                 SetMember(_battleMgr, "Battle_ClearWaveON", 0);
@@ -202,10 +187,8 @@ namespace MagicSurvivalCoop
                 SetMember(_battleMgr, "ApplyObeliskON", 0);
             }
             catch (Exception e) { _ctx.Log("обелиск: снять волну: " + Inner(e).Message); }
-            // EnemyLevelUp (ход боя: рост EnemyLevelNum, продавец артефактов, сундуки) на босс-волне заканчивается, а после неё игра
-            // запускает её снова со сменой области (Play_AreaChange). У гостя этого не было: с первого босса EnemyLevelNum стоял на
-            // 150, и продавец, который у хоста появлялся в 4:16, у гостя не появлялся (телефоны, 31.10). Флаг «босс пройден» — как
-            // у хоста после Play_BossWaveEffect_End, которой у гостя нет
+            // Корутина EnemyLevelUp (рост врагов, продавец артефактов, сундуки) кончается на босс-волне, и игра перезапускает её
+            // в Play_BossWaveEffect_End, которой у гостя нет. Battle_ClearON тоже ставит она
             if (!special)
             {
                 try { SetMember(_battleMgr, "Battle_ClearON", 1); } catch (Exception e) { _ctx.Log("обелиск: Battle_ClearON: " + Inner(e).Message); }
@@ -224,9 +207,8 @@ namespace MagicSurvivalCoop
                      $"притянуто предметов {pulled}, вступление {MyEnforce():0.00}");
         }
 
-        private object _clockColor;                      // цвет часов вне босс-этапа (в этапе игра красит их в оранжевый)
+        private object _clockColor;                      // В босс-этапе игра красит часы в оранжевый
 
-        /// <summary>Шаг часов гостя: вне босс-этапа запомнить цвет часов — после перехода вернуть его.</summary>
         private void NoteClockColor()
         {
             if (MyBossWave() != 0 || MyVision() > 0.01 || MyObelisk() == 1) return;
@@ -234,9 +216,7 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Череп босс-волны над часами (Obj_MonsterClearBar) и оранжевые часы обычно убирает Play_BossWaveEffect_End — её у гостя
-        /// нет (она бы положила обелиск), поэтому убираем сами (1.6.43: череп оставался до конца боя). Следующий этап игра
-        /// включает их снова.
+        /// Череп босс-волны и оранжевые часы убирает Play_BossWaveEffect_End, а у гостя её нет: она бы положила обелиск.
         /// </summary>
         private void HideBossWaveUi()
         {
@@ -252,14 +232,13 @@ namespace MagicSurvivalCoop
 
         private bool _bossHold;
 
-        /// <summary>Шаг часов гостя: после первого обелиска хоста счётчик боссов гостя не меньше 1 до конца боя.</summary>
         private void BossHoldStep()
         {
             if (!_bossHold || MyBossCount() >= 1) return;
             try { SetMember(_battleMgr, "ApplyBossNum", 1); } catch (Exception e) { _ctx.Log("обелиск: ApplyBossNum: " + Inner(e).Message); _bossHold = false; }
         }
 
-        /// <summary>Снять удержание счётчика боссов (конец боя, выключение мода). Повторно — ничего не делает.</summary>
+        /// <summary>Повторный вызов ничего не делает.</summary>
         private void ReleaseBossHold(string why)
         {
             if (!_bossHold) return;
@@ -268,7 +247,7 @@ namespace MagicSurvivalCoop
             _ctx.Log($"обелиск: {why} — счётчик боссов гостя снова 0");
         }
 
-        /// <summary>Свои спрятанные боссы гостя — убрать без смерти (смерть босса закончила бы волну и положила обелиск).</summary>
+        /// <summary>Смерть босса закончила бы волну и положила обелиск.</summary>
         private void KillHeldQuietly()
         {
             _heldNew.Clear();
@@ -277,11 +256,10 @@ namespace MagicSurvivalCoop
             _held.Clear(); _heldKeys.Clear();
         }
 
-        /// <summary>Окно выбора артефакта вида type, как после подбора у хоста (Z_Database.ArtifactType: 10 — легендарные после обелиска).</summary>
         private bool GiveArtifactChoice(int type, out bool typed)
         {
             typed = false;
-            // без ArtifactType окно предлагало обычные (у гостя было 0 — телефоны 24.10)
+            // Без ArtifactType окно предлагает обычные артефакты
             try { SetStatic("Z_Database", "ArtifactType", type); typed = true; } catch (Exception e) { _ctx.Log("обелиск: тип артефактов: " + Inner(e).Message); }
             var am = FindAllOfType("V_Artifact_Manager").FirstOrDefault();
             if (am == null) return false;
@@ -290,8 +268,8 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Мана и предметы на карте — к герою, как при подборе обелиска (Play_ItemAllObtain_Move). Обелиск не трогаем: притянутый,
-        /// он подбирается — второй выбор артефакта и смена области (1.6.44: на 6:00 гость так подобрал обелиск, оставшийся с 3:00).
+        /// Мана и предметы к герою, как при подборе обелиска. Сам обелиск не трогаем: притянутый, он подберётся и даст второй
+        /// выбор артефакта.
         /// </summary>
         private double _pulledAt = -100;
         private int PullItems()
@@ -316,19 +294,17 @@ namespace MagicSurvivalCoop
             return pulled;
         }
 
-        // Особый обелиск (Terra): в начале боя игра кладёт каждому C_Battle_Item_TreasureBox с ObtainItemType 9 и ставит ApplyObeliskON;
-        // подбор — выбор артефакта вида 9 и смена области (libil2cpp и телефоны, 30.10), часы боя от него не зависят. В общих
-        // врагах он только у хоста: у гостя убираем, а подбор хоста гостю повторяет CatchUpBoss (флаг обелиска хоста 1 → 0).
+        // Особый обелиск Terra: C_Battle_Item_TreasureBox с ObtainItemType 9 в начале боя у каждого. В общих врагах он только у
+        // хоста, а его подбор гостю повторяет CatchUpBoss
         private const int TreasureType = 9, TreasureScanUntil = 60;
         private double _treasureScanAt;
-        private int _treasureRemoved, _treasureRewards;
+        private int _treasureRewards;
 
         private static bool ActiveObj(object o)
         {
             try { return GetMember(GetMember(o, "gameObject"), "activeSelf") is bool b && b; } catch { return false; }
         }
 
-        /// <summary>Гость, первая минута боя, раз в секунду: свой особый обелиск — убрать (DestroyItem: картинки и коллайдер выключены).</summary>
         private void TreasureStep(double now)
         {
             if (_hosting || !WorldOn || _partners.Count == 0 || now < _treasureScanAt || MyClock() > TreasureScanUntil) return;
@@ -339,7 +315,6 @@ namespace MagicSurvivalCoop
                 if (ItemType(x) != TreasureType || !ActiveObj(x) || !_treasureGone.Add(key)) continue;
                 _ctx.Mark("особый обелиск: убираю у гостя");
                 try { CallMethod(x, "DestroyItem"); } catch (Exception e) { _ctx.Log("особый обелиск: DestroyItem: " + Inner(e).Message); }
-                _treasureRemoved++;
                 _ctx.Log("особый обелиск: у гостя убран — он только у хоста");
             }
         }

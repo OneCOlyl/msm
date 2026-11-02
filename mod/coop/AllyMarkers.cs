@@ -5,17 +5,16 @@ using UnityEngine;
 namespace MagicSurvivalCoop
 {
     /// <summary>
-    /// Метки союзников в бою (1.6.50): полоска здоровья под моделью союзника, а когда союзник за краем экрана — стрелка
-    /// у края в его сторону с именем. Полоска (1.6.51) — копия родной полоски героя (Obj_UnitHpBar), не получилось — своя. Узлы — на канвасе ModKit (UiKit.CanvasTf, его ставит первая полоска HUD), точка
-    /// на экране — через камеру игры. Каждый кадр — только перестановка узлов, без выделений памяти.
+    /// Метки союзников: полоска здоровья под моделью, а за краем экрана стрелка у края с именем. Узлы на канвасе ModKit.
+    /// Каждый кадр только перестановка узлов, без выделений памяти.
     /// </summary>
     internal sealed partial class Session
     {
-        private const double BarW = 60, BarH = 9;          // полоска под моделью, логические единицы UiKit (ширина экрана 720)
-        private const double BarDrop = 34;                 // насколько ниже точки опоры союзника
-        private const double ArrowEdge = 48;               // отступ стрелки от края экрана
-        private const double TagW = 170, TagH = 30;          // плашка с именем у стрелки (она же полоска здоровья)
-        private static readonly double[] TagHpColor = { 0.25, 0.85, 0.30, 0.55 };   // полупрозрачный зелёный
+        private const double BarW = 60, BarH = 9;          // Логические единицы UiKit, ширина экрана 720
+        private const double BarDrop = 34;                 // Ниже точки опоры союзника
+        private const double ArrowEdge = 48;
+        private const double TagW = 170, TagH = 30;          // Плашка с именем у стрелки, она же полоска здоровья
+        private static readonly double[] TagHpColor = { 0.25, 0.85, 0.30, 0.55 };
         private const int MarkerFailLimit = 20;
 
         private sealed class Marker
@@ -23,8 +22,8 @@ namespace MagicSurvivalCoop
             public GameObject Bar, Arrow, Tag;
             public RectTransform BarRt, FillRt, ArrowRt, TagRt, TagFillRt;
             public UnityEngine.UI.Text TagText;
-            public UnityEngine.UI.Image Front;
-            public UnityEngine.UI.Image ArrowImg;       // стрелка из меню игры (спрайт Button_AreaMoveR); null — своя «>»          // заливка копии родной полоски (fillAmount); null — своя полоска
+            public UnityEngine.UI.Image Front;          // Заливка копии родной полоски, null у своей полоски
+            public UnityEngine.UI.Image ArrowImg;       // Стрелка из меню игры, null у своей «>»
             public double Drop;
             public double Frac = -1, TagFrac = -1;
             public bool BarOn, ArrowOn, TagOn;
@@ -38,7 +37,7 @@ namespace MagicSurvivalCoop
         private int _markerFails;
         private bool _markersOff, _camMissLogged;
 
-        /// <summary>Каждый кадр боя, после размещения союзников.</summary>
+        /// <summary>Зовётся после размещения союзников.</summary>
         private void UpdateMarkers(double now)
         {
             if (_markersOff) return;
@@ -51,7 +50,7 @@ namespace MagicSurvivalCoop
                 ShowMarkerRoot(true);
 
                 double k = UiKit.K;
-                double u = 720.0 * k / Math.Max(1, Screen.width);      // единиц канваса на пиксель экрана
+                double u = 720.0 * k / Math.Max(1, Screen.width);      // Единиц канваса на пиксель экрана
                 double cw = Screen.width * u, ch = Screen.height * u;
                 foreach (var p in _partners.Values)
                 {
@@ -75,7 +74,7 @@ namespace MagicSurvivalCoop
                         continue;
                     }
 
-                    // союзник за экраном: стрелка на краю по лучу из центра экрана к нему
+                    // Стрелка на краю по лучу из центра экрана к союзнику
                     SetOn(m.Bar, ref m.BarOn, false);
                     double dx = x - cw / 2, dy = y - ch / 2;
                     double edge = ArrowEdge * k;
@@ -86,9 +85,9 @@ namespace MagicSurvivalCoop
                     m.ArrowRt.anchoredPosition = new Vector2((float)ax, (float)ay);
                     m.ArrowRt.localEulerAngles = new Vector3(0, 0, (float)(ang * 180 / Math.PI));
                     SetOn(m.Arrow, ref m.ArrowOn, true);
-                    // имя — от стрелки к центру экрана, чтобы не уходило за край
+                    // Имя смещено от стрелки к центру, чтобы не уходило за край. Сбоку подпись шире, отступ больше
                     double cos = Math.Cos(ang), sin = Math.Sin(ang);
-                    double back = (Math.Abs(cos) * (TagW / 2 + 28) + Math.Abs(sin) * 40) * k;   // сбоку подпись шире — отступ больше
+                    double back = (Math.Abs(cos) * (TagW / 2 + 28) + Math.Abs(sin) * 40) * k;
                     double tx = Math.Max(TagW / 2 * k + 4, Math.Min(cw - TagW / 2 * k - 4, ax - cos * back));
                     double ty = Math.Max(TagH / 2 * k + 4, Math.Min(ch - TagH / 2 * k - 4, ay - sin * back));
                     m.TagRt.anchoredPosition = new Vector2((float)tx, (float)ty);
@@ -102,7 +101,7 @@ namespace MagicSurvivalCoop
             {
                 if (++_markerFails == 1 || _markerFails == MarkerFailLimit) _ctx.Log($"метки союзников: {e.Message}" + (_markerFails >= MarkerFailLimit ? " — выключены до конца боя" : ""));
                 if (_markerFails >= MarkerFailLimit) { _markersOff = true; DestroyMarkers(); }
-                else _cam = null;   // камера или канвас сменились вместе со сценой — найдём заново
+                else _cam = null;   // Камера могла смениться вместе со сценой
             }
         }
 
@@ -120,16 +119,16 @@ namespace MagicSurvivalCoop
             _markerRoot.SetActive(on);
         }
 
-        /// <summary>Общий узел меток на канвасе ModKit; канвас сменился (новая сцена) — узел пересоздаётся.</summary>
+        /// <summary>Канвас меняется с новой сценой, и узел пересоздаётся.</summary>
         private bool EnsureMarkerRoot()
         {
-            if (_markerRoot != null) return true;          // уничтоженный вместе со сценой узел Unity сравнивает с null
+            if (_markerRoot != null) return true;          // Уничтоженный со сценой узел Unity сравнивает с null
             double now = Clock.Elapsed.TotalSeconds;
             if (now < _canvasTryAt) return false;
             _canvasTryAt = now + 1;
             DestroyMarkers();
-            // канвас боя ModKit находит сам при создании своих элементов HUD; их в бою у мода больше нет (1.6.54) — просим явно
-            try { EnsureHudCanvas?.Invoke(null, null); } catch { return false; }   // без Unity (тесты) канваса нет
+            // ModKit находит канвас при создании элементов HUD, а их у мода в бою нет
+            try { EnsureHudCanvas?.Invoke(null, null); } catch { return false; }   // В тестах без Unity канваса нет
             var canvas = UiKit.CanvasTf;
             if (canvas == null) return false;
             var (go, rt) = UiKit.Node("ModKitHud_coop_markers", canvas);
@@ -153,7 +152,7 @@ namespace MagicSurvivalCoop
             (m.Bar, m.BarRt) = UiKit.Node("bar_" + p.Id, parent);
             if (!CloneHeroHpBar(m))
             {
-                // своя полоска: верх по центру — под точкой опоры союзника
+                // Верх полоски по центру под точкой опоры союзника
                 Pin(m.BarRt, 0.5, 1, BarW, BarH);
                 m.Drop = BarDrop * UiKit.K;
                 var back = UiKit.Node("back", m.BarRt);
@@ -168,8 +167,8 @@ namespace MagicSurvivalCoop
             Pin(m.ArrowRt, 0.5, 0.5, 0, 0);
             if (MenuArrowAlive())
             {
-                // стрелка «вправо» с экрана выбора локации, уменьшенная и в цвет игрока; поворот узла — к союзнику
-                var shadow = UiKit.Node("shadow", m.ArrowRt);           // тёмная тень под стрелкой — видна и на светлых картах
+                // Стрелка с экрана выбора локации в цвет игрока. Тень под ней видна и на светлых картах
+                var shadow = UiKit.Node("shadow", m.ArrowRt);
                 shadow.rt.anchorMin = shadow.rt.anchorMax = UiKit.V2(0.5, 0.5);
                 shadow.rt.pivot = UiKit.V2(0.5, 0.5);
                 shadow.rt.anchoredPosition = UiKit.V2(0, 0);
@@ -187,13 +186,13 @@ namespace MagicSurvivalCoop
                 UiKit.SetSprite(m.ArrowImg, _menuArrow);
             }
             else
-            // своя стрелка «>»: тёмная обводка, поверх — цвет игрока
+            // Своя стрелка «>»: тёмная обводка, поверх цвет игрока
             foreach (var (len, thick, col) in new[] { (34.0, 14.0, new[] { 0.0, 0.0, 0.0, 0.7 }), (30.0, 8.0, new[] { c[0], c[1], c[2], 1.0 }) })
                 foreach (var tilt in new[] { 40.0, -40.0 })
                 {
                     var arm = UiKit.Node("arm", m.ArrowRt);
                     arm.rt.anchorMin = arm.rt.anchorMax = UiKit.V2(0.5, 0.5);
-                    arm.rt.pivot = UiKit.V2(1, 0.5);                     // поворот вокруг острия
+                    arm.rt.pivot = UiKit.V2(1, 0.5);                     // Поворот вокруг острия
                     arm.rt.anchoredPosition = UiKit.V2(16 * UiKit.K, 0);
                     arm.rt.sizeDelta = UiKit.V2(len * UiKit.K, thick * UiKit.K);
                     arm.rt.localEulerAngles = new Vector3(0, 0, (float)tilt);
@@ -202,7 +201,6 @@ namespace MagicSurvivalCoop
 
             (m.Tag, m.TagRt) = UiKit.Node("tag_" + p.Id, parent);
             Pin(m.TagRt, 0.5, 0.5, TagW, TagH);
-            // плашка — полоска здоровья: тёмная подложка, поверх зелёная заливка по доле здоровья, поверх имя
             var plate = UiKit.Node("plate", m.TagRt);
             UiKit.Stretch(plate.rt);
             UiKit.AddImage(plate.go, 0, 0, 0, 0.5).raycastTarget = false;
@@ -219,10 +217,8 @@ namespace MagicSurvivalCoop
             return m;
         }
 
-        // ------------------------------------------------------------ стрелка из меню
-
-        private const double ArrowH = 34;                 // высота стрелки у края экрана (в меню она ~70)
-        private IntPtr _menuArrow;                        // спрайт стрелки «следующая локация»; удерживается Raw.Pin, иначе смена сцены его выгрузит
+        private const double ArrowH = 34;
+        private IntPtr _menuArrow;                        // Raw.Pin держит спрайт, иначе смена сцены его выгрузит
         private double _menuArrowAspect = 0.6, _menuArrowLookAt;
         private bool _menuArrowLogged;
 
@@ -235,17 +231,14 @@ namespace MagicSurvivalCoop
             return false;
         }
 
-        /// <summary>
-        /// Вне боя, раз в секунду, пока не нашли: на экране выбора локации взять картинку кнопки Button_AreaMoveR (стрелка вправо).
-        /// Экран выбора локации игрок проходит перед каждым боем.
-        /// </summary>
+        /// <summary>Картинка кнопки Button_AreaMoveR с экрана выбора локации, его игрок проходит перед каждым боем.</summary>
         private void CaptureMenuArrow()
         {
             if (_inRun || _menuArrow != IntPtr.Zero || !RawSprites) return;
             double now = Clock.Elapsed.TotalSeconds;
             if (now < _menuArrowLookAt) return;
             _menuArrowLookAt = now + 1;
-            var go = FindActiveObject("Button_AreaMoveR");   // ModKit Screen.Buttons() на этом экране пуст — ищем объект сами
+            var go = FindActiveObject("Button_AreaMoveR");   // ModKit Screen.Buttons() на этом экране пуст
             if (go == null) return;
             var img = go.GetComponent<UnityEngine.UI.Image>();
             if (img == null) img = go.GetComponentInChildren<UnityEngine.UI.Image>(true);
@@ -258,7 +251,7 @@ namespace MagicSurvivalCoop
             _ctx.Log($"метки союзников: стрелка из меню — «{NameOf(sp)}», {size.x:0}×{size.y:0}");
         }
 
-        /// <summary>Активный объект сцены по имени (поиск по всем GameObject — только в меню, раз в секунду).</summary>
+        /// <summary>Перебирает все GameObject сцены: только в меню и не чаще раза в секунду.</summary>
         private GameObject FindActiveObject(string name)
         {
             foreach (var o in FindAllOfType(typeof(GameObject), "GameObject"))
@@ -266,12 +259,11 @@ namespace MagicSurvivalCoop
             return null;
         }
 
-        private int _hpBarFrontIdx = -2, _hpBarPlusIdx = -1;   // -2 — ещё не искали; -1 — не нашли
+        private int _hpBarFrontIdx = -2, _hpBarPlusIdx = -1;   // -2 ещё не искали, -1 не нашли
 
         /// <summary>
-        /// Копия родной полоски здоровья героя внутрь m.Bar: тот же вид и размер, что у своего героя, и та же высота под моделью.
-        /// Заливка — Image типа Filled (fillAmount), её ребёнок ищется по указателю Img_UnitHpBar_Front героя; полоска щита
-        /// (Img_UnitHpPlusBar_Front) у копии пуста — щит друга не пересылается.
+        /// Копия родной полоски здоровья героя. Ребёнок-заливка ищется по указателю Img_UnitHpBar_Front героя. Полоска щита у
+        /// копии пуста: щит друга не пересылается.
         /// </summary>
         private bool CloneHeroHpBar(Marker m)
         {
@@ -298,7 +290,7 @@ namespace MagicSurvivalCoop
                 if (m.Front == null) { UiKit.SafeDestroy(clone); return false; }
                 if (_hpBarPlusIdx >= 0) { var plus = ctr.GetChild(_hpBarPlusIdx).gameObject.GetComponent<UnityEngine.UI.Image>(); if (plus != null) plus.fillAmount = 0; }
                 Pin(m.BarRt, 0.5, 0.5, 0, 0);
-                m.Drop = -ttr.localPosition.y;   // героя полоска висит на столько ниже его точки (в единицах канваса)
+                m.Drop = -ttr.localPosition.y;
                 return true;
             }
             catch (Exception e)
@@ -309,7 +301,7 @@ namespace MagicSurvivalCoop
             }
         }
 
-        /// <summary>Номер ребёнка tr, чей объект — go (сравнение по адресу объекта игры); -1 — не ребёнок.</summary>
+        /// <summary>Сравнивает по адресу объекта игры. -1, если go не ребёнок tr.</summary>
         private static int ChildIndexOf(Transform tr, GameObject go)
         {
             if (tr == null || go == null) return -1;
@@ -322,7 +314,7 @@ namespace MagicSurvivalCoop
             return -1;
         }
 
-        /// <summary>Узел, который ставится по точке экрана: якорь — левый нижний угол канваса, pivot — точка привязки.</summary>
+        /// <summary>Якорь в левом нижнем углу канваса, чтобы ставить узел по точке экрана.</summary>
         private static void Pin(RectTransform rt, double pivotX, double pivotY, double w, double h)
         {
             rt.anchorMin = rt.anchorMax = UiKit.V2(0, 0);
@@ -349,10 +341,9 @@ namespace MagicSurvivalCoop
             p.Mk = null;
         }
 
-        /// <summary>Убрать все метки (конец боя, выключение мода, смена канваса).</summary>
         private void DestroyMarkers()
         {
-            foreach (var p in _partners.Values) p.Mk = null;   // узлы меток — дети общего узла и уходят вместе с ним
+            foreach (var p in _partners.Values) p.Mk = null;   // Узлы меток уходят вместе с общим узлом
             UiKit.SafeDestroy(_markerRoot);
             _markerRoot = null; _markerRootOn = false;
         }

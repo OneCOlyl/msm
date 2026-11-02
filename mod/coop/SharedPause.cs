@@ -6,11 +6,8 @@ using ModKit;
 namespace MagicSurvivalCoop
 {
     /// <summary>
-    /// Общая пауза (1.6.0): пока кто-то из друзей выбирает умение (или в меню паузы), игра на паузе у всех.
-    /// Время боя игра берёт из часов сцены Unity (консоль 23.10: часы боя = Time.timeSinceLevelLoad − ~3 с, своего счётчика нет),
-    /// а на паузе они стоят только у того, кто выбирает, — без общей паузы часы игроков расходятся на длину чужих пауз.
-    /// Своя пауза — флаги игры (V_Ability_Manager.Ability_SelectON, C_Battle_Manager.IsGamePaused/IsStopGame), а не timeScale:
-    /// иначе наша же пауза из-за друга выглядела бы для него как наша — и паузы держали бы друг друга.
+    /// Общая пауза: пока кто-то из друзей выбирает умение или в меню паузы, игра стоит у всех. Часы боя игра берёт из часов
+    /// сцены Unity, и без общей паузы часы игроков расходятся на длину чужих пауз.
     /// </summary>
     internal sealed partial class Session
     {
@@ -23,15 +20,13 @@ namespace MagicSurvivalCoop
         private string _pauseWhy;
 
         private bool SharedPauseOn => _ctx.Setting("sharedPause") > 0;
-        /// <summary>Только для тестов на ПК: своя пауза игрока по контексту (в тесте два «телефона» в одном процессе).</summary>
+        /// <summary>Для тестов на ПК: два «телефона» в одном процессе.</summary>
         internal static Func<ModContext, bool> OwnPauseOverride;
 
-        /// <summary>Своя пауза игрока: открыто окно выбора умения или меню паузы.</summary>
         /// <summary>
-        /// Своя пауза игрока — игра сама остановилась: окно выбора умения, сундук, меню паузы… (1.6.3). Флаги игры не годятся:
-        /// Ability_SelectON остаётся True и после закрытия окна (консоль 23.10: окно закрыто, бой идёт, флаг True — друг висел
-        /// на паузе), а сундук флагов не трогает вовсе. Поэтому: пока мод сам паузу не держит — своя пауза = скорость игры 0;
-        /// держит — своя пауза запомнена с начала нашей паузы и кончается, когда игра попробует продолжить (скорость больше 0).
+        /// Игра сама остановилась: окно выбора умения, сундук, меню паузы. Флаги игры не годятся: Ability_SelectON остаётся True
+        /// и после закрытия окна, а сундук флагов не ставит. Пока мод паузу не держит, своя пауза это скорость игры 0. Держит:
+        /// своя пауза тянется с начала нашей и кончается, когда игра попробует продолжить.
         /// </summary>
         private bool OwnPause() => OwnPauseOverride != null ? OwnPauseOverride(_ctx) : _ownNow;
         private bool _ownNow;
@@ -39,8 +34,7 @@ namespace MagicSurvivalCoop
         private void UpdateOwnPause(float ts)
         {
             if (!_inRun) { _ownNow = false; return; }
-            // 1.6.84: меню паузы (C_Battle_Manager.IsStopGame) — своя пауза, даже если мод сам держит игру на паузе: хост открыл
-            // меню, пока ждал друга перед боссом, — по скорости 0 это была «пауза из-за друга», друг её своей не видел и играл
+            // Меню паузы своё, даже если мод сам держит паузу: по скорости 0 его не отличить от паузы из-за друга
             bool menu = MenuPaused();
             if (menu != _menuWas)
             {
@@ -73,14 +67,12 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Каждый кадр и шаг таймера: у друга своя пауза — держим паузу и у себя; кончилась — вернуть скорость. Ещё пауза — пока
-        /// друг не вошёл в бой. Разошедшиеся часы паузой не выравниваем: отстающий догоняет ускорением (CatchUpStep).
+        /// Своя пауза друга или его вход в бой держат паузу и у нас. Разошедшиеся часы выравнивает не пауза, а ускорение отстающего.
         /// </summary>
         private void SharedPauseStep()
         {
             UpdateOwnPause(TimeScale);
-            // свой герой погиб — экрану смерти игры нужно, чтобы время шло: паузу из-за друга снять и больше не ставить
-            // (1.6.2: хост погиб, пока стоял на паузе из-за друга, — анимация смерти ждала вечно на скорости 0)
+            // Анимации смерти нужно, чтобы время шло
             if (_inRun && MyHeroDead())
             {
                 if (_pauseForced)
@@ -94,28 +86,26 @@ namespace MagicSurvivalCoop
             Partner by = null; string why = null;
             if (_inRun && SharedPauseOn)
             {
-                // свежесть — по реальным часам: таймер мода на паузе стоит, и друг, вышедший из боя, держал бы паузу вечно (1.6.0).
-                // Сколько друг выбирает, столько и ждём: до 1.6.58 пауза снималась через 60 с, и гость, пока хост думал над
-                // окном выбора, играл один и убегал вперёд по часам. Зависший или отключившийся друг состояний не шлёт — его
-                // отпускает проверка свежести (3 с).
+                // Свежесть по реальным часам: таймер мода на паузе стоит. Ждём, сколько друг выбирает, а зависшего отпускает свежесть
                 double nowR = Clock.Elapsed.TotalSeconds;
-                // друг с нулевым здоровьем — погиб: его анимация смерти останавливает его игру, это не «выбирает умение»
-                by = _partners.Values.FirstOrDefault(p => p.OwnPause && p.Battle && !p.Dead && p.Hp > 0 && p.HasState && nowR - p.StateReal < 3);
+                // Анимация смерти друга тоже останавливает его игру
+                foreach (var p in _partners.Values)
+                    if (p.OwnPause && p.Battle && !p.Dead && p.Hp > 0 && p.HasState && nowR - p.StateReal < 3) { by = p; break; }
                 if (by != null) why = "выбирает умение";
                 else if (!OwnPause()) by = EntryWait(nowR, ref why);
             }
             float ts = TimeScale;
             if (by == null) CatchUpStep(ts);
-            else if (_catchUp) { _catchUp = false; RestoreSpeedBonus(); }   // пауза из-за друга — ускорение не нужно (скорость 0 ставим ниже)
+            else if (_catchUp) { _catchUp = false; RestoreSpeedBonus(); }
             if (by != null)
             {
                 if (!_pauseForced || _pauseWhy != why)
                 {
                     if (!_pauseForced) _pauseSavedScale = _catchUp ? _gameScale : ts > 0 ? ts : 1;
-                    _pauseForced = true; _pauseBy = by.Name; _pauseWhy = why; _pauseToastAt = 0;   // новая причина — подпись сразу
+                    _pauseForced = true; _pauseBy = by.Name; _pauseWhy = why; _pauseToastAt = 0;
                     _ctx.Log(why == "вход" ? $"вход: жду «{by.Name}» — ещё не вошёл в бой" : $"общая пауза: «{by.Name}» выбирает умение");
                 }
-                // игра у себя сняла свою паузу (закрыли окно выбора) — запомнить её скорость и снова остановить
+                // Игра сняла свою паузу: запомнить её скорость и снова остановить
                 if (ts > 0) { if (!OwnPause()) _pauseSavedScale = ts; TimeScale = 0; }
                 double now = Clock.Elapsed.TotalSeconds;
                 if (!OwnPause() && now >= _pauseToastAt)
@@ -127,18 +117,14 @@ namespace MagicSurvivalCoop
             }
             if (!_pauseForced) return;
             _pauseForced = false;
-            if (!OwnPause() && ts == 0) TimeScale = _pauseSavedScale;   // своё окно выбора открыто — скоростью управляет игра
+            if (!OwnPause() && ts == 0) TimeScale = _pauseSavedScale;   // При своей паузе скоростью управляет игра
             _ctx.Log(_pauseWhy == "вход" ? $"вход: все вошли в бой" : $"общая пауза: «{_pauseBy}» продолжил");
             _pauseWhy = null;
         }
 
         /// <summary>
-        /// Отставшие часы — догнать ускорением, а не паузой у того, кто впереди (1.6.5; с 1.6.99 пауз из-за часов нет совсем:
-        /// раньше ждал при разнице от 8 с, в первые 40 с боя и перед боссом). Часы расходятся на задержку общей паузы — 0,2–0,5 с
-        /// за окно выбора — и на замедления игры у одного игрока. Наши часы отстают от самых быстрых часов друга на 2 с и больше —
-        /// ускоряем ×1,25, от 4 с — ×1,5, от 8 с — ×2, пока не догоним. За 30 с до босс-волны — уже с 1 с и ступенью выше,
-        /// чтобы волна началась у всех почти вместе. Паузу (скорость 0) не трогаем. Ускоряем через бонус скорости игры
-        /// (SetSpeedBonus); нет его — прямо скоростью.
+        /// Отставшие часы догоняем ускорением: от 2 с отставания ×1,25, от 4 с ×1,5, от 8 с ×2. За NearBoss секунд до босс-волны
+        /// уже с 1 с и ступенью выше, чтобы волна началась у всех почти вместе. Паузу не трогаем.
         /// </summary>
         private void CatchUpStep(float ts)
         {
@@ -147,8 +133,10 @@ namespace MagicSurvivalCoop
             {
                 int mine = MyClock();
                 double nowR = Clock.Elapsed.TotalSeconds;
-                var ahead = _partners.Values.Where(p => p.Battle && !p.Dead && p.Hp > 0 && p.BattleClock >= 0 && nowR - p.StateReal < 1.5)
-                                            .OrderByDescending(p => p.BattleClock).FirstOrDefault();
+                Partner ahead = null;
+                foreach (var p in _partners.Values)
+                    if (p.Battle && !p.Dead && p.Hp > 0 && p.BattleClock >= 0 && nowR - p.StateReal < 1.5 && (ahead == null || p.BattleClock > ahead.BattleClock))
+                        ahead = p;
                 if (ahead != null && mine >= 0)
                 {
                     int behindBy = ahead.BattleClock - mine;
@@ -158,9 +146,7 @@ namespace MagicSurvivalCoop
                     if (want && !_catchUp) { _catchUpBy = ahead.Name; _catchUps++; if (_catchUps <= 10) _ctx.Log($"часы: отстаю от «{ahead.Name}» на {behindBy} с — ускоряю до ×{CatchFactor()}{(_catchNearBoss ? " (скоро босс)" : "")}"); }
                 }
             }
-            // 1.6.7: ускоряем от текущей скорости игры (у друга она часто 0,5–0,8 — 1.6.5 ускорял только при 1 и почти не догонял).
-            // Скорость, которую поставила игра, — _gameScale; ставим _gameScale × множитель. Игра поменяла скорость сама (не наше
-            // значение) — запоминаем её новую и ускоряем уже от неё. Паузу (0) не трогаем.
+            // Без бонуса скорости ускоряем от скорости игры _gameScale. Игра поменяла её сама: ускоряем уже от новой
             if (want && ts > 0)
             {
                 if (SetSpeedBonus(CatchFactor())) { _catchUp = true; _catchSet = -1; return; }
@@ -187,30 +173,27 @@ namespace MagicSurvivalCoop
         private const int NearBoss = 30, BossEvery = 180;
         private bool _catchNearBoss;
 
-        // Скорость боя игра пересчитывает в каждом C_Battle_Manager.Update: ApplyTimeScale = Time.timeScale = k × TimeScaleBonus
-        // (статическое поле менеджера), k = 0,1 × округлённое число от частоты кадров, от 0,01 до 1 (libil2cpp, 30.10): при низком
-        // FPS игра замедляет время — потому часы гостя на слабом телефоне и отстают (Pixel 3a: k 0,5–0,8, у хоста 1). Запись мода
-        // в timeScale стиралась в том же кадре (до 1.6.100 ускорение часы почти не догоняло). Ускоряем бонусом и на время догона
-        // снимаем замедление: бонус = исходный × factor / k, не больше ×MaxBonus. k меняется почти каждый кадр — берём среднее
-        // (по последнему кадру скорость гостя прыгала 0,2–4,7: телефоны 30.10).
+        // Каждый C_Battle_Manager.Update ставит Time.timeScale = k × TimeScaleBonus, где k от 0,01 до 1 растёт с частотой кадров.
+        // Поэтому часы слабого телефона отстают, а запись в timeScale стирается в том же кадре. Ускоряем бонусом и на время догона
+        // снимаем замедление: бонус = исходный × factor / k. k прыгает почти каждый кадр, берём среднее
         private const float MaxBonus = 4;
         private object _bonusMgr;
         private float _bonusBase, _bonusSet, _kAvg;
-        /// <summary>Бонус скорости под итоговую скорость × factor. Ложь — бонуса нет (тесты): ускорять прямо скоростью.</summary>
+        /// <summary>Ложь, если бонуса нет (тесты): тогда ускорять прямо скоростью.</summary>
         private bool SetSpeedBonus(float factor)
         {
             var mgr = _battleMgr;
             if (mgr == null || !(GetAny(mgr, "TimeScaleBonus") is float cur)) return false;
-            if (_bonusMgr == null || Math.Abs(cur - _bonusSet) > 0.001f) _bonusBase = cur;   // игра поменяла бонус сама — ускоряем от нового
+            if (_bonusMgr == null || Math.Abs(cur - _bonusSet) > 0.001f) _bonusBase = cur;   // Игра поменяла бонус сама
             _bonusMgr = mgr;
-            float k = cur > 0 && GetAny(mgr, "ApplyTimeScale") is float applied ? applied / cur : 1;   // с бонусом прошлого кадра
+            float k = cur > 0 && GetAny(mgr, "ApplyTimeScale") is float applied ? applied / cur : 1;   // С бонусом прошлого кадра
             if (k < 0.1f || k > 1) k = 1;
             _kAvg = _kAvg <= 0 ? k : _kAvg + 0.2f * (k - _kAvg);
             _bonusSet = _bonusBase * Math.Min(MaxBonus, factor / _kAvg);
             if (Math.Abs(cur - _bonusSet) > 0.001f) SetMember(mgr, "TimeScaleBonus", _bonusSet);
             return true;
         }
-        /// <summary>Вернуть бонус скорости, если его с нашего значения не меняла игра. Повторно — ничего не делает.</summary>
+        /// <summary>Возвращает бонус, если игра его не меняла. Повторный вызов ничего не делает.</summary>
         private void RestoreSpeedBonus()
         {
             if (_bonusMgr == null) return;
@@ -220,9 +203,8 @@ namespace MagicSurvivalCoop
         private float _gameScale = 1, _catchSet;
         private int _catchBehind;
         /// <summary>
-        /// 1.6.45: вход в бой — пока кто-то из комнаты ещё не в бою (меню, выбор героя, загрузка), вошедший стоит на паузе: бой
-        /// у всех начинается вместе. Друг без свежего состояния (3 с — связь пропала) не держит. Все вошли или прошло
-        /// EntryWaitMax реальных секунд от начала боя — до конца этого боя больше не ждём (друг, позже вышедший в меню, паузу не держит).
+        /// Пока кто-то из комнаты ещё не в бою, вошедший стоит на паузе, чтобы бой у всех начался вместе. Когда все вошли или прошло
+        /// EntryWaitMax секунд, до конца боя больше не ждём.
         /// </summary>
         private Partner EntryWait(double nowR, ref string why)
         {
@@ -239,6 +221,7 @@ namespace MagicSurvivalCoop
         }
         private const double EntryWaitMax = 120;
         private bool _entryWaitDone;
+        private double _battleStartSec;
 
         private bool _catchUp;
         private string _catchUpBy;
@@ -249,14 +232,14 @@ namespace MagicSurvivalCoop
             try { return _hero.Hp <= 0; } catch { return false; }
         }
 
-        /// <summary>Снять всё, что мод сделал со скоростью игры: паузу из-за друга и догоняющее ускорение. Повторно — ничего не делает.</summary>
+        /// <summary>Снимает паузу из-за друга и ускорение. Повторный вызов ничего не делает.</summary>
         private void ReleaseSharedPause()
         {
             RestoreSpeedBonus();
             if (_catchUp)
             {
                 _catchUp = false;
-                try { if (Math.Abs(TimeScale - _catchSet) < 0.001f) TimeScale = _gameScale > 0 ? _gameScale : 1; } catch { }   // скорость поменяла игра — её не трогаем
+                try { if (Math.Abs(TimeScale - _catchSet) < 0.001f) TimeScale = _gameScale > 0 ? _gameScale : 1; } catch { }   // Скорость, поменянную игрой, не трогаем
             }
             if (!_pauseForced) return;
             _pauseForced = false; _pauseWhy = null;

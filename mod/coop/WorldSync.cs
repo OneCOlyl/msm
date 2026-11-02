@@ -10,22 +10,16 @@ using UnityEngine;
 namespace MagicSurvivalCoop
 {
     /// <summary>
-    /// Общие враги — «мир хоста» (docs/ENEMY_SYNC.md). Включается настройкой «world» у всех игроков.
-    /// Хост: в каждом состоянии (до 10 раз в секунду) — список живых врагов: [номер, тип (UnitID), x, y] от точки старта хоста, ×100.
-    /// Гость: свой спавн погашен (EnemyCreateNum = 0 и Unit_Destroy_Simple для всех чужих врагов — без засчитанных убийств),
-    /// вместо него — копии врагов хоста: Create_UnitEnemyBoss(тип, 1), корутины остановлены, тело кинематическое,
-    /// каждый кадр копия стоит там же относительно старта гостя, где враг хоста относительно старта хоста (с той же задержкой,
-    /// что и союзник). Враг пропал у хоста — копия убивается уроном (гость получает убийство и выпадения). Копию, убитую
-    /// у гостя его магией, заново не создаём. Урон гостя (1.5.5): копии неуязвимы (здоровье 1e6) — насколько упало здоровье,
-    /// столько урона нанёс гость любым заклинанием; раз в 0,1 с — событие «dmg» хосту, тот бьёт настоящего врага (ICombat.Damage).
-    /// Повторы магии друг у друга в этом режиме — только картинка (иначе урон дважды).
+    /// Общие враги (docs/ENEMY_SYNC.md). Хост шлёт живых врагов: номер, тип, x и y от своей точки старта. У гостя свой спавн
+    /// погашен, вместо него копии врагов хоста на том же месте относительно старта гостя. Копии неуязвимы: на сколько упало
+    /// здоровье, столько урона нанёс гость, и раз в 0,1 с этот урон уходит хосту событием «dmg». Враг пропал у хоста: копия
+    /// убивается, и гость получает убийство и выпадения. Повторы магии друг друга в этом режиме без урона, иначе он двойной.
     /// </summary>
     internal sealed partial class Session
     {
         private const int MaxSentEnemies = 250;          // ~20 байт на врага: строка состояния остаётся меньше 16 КБ
         private const double EnemySendInterval = 0.09;
-        // 1.6.19: было 4 и 4 мс — бой 24.10 (1.6.18, Pixel 3a): 14 345 копий по 1,13 мс в среднем, кадры с 3–4 созданиями — медленные.
-        // Нужно в среднем ~20 копий/с, 2 за кадр при 37 кадрах/с — до 74/с: волна догоняется за пару секунд, без рывков
+        // Создание копии ~1 мс работы игры. Нужно ~20 копий/с, 2 за кадр догоняют волну за пару секунд без рывков
         private const int MaxPuppetSpawnsPerFrame = 2;
         private const double PuppetSpawnBudgetMs = 2.5;
         private const int MaxPuppetSpawnsPerFrameFast = 4;
@@ -40,43 +34,41 @@ namespace MagicSurvivalCoop
         private ICombat _combat;
         private bool WorldOn => _ctx.Setting("world") > 0;
 
-        // ---- хост
-        private readonly Dictionary<int, IEnemy> _enById = new Dictionary<int, IEnemy>();   // для урона гостей
+        private readonly Dictionary<int, IEnemy> _enById = new Dictionary<int, IEnemy>();   // Для урона гостей
         private double _dmgIn; private int _dmgInMiss;
         private Dictionary<object, (int id, int type, int sends)> _enIds = new Dictionary<object, (int, int, int)>(), _enIdsNext = new Dictionary<object, (int, int, int)>();
         private int _enNextId = 1, _enSentMax;
         private double _enSentAt = -1;
         private bool _enHostLogged;
 
-        // ---- гость
         private sealed class Puppet
         {
             public int Id, Type, Seen;
-            public float VarA, VarB;                       // как игра хоста создала врага (усиленные мобы — varA 1)
+            public float VarA, VarB;                       // Аргументы Start_Unit у хоста, у усиленных мобов varA 1
             public bool Special;
-            public int CreateId, CreateEffect;             // особый враг: способ создания (3 — «переход»), эффект появления
-            public float LineR, LineG, LineB;              // и цвет обводки (усиленные — красная)
-            public int Origin;                             // 1.6.65: чья корутина создала (OriginSpecial…)
-            public float Size;                             // и размер (UnitApply_UnitSize)
-            public float IconSize; public bool Back;       // 1.6.77: метка особого моба и обводка (Obj_UnitSprite_Back)
-            public float[] BackColor;                      // 1.6.79: цвет обводки
-            public object MainSr, BackSr, LastSprite;      // обводке каждый кадр — текущий кадр моба
+            public int CreateId, CreateEffect;             // UnitCreateID (3 у перехода) и эффект появления
+            public float LineR, LineG, LineB;
+            public int Origin;
+            public float Size;
+            public float IconSize; public bool Back;       // Метка особого моба и включена ли обводка Obj_UnitSprite_Back
+            public float[] BackColor;
+            public object MainSr, BackSr, LastSprite;      // Обводке нужен текущий кадр моба
             public float[] BackColorUse;
             public object Obj, Key;
             public Transform Tr;
             public bool LocalDead;
-            public bool Placed;                            // мод уже ставил копию на место (после создания)
-            public double DeadAt;                          // погибла у гостя (Армагеддон и т.п.) — когда; > 2 с и жива у хоста — создать заново
+            public bool Placed;
+            public double DeadAt;                          // Через 2 с после гибели у гостя создаём заново, если враг жив у хоста
             public readonly List<(double t, double x, double y)> Track = new List<(double, double, double)>();
         }
         private readonly Dictionary<int, Puppet> _puppets = new Dictionary<int, Puppet>();
-        private readonly List<Puppet> _toUpgrade = new List<Puppet>();          // копии, которые хост позже назвал особыми
+        private readonly List<Puppet> _toUpgrade = new List<Puppet>();          // Копии, которые хост позже назвал особыми
         private readonly HashSet<object> _puppetKeys = new HashSet<object>();
         private readonly Queue<object> _toDestroy = new Queue<object>();
         private readonly List<int> _gone = new List<int>();
         private readonly Queue<(object obj, int type, float a, float b, int origin, double at)> _toForward = new Queue<(object, int, float, float, int, double)>();
         private readonly List<(int type, float a, float b, double x, double y, int origin, float[] stats)> _spawnOut = new List<(int, float, float, double, double, int, float[])>();
-        private readonly HashSet<object> _forwardKeys = new HashSet<object>();          // свои переходы гостя ждут, пока игра выставит им силу
+        private readonly HashSet<object> _forwardKeys = new HashSet<object>();          // Свои переходы гостя ждут, пока игра выставит им силу
         private readonly Dictionary<int, int> _sweptTypes = new Dictionary<int, int>();
         private int _spawnSent, _spawnIn, _spawnInLogs;
         private readonly System.Diagnostics.Stopwatch _worldWatch = new System.Diagnostics.Stopwatch();
@@ -89,23 +81,17 @@ namespace MagicSurvivalCoop
         private bool _worldActive, _spawningPuppet;
         private object _justCreated;
         private int _wCreated, _wKilled, _wLocalDead, _wDestroyed, _wFails, _wMax, _wRespawned, _wSpecial, _wReused;
-        // копии у гостя неуязвимы: умирают, только когда умер враг у хоста (1.5.4). Unit_Hp — float: у 1e9 шаг 64 единицы и мелкий
-        // урон терялся бы; у 1e6 — 0,06, а больше миллиона за 0,1 с не бьёт никто
+        // Unit_Hp хранится во float: у 1e9 шаг 64 единицы и мелкий урон терялся бы, у 1e6 шаг 0,06
         private const double PuppetHp = 1e6;
-        private Dictionary<string, string> _mgrAtFirst;   // журнал 1.5.1: почему Create_UnitEnemyBoss перестаёт создавать врагов
-        private bool _mgrFailLogged, _poolLogged;
+        private bool _poolLogged;
         private int _poolMoved;
-        // 1.6.59: гость отошёл от хоста дальше «worldZone» — у него свой спавн (враги игры гостя идут на него); вернулся ближе
-        // (с запасом AwayHysteresis, чтобы не дёргалось на границе) — спавн снова погашен. Его враги, появившиеся вдали, — свои:
-        // не убираются и не пересылаются хосту, добиваются магией гостя
+        // Гость дальше «worldZone» от хоста играет со своим спавном. Его враги, появившиеся вдали, остаются его и хосту не уходят
         private const double AwayHysteresis = 2;
         private bool _away;
-        // свой спавн включён: вдали и босс-волны нет ни у кого (1.6.62: в босс-волну спавн гостя — её мобы, а их мод прячет как
-        // «своего босса» — 350 за волну: мобы исчезали на глазах, и волна лагала)
+        // В босс-волну свой спавн выключен и вдали: её мобов мод прятал бы как своего босса
         private bool _ownSpawn;
         private readonly HashSet<object> _localKeys = new HashSet<object>();
-        private int _awayTimes, _localSpawned, _awayLogSpawned;
-        private double _awayLogAt;
+        private int _awayTimes, _localSpawned;
 
         private void InstallWorldHooks()
         {
@@ -119,13 +105,9 @@ namespace MagicSurvivalCoop
             InstallOriginHooks();
         }
 
-        // ------------------------------------------------------------ 1.6.65: откуда враг (особые мобы)
-
-        // Особых мобов игра создаёт тремя корутинами менеджера (разведка 27.10.2026): Create_UnitEnemySpecial (раз в 5 с, свой
-        // пул List_BattleUnitEnemySpecial_Empty, SpecialVarB), Create_UnitEnemyEpic (пул List_BattleUnitEnemyEpic_Empty) и
-        // Play_Create_UnitEnemy_Transition (подобранное усиление мобов). Start_Unit идёт внутри шага корутины — пока он идёт,
-        // помним, чья это пачка. Особые и эпические — волны игры: у гостя они всегда только копии врагов хоста (и вдали от него);
-        // переход — от действия игрока: у гостя уходит хосту и возвращается общим врагом.
+        // Особых мобов игра создаёт корутинами менеджера: Create_UnitEnemySpecial и Create_UnitEnemyEpic (свои пулы) и
+        // Play_Create_UnitEnemy_Transition (подобранное усиление мобов). Start_Unit идёт внутри шага корутины, так что origin
+        // известен на время шага. Особые и эпические у гостя только копии хоста, переход гостя уходит хосту и возвращается копией
         private const int OriginNormal = 0, OriginSpecial = 1, OriginEpic = 2, OriginTransition = 3;
         private static readonly string[] OriginNames = { "обычный", "особый", "эпический", "переход" };
         private int _spawnOrigin;
@@ -146,7 +128,7 @@ namespace MagicSurvivalCoop
                 if (mi == null) continue;
                 try
                 {
-                    // хуки не через контекст — снятие отдаём в OnCleanup (как в ItemDiag)
+                    // Хук не через контекст: ModKit сам его не снимет
                     _ctx.OnCleanup(Hooks.HookBefore(_ctx.Id, mi, Hook("особые мобы: шаг корутины", (self, a) => _spawnOrigin = origin)));
                     _ctx.OnCleanup(Hooks.HookAfter(_ctx.Id, mi, Hook("особые мобы: шаг корутины", (self, a) => _spawnOrigin = OriginNormal)));
                 }
@@ -156,33 +138,30 @@ namespace MagicSurvivalCoop
 
         private void ResetWorld()
         {
-            _coSeen.Clear();
-            ResetSpawnAudit();
             _enIds.Clear(); _enIdsNext.Clear(); _enById.Clear(); _dmgIn = 0; _dmgInMiss = 0; _dmgOut.Clear(); _dmgSent = 0; _dmgFlushAt = 0; _enSentAt = -1; _enSentMax = 0; _enHostLogged = false;
-            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _viewLogAt = 0; _savedSpawn = null;
+            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _savedSpawn = null;
             _worldHost = null; _enSnap = 0; _enSnapAt = -100; _worldActive = false; _spawningPuppet = false; _justCreated = null;
             _wCreated = _wKilled = _wLocalDead = _wDestroyed = _wFails = _wMax = _wRespawned = _wSpecial = _wReused = 0;
             _enVars.Clear(); _enVarsNext.Clear();
-            _toForward.Clear(); _forwardKeys.Clear(); _spawnOut.Clear(); _sweptTypes.Clear(); _specialSpawns.Clear(); _specialLogs = 0;
-            _dumpSpecial = _dumpNormal = _specialCopy = null; _dumped = false; _specialCopyAt = 0;
-            _held.Clear(); _heldKeys.Clear(); _heldNew.Clear(); _heldKilled = 0; _spawnSent = _spawnIn = _spawnInLogs = 0;
+            _toForward.Clear(); _forwardKeys.Clear(); _spawnOut.Clear(); _sweptTypes.Clear();
+            _held.Clear(); _heldKeys.Clear(); _heldNew.Clear(); _spawnSent = _spawnIn = _spawnInLogs = 0;
             _createMsMax = _createMsSum = _stepMsMax = 0; _createN = 0;
-            _mgrAtFirst = null; _mgrFailLogged = false; _poolLogged = false; _poolMoved = 0; _bossPoolEst = -1;
+            _poolLogged = false; _poolMoved = 0; _bossPoolEst = -1;
             ResetGather(); _gatherTimes = 0;
-            _away = _ownSpawn = false; _localKeys.Clear(); _awayTimes = _localSpawned = _onlyBossCleared = _awayLogSpawned = _spawnRestarts = 0; _awayLogAt = 0; _spawnStopped = false; _spawnRestartAt = 0;
-            _spawnOrigin = OriginNormal; _ownSpecialSwept = _ownTransitionSent = _wUpgraded = _trLogs = _trAliveLogs = _peaceRemoved = 0; _destroyTried.Clear(); _commonChecks = 0; _hostMarked.Clear(); _hostMarkedLast.Clear(); _forwardKill.Clear(); Array.Clear(_forwardKillHow, 0, _forwardKillHow.Length); _toUpgrade.Clear(); _originDumped.Clear(); _originDumps.Clear(); _guestVisDumped = false;
+            _away = _ownSpawn = false; _localKeys.Clear(); _awayTimes = _localSpawned = _onlyBossCleared = _spawnRestarts = 0; _spawnStopped = false; _spawnRestartAt = 0;
+            _spawnOrigin = OriginNormal; _ownSpecialSwept = _ownTransitionSent = _wUpgraded = _trLogs = _peaceRemoved = 0; _destroyTried.Clear(); _commonChecks = 0; _hostMarked.Clear(); _hostMarkedLast.Clear(); _forwardKill.Clear(); Array.Clear(_forwardKillHow, 0, _forwardKillHow.Length); _toUpgrade.Clear();
         }
 
         private static object KeyOf(object o) { var p = PtrOf(o); return p != IntPtr.Zero ? (object)p : o; }
 
         /// <summary>
-        /// Живые враги — один снимок на кадр. Библиотека на каждое обращение к Alive строит новый список и для каждого врага
-        /// зовёт игру (activeInHierarchy, Unit_Hp); а им пользуются отправка (хост), чистка, повтор магии.
+        /// Один снимок живых врагов на кадр: библиотека на каждое обращение к Alive строит новый список и зовёт игру для
+        /// каждого врага.
         /// </summary>
         private IReadOnlyList<IEnemy> AliveNow()
         {
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (_aliveSnap == null || now - _aliveSnapAt > System.Diagnostics.Stopwatch.Frequency / 200)   // 5 мс — в пределах кадра
+            if (_aliveSnap == null || now - _aliveSnapAt > System.Diagnostics.Stopwatch.Frequency / 200)   // 5 мс, в пределах кадра
             {
                 _aliveSnap = _enemies.Alive;
                 _aliveSnapAt = now;
@@ -192,11 +171,8 @@ namespace MagicSurvivalCoop
         private IReadOnlyList<IEnemy> _aliveSnap;
         private long _aliveSnapAt;
 
-        // ============================================================ хост: отправка
-
         private void WriteEnemies(Utf8JsonWriter w)
         {
-            DumpEnemiesStep();
             double now = Clock.Elapsed.TotalSeconds;
             if (now - _enSentAt < EnemySendInterval) return;
             _enSentAt = now;
@@ -213,12 +189,12 @@ namespace MagicSurvivalCoop
             int n = 0;
             _enById.Clear();
             w.WriteStartArray("en");
-            for (int i = 0; i < total; i++)          // список уже только из живых — e.Alive повторил бы те же вызовы игры
+            for (int i = 0; i < total; i++)
             {
                 var e = nearest ? alive[_sendOrder[i].i] : alive[i];
                 if (n >= MaxSentEnemies)
                 {
-                    // не попавшим в отправку — тот же номер: иначе в следующий раз у гостя убьётся старая копия и создастся новая
+                    // Номер сохраняем: иначе у гостя старая копия убьётся и создастся новая
                     var k2 = KeyOf(e.Raw);
                     if (k2 != null && _enIds.TryGetValue(k2, out var v2)) _enIdsNext[k2] = v2;
                     continue;
@@ -230,12 +206,10 @@ namespace MagicSurvivalCoop
                     int type = -1;
                     try { type = Convert.ToInt32(GetMember(raw, "UnitID") ?? -1); } catch { }
                     v = (_enNextId++, type, 0);
-                    AuInc(_auSent, type);
                 }
-                if (v.sends < 3) { v.sends++; NoteVarsFromFields(raw, key); }  // вид особого игра ставит после Start_Unit
+                if (v.sends < 3) { v.sends++; NoteVarsFromFields(raw, key); }  // Вид особого игра ставит после Start_Unit
                 _enIdsNext[key] = v;
                 _enById[v.id] = e;
-                if (_specialSpawns.Count > 0) MarkSpecialSent(key);
                 var p = nearest ? _sendOrder[i].pos : e.Pos;
                 w.WriteStartArray();
                 w.WriteNumberValue(v.id); w.WriteNumberValue(v.type);
@@ -247,14 +221,11 @@ namespace MagicSurvivalCoop
             w.WriteEndArray();
             (_enIds, _enIdsNext) = (_enIdsNext, _enIds);
             _enIdsNext.Clear();
-            if (n < MaxSentEnemies) { (_enVars, _enVarsNext) = (_enVarsNext, _enVars); _enVarsNext.Clear(); }   // мёртвых — забыть
+            if (n < MaxSentEnemies) { (_enVars, _enVarsNext) = (_enVarsNext, _enVars); _enVarsNext.Clear(); }   // Мёртвых забыть
             if (n > _enSentMax) _enSentMax = n;
         }
 
-        /// <summary>
-        /// Врагов больше MaxSentEnemies — отправить ближайших к друзьям (раньше — первые по списку игры: у гостя рядом с ним
-        /// могло не быть врагов, которые у хоста видны). Ложь — друзей с позицией нет, порядок прежний.
-        /// </summary>
+        /// <summary>Порядок отправки по близости к друзьям. Ложь, если друзей с позицией нет.</summary>
         private readonly List<(int i, double d, Vector3 pos)> _sendOrder = new List<(int, double, Vector3)>();
         private readonly List<(double x, double y)> _guestPts = new List<(double, double)>();
         private bool OrderByGuests(IReadOnlyList<IEnemy> alive, double sx, double sy)
@@ -275,8 +246,6 @@ namespace MagicSurvivalCoop
             return true;
         }
 
-        // ============================================================ гость: приём
-
         private void ReadEnemies(Partner p, JsonElement s)
         {
             if (_hosting || !WorldOn || !s.TryGetProperty("en", out var arr) || arr.ValueKind != JsonValueKind.Array) return;
@@ -288,16 +257,15 @@ namespace MagicSurvivalCoop
                 if (it.ValueKind != JsonValueKind.Array || it.GetArrayLength() < 4) continue;
                 if (!it[0].TryGetInt32(out int id) || !it[1].TryGetInt32(out int type) || !it[2].TryGetInt32(out int x) || !it[3].TryGetInt32(out int y)) continue;
                 bool fresh = !_puppets.TryGetValue(id, out var pp);
-                if (fresh) { _puppets[id] = pp = new Puppet { Id = id, Type = type }; AuditRecv(id, type); }
+                if (fresh) { _puppets[id] = pp = new Puppet { Id = id, Type = type }; }
                 if (it.GetArrayLength() >= 6 && it[4].TryGetSingle(out float va) && it[5].TryGetSingle(out float vb))
                 {
-                    // 1.6.65: хост узнаёт вид особого не сразу (игра ставит его после Start_Unit) — изменился, копию дообновляем
+                    // Вид особого хост узнаёт после Start_Unit, поэтому изменившийся вид дообновляет готовую копию
                     int cid = 0;
                     if (it.GetArrayLength() >= 11) it[6].TryGetInt32(out cid);
                     bool changed = !pp.Special || pp.VarA != va || pp.VarB != vb || pp.CreateId != cid;
                     if (changed)
                     {
-                        bool wasSpecial = pp.Special;
                         pp.VarA = va; pp.VarB = vb; pp.Special = true; pp.CreateId = cid;
                         if (it.GetArrayLength() >= 11)
                         {
@@ -308,7 +276,6 @@ namespace MagicSurvivalCoop
                         if (it.GetArrayLength() >= 15) { it[13].TryGetSingle(out pp.IconSize); pp.Back = it[14].TryGetInt32(out int bk) && bk != 0; }
                         if (it.GetArrayLength() >= 18) { pp.BackColor = new float[3]; it[15].TryGetSingle(out pp.BackColor[0]); it[16].TryGetSingle(out pp.BackColor[1]); it[17].TryGetSingle(out pp.BackColor[2]); }
                         if (pp.Origin < 0 || pp.Origin >= OriginNames.Length) pp.Origin = OriginNormal;
-                        if (!wasSpecial && pp.Origin != OriginNormal && !_auSpecialIds.ContainsKey(pp.Id)) { _auSpecialIds[pp.Id] = pp.Origin; _auRecvOrigin[OriginNormal]--; _auRecvOrigin[pp.Origin]++; }
                         if (!fresh && pp.Obj != null && !pp.LocalDead && _toUpgrade.Count < 40) _toUpgrade.Add(pp);
                     }
                 }
@@ -325,16 +292,15 @@ namespace MagicSurvivalCoop
         {
             if (_spawningPuppet) { _justCreated = self; return; }
             int origin = _spawnOrigin;
-            if (_hosting && WorldOn && _inRun && self != null) { AuditHostSpawn(a, origin); NoteHostSpawn(self, a, origin); NoteHostVars(self, a, origin); }
+            if (_hosting && WorldOn && _inRun && self != null) NoteHostVars(self, a, origin);
             if (!_worldActive || self == null) return;
             var lk = KeyOf(self);
-            if (lk != null) { _forwardKeys.Remove(lk); _destroyTried.Remove(lk); _forwardKill.Remove(lk); }   // объект из пула стал новым врагом
+            if (lk != null) { _forwardKeys.Remove(lk); _destroyTried.Remove(lk); _forwardKill.Remove(lk); }   // Объект из пула стал новым врагом
             int type = -1; float va = 0, vb = 0;
             try { type = Convert.ToInt32(a[0]); va = Convert.ToSingle(a[1]); vb = Convert.ToSingle(a[2]); } catch { }
             if ((origin == OriginSpecial || origin == OriginEpic) && MyBossWave() == 0)
             {
-                // особые и эпические мобы — волна игры: у хоста своя, гостю приходят её копии (и вдали от хоста тоже).
-                // В свою босс-волну гостя — как раньше (её врагов прячет ObeliskSync)
+                // Особые и эпические мобы гостю приходят копиями от хоста, и вдали тоже
                 if (lk != null) _localKeys.Remove(lk);
                 _toDestroy.Enqueue(self);
                 if (_ownSpecialSwept++ < 5) _ctx.Log($"общие враги: свой {OriginNames[origin]} моб гостя (тип {type}, varA {va}, varB {vb}) убран — такие только от хоста");
@@ -342,43 +308,40 @@ namespace MagicSurvivalCoop
             }
             if (MyBossWave() != 0)
             {
-                // своя босс-волна гостя: её босса прячем, пока хост не поднимет обелиск, — тогда мод сам снимает волну
-                // и убирает босса без смерти (ObeliskSync.cs)
+                // Своего босса прячем, пока хост не поднимет обелиск. Тогда ObeliskSync снимет волну и уберёт босса без смерти
                 var hk = KeyOf(self);
                 if (hk != null && !_heldKeys.Contains(hk)) { _heldKeys.Add(hk); _held.Add(self); _heldNew.Enqueue(self); }
                 return;
             }
-            // переход (усиление мобов подобрал гость) — его действие: и вдали от хоста уходит хосту, назад приходит общим врагом
+            // Переход от действия гостя уходит хосту и вдали от него
             bool transition = origin == OriginTransition || va != 0 || vb != 0;
             if (_ownSpawn && !transition)
             {
-                if (lk != null) _localKeys.Add(lk);                         // гость вдали от хоста — враг его собственный
+                if (lk != null) _localKeys.Add(lk);
                 _localSpawned++;
                 return;
             }
-            if (lk != null) _localKeys.Remove(lk);                          // пул переиспользует объекты
+            if (lk != null) _localKeys.Remove(lk);                          // Пул переиспользует объекты
             _sweptTypes[type] = _sweptTypes.TryGetValue(type, out var k) ? k + 1 : 1;
-            // обычный спавн гостя погашен — значит, это враги от его действий (фиолетовая сфера и т.п.): создать у хоста.
-            // Босс-волну не пересылаем — у хоста она своя.
+            // Обычный спавн гостя погашен, значит, это враги от его действий: создать у хоста. Босс-волна у хоста своя
             bool forward = _hostBossWave == 0 && MyBossWave() == 0 && _toForward.Count < 40;
             if (forward && transition && lk != null)
             {
-                // силу мобу перехода (здоровье +10000, сопротивления, скорость, размер, обводку) корутина игры ставит после
-                // Start_Unit (бой 27.10.2026: созданный у хоста одним Start_Unit(тип, 1, 0) — обычный, магия хоста убивала
-                // его сразу). Моб живёт у гостя ещё TransitionReadDelay, потом его поля уходят хосту, а сам он убирается
+                // Силу мобу перехода корутина игры ставит после Start_Unit. Моб живёт у гостя TransitionReadDelay, потом его
+                // поля (TransitionStats) уходят хосту, а сам он убирается
                 _forwardKeys.Add(lk);
                 _toForward.Enqueue((self, type, va, vb, OriginTransition, Clock.Elapsed.TotalSeconds + TransitionReadDelay));
                 _ownTransitionSent++;
                 return;
             }
-            _toDestroy.Enqueue(self);                                       // свой враг гостя — убрать на следующем кадре, не внутри Start_Unit
+            _toDestroy.Enqueue(self);                                       // Убрать на следующем кадре, не внутри Start_Unit
             if (forward) _toForward.Enqueue((self, type, va, vb, OriginNormal, 0));
         }
 
         private const double TransitionReadDelay = 0.3;
 
-        // 1.6.84: свой моб перехода гостя, отправленный хосту, — убрать после его появления: Unit_Destroy_Simple, не вышло —
-        // Unit_Disappear_Peace, не вышло — выключить объект (не виден и не в списке живых). Попытки — раз в 0,5 с (чистка)
+        // Отправленный хосту переход гостя убираем после его появления: Unit_Destroy_Simple, потом Unit_Disappear_Peace, потом
+        // выключением объекта. Попытки идут с чисткой раз в 0,5 с
         private const double ForwardKillDelay = 1.2;
         private readonly Dictionary<object, (double at, int tries)> _forwardKill = new Dictionary<object, (double, int)>();
         private readonly int[] _forwardKillHow = new int[4];
@@ -400,7 +363,7 @@ namespace MagicSurvivalCoop
             if (t == 2 && _forwardKillHow[2] <= 3) _ctx.Log($"общие враги: свой переход «{NameOf(enemy)}» не убрали ни Unit_Destroy_Simple, ни Unit_Disappear_Peace — выключил объект");
         }
 
-        /// <summary>Свой моб гостя — далеко за экран (там же, куда прячется свой босс, HeldStep), чтобы не мелькал до уборки.</summary>
+        /// <summary>Далеко за экран, чтобы моб не мелькал до уборки.</summary>
         private void HideAway(object enemy)
         {
             try
@@ -410,7 +373,7 @@ namespace MagicSurvivalCoop
             }
             catch { }
         }
-        private int _trLogs, _trAliveLogs;
+        private int _trLogs;
 
         private static bool IsTransitionMob(object enemy)
         {
@@ -419,9 +382,7 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Поля, которыми моб перехода отличается от обычного того же типа (журнал 1.6.66: усиленный тип 16 — HpMax 11010,
-        /// бонус 10000, сопротивления 0,5, отталкивание 0,85, скорость ×0,65, размер 1 против 0,8, красная обводка; копия,
-        /// созданная одним Start_Unit(16, 1, 0), — HpMax 200, бонус 0). Порядок — часть протокола (массив «sf» события «dmg»).
+        /// Поля, которыми моб перехода отличается от обычного того же типа. Порядок входит в протокол: массив «sf» события «dmg».
         /// </summary>
         private static readonly string[] TransitionStats =
         {
@@ -442,11 +403,8 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Метка особого моба и обводка. 1.6.77: переход игры их включает сам (у своего перехода хоста MonsterIcon_Size 0,71 и
-        /// Obj_UnitSprite_Back включён, у копии гостя — 0 и выключен). 1.6.79 (дерево объектов): обводка — тот же кадр моба
-        /// в Sprite_UnitEnemySpecial_Back розовым (1; 0,05; 0,5), игра подставляет туда текущий кадр анимации, у копии кадра
-        /// не было и цвет белый; метка — Sprite_UnitEnemySpecial_MonsterIcon с масштабом MonsterIcon_Size, у копии 0.
-        /// Возвращает отрисовщики моба и обводки — обводке каждый кадр текущий кадр моба (SpecialMarksFrame).
+        /// Метка особого моба и обводка: у копии их нет, игра включает их только своему переходу. Обводка рисует текущий кадр
+        /// моба розовым, поэтому возвращаем отрисовщики моба и обводки для SpecialMarksFrame.
         /// </summary>
         private static readonly float[] SpecialBackColor = { 1f, 0.05f, 0.5f, 1f };
         private (object main, object back, float[] color) ShowSpecialMarks(object enemy, float iconSize, bool back, float[] backColor)
@@ -463,7 +421,7 @@ namespace MagicSurvivalCoop
                         if (GetMember(icon, "transform") is Transform it)
                         {
                             it.localScale = new Vector3(iconSize, iconSize, 1);
-                            // 1.6.86: у копии метка в (0, 0, 0) — внутри тела моба, тело её закрывает; у хоста (0, PosY, -5)
+                            // У копии метка в (0, 0, 0) внутри тела моба, и тело её закрывает
                             float posY = 0.85f; try { posY = Convert.ToSingle(GetMember(enemy, "MonsterIcon_PosY") ?? posY); } catch { }
                             it.localPosition = new Vector3(0, posY, -5);
                         }
@@ -480,7 +438,7 @@ namespace MagicSurvivalCoop
                 var backSr = GetComponentOf(go);
                 SetEnabled(backSr, true);
                 var mainSr = GetComponentOf(GetMember(enemy, "Obj_UnitSprite"));
-                // хост шлёт вид при первой отправке, когда игра обводку ещё не перекрасила (белая) — тогда розовый, как у игры
+                // Первая отправка хоста бывает раньше, чем игра перекрасит белую обводку. Тогда берём розовый, как у игры
                 bool own = backColor != null && backColor.Length >= 3 && backColor[0] + backColor[1] + backColor[2] > 0.01f
                            && !(backColor[0] > 0.95f && backColor[1] > 0.95f && backColor[2] > 0.95f);
                 var color = own ? new[] { backColor[0], backColor[1], backColor[2], 1f } : SpecialBackColor;
@@ -493,8 +451,8 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// 1.6.86: обводка у игры — шейдер «GUI/Text Shader» (силуэт заливается цветом). У копии — Sprites/Default: розовый
-        /// умножается на чёрную картинку моба, и обводка не видна.
+        /// Обводке нужен «GUI/Text Shader», заливающий силуэт цветом. С Sprites/Default у копии розовый умножается на чёрную
+        /// картинку, и обводки не видно.
         /// </summary>
         private static object _fillShader;
         private static void SetFillShader(object sr)
@@ -511,7 +469,7 @@ namespace MagicSurvivalCoop
             catch (Exception e) { if (!_backColorLogged) { _backColorLogged = true; _backColorLog = "обводка: шейдер не ставится: " + Inner(e).Message; } }
         }
 
-        /// <summary>Ребёнок (до двух уровней) с этим кусочком в имени.</summary>
+        /// <summary>Ребёнок до двух уровней вглубь, в имени которого есть part.</summary>
         private static object ChildByName(object go, string part)
         {
             if (go == null || !(GetMember(go, "transform") is Transform tr)) return null;
@@ -526,8 +484,8 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Обводке особого моба — текущий кадр анимации моба (копия игры этого не делает) и её цвет: игра перекрашивает
-        /// обводку копии в белый (1.6.80: розовый, поставленный при создании, через секунду белый) — ставим со сменой кадра.
+        /// Текущий кадр моба и цвет обводки. Игра через секунду перекрашивает обводку копии в белый, поэтому цвет ставим со
+        /// сменой кадра.
         /// </summary>
         private static void SpecialMarksFrame(object main, object back, ref object last, float[] color)
         {
@@ -540,8 +498,7 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Цвет обводки — через свойство обёртки. Прямой вызов (SetColor, как у орбит) на этом отрисовщике цвет не ставил
-        /// (журнал 1.6.81: «через свойство»), а после него у гостя появлялся синий моб — не зовём.
+        /// Только через свойство обёртки: прямой вызов SetColor на этом отрисовщике цвет не ставит, а моб у гостя синеет.
         /// </summary>
         private static bool _backColorLogged;
         private static string _backColorLog;
@@ -552,7 +509,7 @@ namespace MagicSurvivalCoop
             catch (Exception e) { if (!_backColorLogged) { _backColorLogged = true; _backColorLog = "обводка: цвет не ставится: " + Inner(e).Message; } }
         }
 
-        // хост: свои мобы перехода гостя — им обводку ведём сами
+        // Мобы перехода, созданные хостом по событию гостя: обводку им ведём сами
         private readonly List<(object obj, object main, object back, float[] color)> _hostMarked = new List<(object, object, object, float[])>();
         private readonly Dictionary<object, object> _hostMarkedLast = new Dictionary<object, object>();
         private void HostMarksStep()
@@ -577,16 +534,7 @@ namespace MagicSurvivalCoop
                     try { SetMember(enemy, TransitionStats[i], d); } catch { }
         }
 
-        // ------------------------------------------------------------ журнал 1.6.6: особые враги хоста (усиление мобов → «переход»)
-
-        // Подобранное хостом усиление мобов запускает корутину Play_Create_UnitEnemy_Transition (Transition_EnemyMax = 15,
-        // Transition_EnemyNum растёт), а у гостя эти враги не появились. Пишем, кто создаётся во время перехода и с какими
-        // varA/varB, и попадает ли он потом в список врагов для гостя (_enemies.Alive).
-        private readonly Dictionary<object, (int type, float a, float b, double at, bool sent, int origin)> _specialSpawns = new Dictionary<object, (int, float, float, double, bool, int)>();
-        private int _specialLogs;
-
-        // varA/varB, с которыми игра создала врага (Start_Unit): у усиленных мобов varA = 1 (журнал 1.6.6) — их копии у гостя
-        // создаются с теми же varA/varB, иначе это обычные мобы того же типа.
+        // Аргументы Start_Unit особых врагов: копии создаются с ними же, иначе это обычные мобы того же типа
         private Dictionary<object, (float a, float b, int origin)> _enVars = new Dictionary<object, (float, float, int)>(), _enVarsNext = new Dictionary<object, (float, float, int)>();
         private void NoteHostVars(object self, object[] a, int origin)
         {
@@ -596,38 +544,38 @@ namespace MagicSurvivalCoop
             if (key == null) return;
             int cid = 1;
             try { cid = Convert.ToInt32(GetMember(self, "UnitCreateID") ?? 1); } catch { }
-            // особый: varA/varB или создан «переходом» (UnitCreateID 3 — красная обводка, журнал 1.6.10); пул объекты переиспользует
-            // 1.6.65: и всё, что создали корутины особых/эпических мобов и перехода
+            // Пул переиспользует объекты, поэтому обычный враг стирает запись
             if (va != 0 || vb != 0 || cid == 3 || origin != OriginNormal) _enVars[key] = (va, vb, origin); else _enVars.Remove(key);
         }
 
         /// <summary>
-        /// Хост (1.6.65): особый ли враг — по его полям. Переход игра создаёт Start_Unit(тип, 0, 0) и только потом ставит
-        /// Unit_SpecialVarA = 1 и UnitCreateID = 3 (бой 27.10.2026: в хуке «создан 1», через секунду — 3); раньше такие
-        /// уходили гостю обычными. Первые три отправки после появления врага.
+        /// Особый ли враг по его полям: переход игра создаёт Start_Unit(тип, 0, 0) и только потом ставит Unit_SpecialVarA и
+        /// UnitCreateID 3.
         /// </summary>
         private void NoteVarsFromFields(object raw, object key)
         {
-            float va = 0, vb = 0; int cid = 1;
+            float va, vb; int cid;
             try { va = Convert.ToSingle(GetMember(raw, "Unit_SpecialVarA") ?? 0f); vb = Convert.ToSingle(GetMember(raw, "Unit_SpecialVarB") ?? 0f); cid = Convert.ToInt32(GetMember(raw, "UnitCreateID") ?? 1); }
             catch { return; }
             if (va == 0 && vb == 0 && cid != 3) return;
             bool had = _enVars.TryGetValue(key, out var old);
-            if (had) { if (va == 0) va = old.a; if (vb == 0) vb = old.b; }       // поля только дополняют то, что знал хук
+            if (had) { if (va == 0) va = old.a; if (vb == 0) vb = old.b; }       // Поля только дополняют то, что знал хук
             int origin = had ? old.origin : OriginNormal;
             if (origin == OriginNormal && cid == 3) origin = OriginTransition;
             if (!had || old.a != va || old.b != vb || old.origin != origin) _enVars[key] = (va, vb, origin);
         }
 
-        /// <summary>Хост: как выглядит особый враг — способ создания, эффект появления, цвет обводки, откуда и размер (читаем при отправке).</summary>
+        private static readonly string[] LookIntFields = { "UnitCreateID", "ApplyCreateEffectID" };
+        private static readonly string[] LookColorFields = { "LineColorR", "LineColorG", "LineColorB" };
+
         private void WriteLook(Utf8JsonWriter w, object raw, int origin)
         {
-            foreach (var f in new[] { "UnitCreateID", "ApplyCreateEffectID" })
+            foreach (var f in LookIntFields)
             {
                 int v = 0; try { v = Convert.ToInt32(GetMember(raw, f) ?? 0); } catch { }
                 w.WriteNumberValue(v);
             }
-            foreach (var f in new[] { "LineColorR", "LineColorG", "LineColorB" })
+            foreach (var f in LookColorFields)
             {
                 float v = 0; try { v = Convert.ToSingle(GetMember(raw, f) ?? 0f); } catch { }
                 w.WriteNumberValue(Math.Round(v, 3));
@@ -643,158 +591,12 @@ namespace MagicSurvivalCoop
             for (int i = 0; i < 3; i++) w.WriteNumberValue(Math.Round(bc != null && bc.Length > i ? bc[i] : 0, 3));
         }
 
-        // 1.6.10: у копий varA = 1 не делает мобов «усиленными» (у друга их не было видно) — что меняется в самом враге?
-        // Через 1,5 с после появления — все простые поля первого особого и одного обычного врага того же боя.
-        private object _dumpSpecial, _dumpNormal, _specialCopy;
-        private double _specialCopyAt;
-        private int _specialCopyOrigin;
-        private double _dumpAt;
-        private bool _dumped;
-
-        private void DumpEnemiesStep()
-        {
-            for (int i = _originDumps.Count - 1; i >= 0; i--)
-                if (Clock.Elapsed.TotalSeconds >= _originDumps[i].at && _originDumps[i].origin < 0)
-                {
-                    _ctx.Log("переход гостя у хоста, вид: " + VisualState(_originDumps[i].obj));
-                    _originDumps.RemoveAt(i);
-                }
-                else if (Clock.Elapsed.TotalSeconds >= _originDumps[i].at)
-                {
-                    _ctx.Log($"{OriginNames[_originDumps[i].origin]} моб хоста: " + EnemyFields(_originDumps[i].obj));
-                    _ctx.Log($"{OriginNames[_originDumps[i].origin]} моб хоста, вид: " + VisualState(_originDumps[i].obj));
-                    _originDumps.RemoveAt(i);
-                }
-            if (_dumped || _dumpSpecial == null || Clock.Elapsed.TotalSeconds < _dumpAt) return;
-            _dumped = true;
-            if (_dumpNormal == null)
-                foreach (var e in _enemies.Alive) { var k = KeyOf(e.Raw); if (k != null && !_specialSpawns.ContainsKey(k)) { _dumpNormal = e.Raw; break; } }
-            _ctx.Log("усиленный моб (особый): " + EnemyFields(_dumpSpecial));
-            if (_dumpNormal != null) _ctx.Log("обычный моб для сравнения: " + EnemyFields(_dumpNormal));
-        }
-
-        private bool _guestVisDumped;
-
-        /// <summary>Метка особого моба и обводка: что включено (1.6.73 — у перехода гостя у хоста их нет).</summary>
-        /// <summary>Всё дерево объекта врага: имя, включён, масштаб, картинка и цвет её отрисовщика (до глубины 4).</summary>
-        private string DeepTree(object go, int depth = 0)
-        {
-            if (go == null || depth > 4) return "";
-            var sb = new System.Text.StringBuilder();
-            try
-            {
-                var tr = GetMember(go, "transform");
-                var sr = GetComponentOf(go);
-                string col = ""; try { col = sr == null ? "" : $" цвет {GetMember(sr, "color")}, слой {GetMember(sr, "sortingOrder")}, enabled {EnabledOf(sr)}"; } catch { }
-                sb.Append($" | {new string('.', depth)}«{NameOf(go)}» {GetMember(go, "activeSelf")} {GetMember(tr, "localScale")} «{NameOf(SpriteOf(sr))}»{col}");
-                int n = Convert.ToInt32(GetMember(tr, "childCount") ?? 0);
-                var getChild = tr?.GetType().GetMethod("GetChild", new[] { typeof(int) });
-                for (int i = 0; i < Math.Min(n, 10) && getChild != null; i++)
-                    sb.Append(DeepTree(GetMember(getChild.Invoke(tr, new object[] { i }), "gameObject"), depth + 1));
-            }
-            catch (Exception ex) { sb.Append(" ошибка " + Inner(ex).Message); }
-            return sb.ToString();
-        }
-
-        private string VisualState(object e)
-        {
-            string Go(object go) { if (go == null) return "нет"; try { return $"active {GetMember(go, "activeSelf")}/{GetMember(go, "activeInHierarchy")}"; } catch { return "?"; } }
-            string Sr(object sr)
-            {
-                if (sr == null) return "нет";
-                try { return $"enabled {GetMember(sr, "enabled")}, go {Go(GetMember(sr, "gameObject"))}, sprite «{NameOf(GetMember(sr, "sprite"))}», color {GetMember(sr, "color")}, mat «{NameOf(GetMember(sr, "sharedMaterial"))}»"; }
-                catch (Exception ex) { return "ошибка " + Inner(ex).Message; }
-            }
-            var parts = new List<string>();
-            try
-            {
-                parts.Add($"icon obj {Go(GetMember(e, "Obj_MonsterIcon"))}, icon sr {Sr(GetMember(e, "SpriteRenderer_MonsterIcon"))}, icon01 «{NameOf(GetMember(e, "Sprite_MonsterIcon01"))}», icon02 «{NameOf(GetMember(e, "Sprite_MonsterIcon02"))}»");
-                parts.Add($"MonsterIcon_Size {GetMember(e, "MonsterIcon_Size")}, PosY {GetMember(e, "MonsterIcon_PosY")}, UnitCreateID {GetMember(e, "UnitCreateID")}, ApplyCreateEffectID {GetMember(e, "ApplyCreateEffectID")}, UColorID {GetMember(e, "UColorID")}, Line {GetMember(e, "LineColorR")}/{GetMember(e, "LineColorG")}/{GetMember(e, "LineColorB")}");
-            }
-            catch (Exception ex) { parts.Add("ошибка " + Inner(ex).Message); }
-            try
-            {
-                if (GetMember(e, "Array_SpriteRendererUnitSpecialDummy") is object arr)
-                {
-                    int n = Convert.ToInt32(GetMember(arr, "Length") ?? 0);
-                    var ix = arr.GetType().GetMethod("get_Item", new[] { typeof(int) });
-                    for (int i = 0; i < n && i < 8; i++) parts.Add($"dummy[{i}] {Sr(ix?.Invoke(arr, new object[] { i }))}");
-                }
-            }
-            catch (Exception ex) { parts.Add("dummy ошибка " + Inner(ex).Message); }
-            try { parts.Add($"originalMaterial «{NameOf(GetMember(e, "originalMaterial"))}»"); } catch { }
-            try { parts.Add("дерево:" + DeepTree(GetMember(e, "gameObject"))); } catch { }
-            try
-            {
-                parts.Add($"unit {Go(GetMember(e, "gameObject"))}, sprite obj {Go(GetMember(e, "Obj_UnitSprite"))}, sprite back {Go(GetMember(e, "Obj_UnitSprite_Back"))}");
-                parts.Add($"масштаб unit {GetMember(GetMember(e, "Transform_ObjUnit"), "localScale")}, sprite {GetMember(GetMember(e, "Transform_ObjUnitSprite"), "localScale")}, позиция {GetMember(GetMember(e, "Transform_ObjUnit"), "position")}");
-                var sprTr = GetMember(e, "Transform_ObjUnitSprite");
-                int cc = Convert.ToInt32(GetMember(sprTr, "childCount") ?? 0);
-                parts.Add($"детей у спрайта {cc}");
-                var gc = sprTr?.GetType().GetMethod("GetChild", new[] { typeof(int) });
-                for (int i = 0; i < cc && i < 6 && gc != null; i++) { var ch = gc.Invoke(sprTr, new object[] { i }); parts.Add($"  [{i}] «{NameOf(ch)}» {Go(GetMember(ch, "gameObject"))} scale {GetMember(ch, "localScale")}"); }
-            }
-            catch (Exception ex) { parts.Add("unit ошибка " + Inner(ex).Message); }
-            return string.Join("; ", parts);
-        }
-
-        private static string EnemyFields(object e)
-        {
-            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-            var parts = new List<string>();
-            try
-            {
-                foreach (var p in e.GetType().GetProperties(any))
-                {
-                    if (p.GetIndexParameters().Length > 0 || p.Name.StartsWith("Native")) continue;
-                    var t = p.PropertyType;
-                    if (!(t.IsPrimitive || t.IsEnum)) continue;
-                    object v; try { v = p.GetValue(e); } catch { continue; }
-                    parts.Add(p.Name + "=" + Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture));
-                }
-            }
-            catch (Exception ex) { parts.Add("ошибка: " + Inner(ex).Message); }
-            return string.Join(", ", parts);
-        }
-
-        private void NoteHostSpawn(object self, object[] a, int origin)
-        {
-            int type = -1; float va = 0, vb = 0;
-            try { type = Convert.ToInt32(a[0]); va = Convert.ToSingle(a[1]); vb = Convert.ToSingle(a[2]); } catch { }
-            int trans = 0;
-            try { trans = Convert.ToInt32(GetAny(_battleMgr, "Transition_EnemyNum") ?? 0); } catch { }
-            if (va == 0 && vb == 0 && trans == 0 && origin == OriginNormal) return;
-            var key = KeyOf(self);
-            if (key == null || _specialSpawns.Count > 300) return;
-            _specialSpawns[key] = (type, va, vb, Clock.Elapsed.TotalSeconds, false, origin);
-            if (_specialLogs++ < 20) _ctx.Log($"особый враг хоста ({OriginNames[origin]}): тип {type}, varA {va}, varB {vb}, переход {trans}, «{NameOf(self)}», размер {GetMember(self, "UnitApply_UnitSize")}, создан {GetMember(self, "UnitCreateID")}");
-            if (_dumpSpecial == null) { _dumpSpecial = self; _dumpAt = Clock.Elapsed.TotalSeconds + 1.5; }
-            if (origin != OriginNormal && _originDumped.Add(origin)) _originDumps.Add((self, origin, Clock.Elapsed.TotalSeconds + 0.5));
-        }
-        // 1.6.65: по одному снимку полей на вид особых мобов (особый, эпический, переход) — сверить с копией у гостя
-        private readonly HashSet<int> _originDumped = new HashSet<int>();
-        private readonly List<(object obj, int origin, double at)> _originDumps = new List<(object, int, double)>();
-
-        /// <summary>Попал ли особый враг в список для гостя — отмечаем при отправке.</summary>
-        private void MarkSpecialSent(object key)
-        {
-            if (_specialSpawns.TryGetValue(key, out var v) && !v.sent) _specialSpawns[key] = (v.type, v.a, v.b, v.at, true, v.origin);
-        }
-
-        private string SpecialSummary() => _specialSpawns.Count == 0 ? "" :
-            $"; особых врагов хоста {_specialSpawns.Count}, ушли гостю {_specialSpawns.Values.Count(v => v.sent)} " +
-            $"(по типам: {string.Join(" ", _specialSpawns.Values.GroupBy(v => (v.type, v.a, v.b, v.origin)).Select(g => $"{g.Key.type}/{g.Key.a}/{g.Key.b}/{OriginNames[g.Key.origin]}×{g.Count()}"))})";
-
-        // ============================================================ гость: каждый кадр
-
         private void WorldStep(double now)
         {
             if (_backColorLog != null) { _ctx.Log(_backColorLog); _backColorLog = null; }
             if (_hosting) { if (_hostMarked.Count > 0) HostMarksStep(); return; }
             var host = _worldHost;
-            // 1.6.67: пока своя игра на паузе, WorldStep не идёт — это время не в счёт молчания хоста; и хост на паузе
-            // (выбирает умение) врагов может не слать. Раньше на каждом выборе умения мир у гостя выключался и копии
-            // создавались заново, а переход гостя в эти секунды оставался только у него
+            // Пока своя игра на паузе, WorldStep не идёт, и это время не в счёт молчания хоста. Хост на паузе врагов может не слать
             if (_worldActive && now - _worldStepAt > 0.5) _enSnapAt = Math.Min(now, _enSnapAt + (now - _worldStepAt));
             _worldStepAt = now;
             bool hostQuiet = host != null && (host.Paused || host.OwnPause) && now - _enSnapAt < 60;
@@ -820,17 +622,7 @@ namespace MagicSurvivalCoop
                 if (!_ownSpawn) SuppressSpawn(mgr);
                 bool noBoss = MyBossWave() == 0 && _hostBossWave == 0;
                 if (noBoss) ClearBossLeftovers(mgr);
-                if (_away)
-                {
-                    if (_ownSpawn) RestartOwnSpawn(mgr, now);
-                    if (now >= _awayLogAt)
-                    {
-                        if (_awayLogAt > 0)
-                            _ctx.Log($"общие враги вдали: своих врагов за 10 с {_localSpawned - _awayLogSpawned}, живых своих {_localKeys.Count}; " +
-                                     $"EnemyCreateNum {GetAny(mgr, "EnemyCreateNum")}/{GetAny(mgr, "EnemyCreateNum_Min")}/{GetAny(mgr, "EnemyCreateNum_Max")}, OnlyBossON {GetAny(mgr, "OnlyBossON")}, часы {MyClock()} с");
-                        _awayLogAt = now + 10; _awayLogSpawned = _localSpawned;
-                    }
-                }
+                if (_away && _ownSpawn) RestartOwnSpawn(mgr, now);
                 Sweep();
                 if (hasHero) UpdateViewHalf(now, hhx, hhy);
             }
@@ -839,7 +631,7 @@ namespace MagicSurvivalCoop
             {
                 var f = _toForward.Dequeue();
                 float[] stats = null;
-                // 1.6.87: место — до HideAway, иначе хост создавал мобов перехода гостя за 400 от него
+                // Место читаем до HideAway
                 Vector3? pos = null;
                 try { pos = (GetMember(f.obj, "Transform_ObjUnit") as Transform).position; } catch { }
                 if (f.origin == OriginTransition)
@@ -847,10 +639,8 @@ namespace MagicSurvivalCoop
                     stats = ReadStats(f.obj);
                     if (!float.IsNaN(stats[2])) f.a = stats[2];
                     if (!float.IsNaN(stats[3])) f.b = stats[3];
-                    // Unit_Destroy_Simple моба перехода сразу не убирает (журнал 1.6.70: «жив True, IsDestroySimple False»), а
-                    // остановка его корутин (1.6.71) замораживала его навсегда: у гостя стоял рогатый моб, которого у хоста нет
-                    // (1.6.83). Теперь он уходит далеко за экран, а убирается после появления (_forwardKill). Ключ остаётся в
-                    // _forwardKeys: второй раз не слать
+                    // Во время появления Unit_Destroy_Simple моба перехода не убирает, а остановка корутин замораживает его
+                    // навсегда. Поэтому он уходит за экран и убирается позже (_forwardKill). Ключ в _forwardKeys не даёт слать его снова
                     HideAway(f.obj);
                     var fk = KeyOf(f.obj);
                     if (fk != null) _forwardKill[fk] = (now + ForwardKillDelay, 0);
@@ -876,7 +666,7 @@ namespace MagicSurvivalCoop
             int made = 0, live = 0;
             double createMs = 0;
             bool puppetAi = _ctx.Setting("puppetAi") > 0;
-            int waitOnScreen = 0;
+            bool waitOnScreen = false;
             if (!hasHero) _viewHalfX = 0;
             _worldWatch.Restart();
             _gone.Clear();
@@ -887,24 +677,23 @@ namespace MagicSurvivalCoop
                 if (pp.LocalDead)
                 {
                     if (pp.DeadAt <= 0 || now - pp.DeadAt < 2) continue;
-                    pp.Obj = null; pp.Tr = null; pp.LocalDead = false; pp.DeadAt = 0; _wRespawned++;   // у хоста жив — создать снова
+                    pp.Obj = null; pp.Tr = null; pp.LocalDead = false; pp.DeadAt = 0; _wRespawned++;
                 }
                 try
                 {
                     if (pp.Obj == null)
                     {
-                        // создаём после прохода — сначала ближайших к герою (раньше — по порядку словаря: при очереди на создание
-                        // у гостя рядом с ним было меньше врагов, чем у хоста)
+                        // Создаём после прохода, ближайших к герою первыми
                         double cd = 0;
                         if (hasHero && PuppetPos(pp, rt, out var cx, out var cy))
                         {
                             double dx = ox + cx - hhx, dy = oy + cy - hhy; cd = dx * dx + dy * dy;
-                            if (_viewHalfX > 0 && Math.Abs(dx) * 1.3 < _viewHalfX && Math.Abs(dy) * 1.3 < _viewHalfY) { _viewWait++; waitOnScreen++; }
+                            if (_viewHalfX > 0 && Math.Abs(dx) * 1.3 < _viewHalfX && Math.Abs(dy) * 1.3 < _viewHalfY) waitOnScreen = true;
                         }
                         _toCreate.Add((cd, pp));
                         continue;
                     }
-                    // объект погиб у гостя и пул уже отдал его другой копии (смерть видна раз в 6 кадров) — им двигали бы обе
+                    // Смерть видна раз в 6 кадров, и пул мог уже отдать объект другой копии
                     if (pp.Key != null && _ownerByKey.TryGetValue(pp.Key, out var owner) && owner != pp)
                     {
                         pp.LocalDead = true; pp.DeadAt = now; _wLocalDead++; _wReused++;
@@ -915,7 +704,7 @@ namespace MagicSurvivalCoop
                         ReadUnitState(pp, out bool alive, out double hp);
                         if (!alive)
                         {
-                            pp.LocalDead = true; pp.DeadAt = now; _wLocalDead++;   // погибла в обход здоровья (Армагеддон…) — подождём хоста
+                            pp.LocalDead = true; pp.DeadAt = now; _wLocalDead++;   // Погибла в обход здоровья, например от Армагеддона
                             if (_wLocalDead <= 10 && pp.Tr != null)
                             {
                                 var dp = pp.Tr.position;
@@ -923,7 +712,7 @@ namespace MagicSurvivalCoop
                             }
                             continue;
                         }
-                        // урон гостя: здоровье копии держим на PuppetHp — разница и есть урон (любым заклинанием гостя)
+                        // Здоровье копии держим на PuppetHp, разница и есть урон гостя
                         if (hp < PuppetHp - 0.01)
                         {
                             _ctx.Mark("общие враги: здоровье копии");
@@ -931,14 +720,12 @@ namespace MagicSurvivalCoop
                             Invulnerable(pp.Obj, pp.Key);
                             _ctx.Mark("общие враги: перемещение копий");
                         }
-                        // игра пересчитывает скорость (усиления волн) — гасим снова; раньше всем копиям в одном кадре раз в 0,5 с:
-                        // 6 записей на копию, у гостя (Pixel 3a) кадр «чистки» до 240 мс
+                        // Игра пересчитывает скорость с усилениями волн. Гасим вразбивку по кадрам: всем копиям сразу кадр доходил до 240 мс
                         if (puppetAi && (_worldFrame / 6 + pp.Id) % 5 == 0) ZeroSpeed(pp.Obj, pp.Key);
                         _world.Lap(4);
                     }
                     if (pp.Tr == null || !PuppetPos(pp, rt, out var x, out var y)) continue;
-                    // за экраном — раз в 3 кадра: перестановка — два обращения к игре на копию (Terra, 29.10: ~1 мс на 175 копий)
-                    if (_viewHalfX > 0 && Math.Abs(ox + x - hhx) * 1.3 < _viewHalfX && Math.Abs(oy + y - hhy) * 1.3 < _viewHalfY) _viewLive++;
+                    // За экраном раз в 3 кадра: перестановка стоит два обращения к игре на копию
                     if (pp.Placed && _viewHalfX > 0 && (Math.Abs(ox + x - hhx) > _viewHalfX || Math.Abs(oy + y - hhy) > _viewHalfY) && (_worldFrame + pp.Id) % 3 != 0) { live++; continue; }
                     PlacePuppet(pp, ox + x, oy + y);
                     live++;
@@ -947,12 +734,9 @@ namespace MagicSurvivalCoop
                 catch (Exception e) { pp.LocalDead = true; if (++_wFails <= 5) _ctx.Log($"общие враги: копия {pp.Id}: {Inner(e).Message}"); }
             }
             _world.Lap(5);
-            // бюджет кадра: создание копии — работа самой игры (журнал 1.5.7: у гостя лагало в начале волны). На экране ждут —
-            // бюджет вдвое (Terra, 29.10: у гостя на экране 12–24 копии, ещё 25–36 ждали создания)
-            bool fast = waitOnScreen > 0;
-            if (fast) _fastFrames++;
-            int maxMade = fast ? MaxPuppetSpawnsPerFrameFast : MaxPuppetSpawnsPerFrame;
-            double budget = fast ? PuppetSpawnBudgetMsFast : PuppetSpawnBudgetMs;
+            // Создание копии делает сама игра, поэтому бюджет на кадр. Копии ждут на экране: бюджет вдвое
+            int maxMade = waitOnScreen ? MaxPuppetSpawnsPerFrameFast : MaxPuppetSpawnsPerFrame;
+            double budget = waitOnScreen ? PuppetSpawnBudgetMsFast : PuppetSpawnBudgetMs;
             while (_toCreate.Count > 0 && made < maxMade && createMs <= budget)
             {
                 int best = 0;
@@ -964,20 +748,12 @@ namespace MagicSurvivalCoop
                 double t0 = _worldWatch.Elapsed.TotalMilliseconds;
                 try
                 {
-                    // новая копия стоит там, где её поставила игра (обычно у героя), — на место сразу
+                    // Новую копию игра ставит у героя
                     if (CreatePuppet(mgr, pp) && pp.Tr != null && PuppetPos(pp, rt, out var x, out var y)) { PlacePuppet(pp, ox + x, oy + y); live++; }
                 }
                 catch (Exception e) { pp.LocalDead = true; if (++_wFails <= 5) _ctx.Log($"общие враги: копия {pp.Id}: {Inner(e).Message}"); }
                 double ms = _worldWatch.Elapsed.TotalMilliseconds - t0;
-                createMs += ms; _createMsSum += ms; _createN++; if (ms > _createMsMax) _createMsMax = ms; _createAllMs += ms;
-            }
-            _viewWaitAll += _toCreate.Count; _viewFrames++;
-            if (now >= _viewLogAt)
-            {
-                if (_viewLogAt > 0 && _viewFrames > 0)
-                    _ctx.Log($"общие враги за 10 с (на кадр): на экране копий {(double)_viewLive / _viewFrames:0.0}, ждут создания на экране {(double)_viewWait / _viewFrames:0.0}, ждут всего {(double)_viewWaitAll / _viewFrames:0.0}, создано {_wCreated - _viewCreated0}" +
-                             $" по {_createAllMs / Math.Max(1, _wCreated - _viewCreated0):0.00} мс (пул {_createPreMs / Math.Max(1, _wCreated - _viewCreated0):0.00}, Create_UnitEnemyBoss {_createGameMs / Math.Max(1, _wCreated - _viewCreated0):0.00}, настройка {_createPostMs / Math.Max(1, _wCreated - _viewCreated0):0.00}), кадров с ускоренным созданием {_fastFrames}");
-                _viewLogAt = now + 10; _viewLive = _viewWait = _viewWaitAll = _viewFrames = _fastFrames = 0; _viewCreated0 = _wCreated; _createGameMs = _createAllMs = _createPreMs = _createPostMs = 0;
+                createMs += ms; _createMsSum += ms; _createN++; if (ms > _createMsMax) _createMsMax = ms;
             }
             _toCreate.Clear();
             _ctx.Mark("общие враги: перемещение копий");
@@ -993,19 +769,16 @@ namespace MagicSurvivalCoop
             if (live > _wMax) _wMax = live;
             if ((_dmgOut.Count > 0 || _spawnOut.Count > 0) && now >= _dmgFlushAt) FlushDamage(now);
             _world.Lap(7);
-            if (_specialCopy != null && now >= _specialCopyAt) { _ctx.Log($"особая копия у гостя ({OriginNames[_specialCopyOrigin]}): " + EnemyFields(_specialCopy)); _ctx.Log($"особая копия у гостя ({OriginNames[_specialCopyOrigin]}), вид: " + VisualState(_specialCopy)); _specialCopy = null; _specialCopyAt = double.MaxValue; }
             double stepMs = _worldWatch.Elapsed.TotalMilliseconds;
             if (stepMs > _stepMsMax) _stepMsMax = stepMs;
-            // враг погиб у хоста — копию из списка сразу (её больше не двигаем и не создаём заново), а убиваем по очереди: смерть
-            // врага — работа игры (награда, эффекты), и пачка смертей в одном кадре давала у гостя кадр до 72 мс (1.6.19, телефоны)
-            // не созданные (бюджет создания) и уже погибшие у гостя — в очередь не ставим: они занимали места в лимите убийств,
-            // живые копии ждали за ними секундами (Terra, 29.10: в очереди 1309, живых из них ~20%)
-            foreach (var id in _gone) { var pp = _puppets[id]; _puppets.Remove(id); AuditGone(pp.Id, pp.Type); if (pp.Obj != null && !pp.LocalDead) _dying.Enqueue(pp); }
+            // Смерть врага делает игра (награда, эффекты), и пачка смертей за кадр давала кадр до 72 мс, поэтому убиваем по очереди.
+            // Не созданные и уже погибшие копии в очередь не идут, иначе живые ждут за ними секундами
+            foreach (var id in _gone) { var pp = _puppets[id]; _puppets.Remove(id); if (pp.Obj != null && !pp.LocalDead) _dying.Enqueue(pp); }
             if (_dying.Count > 0)
             {
                 _ctx.Mark("общие враги: убиваю копии (враг погиб у хоста)");
                 double t0 = _worldWatch.Elapsed.TotalMilliseconds;
-                // очередь после массовой смерти у хоста (Армагеддон) — бюджет больше: иначе копии стояли у гостя секундами
+                // Длинная очередь после массовой смерти у хоста: бюджет больше
                 bool many = _dying.Count > PuppetKillManyQueue;
                 int maxKills = many ? MaxPuppetKillsPerFrameMany : MaxPuppetKillsPerFrame;
                 double killBudget = many ? PuppetKillBudgetMsMany : PuppetKillBudgetMs;
@@ -1017,12 +790,9 @@ namespace MagicSurvivalCoop
         }
 
         private readonly List<(double d, Puppet pp)> _toCreate = new List<(double, Puppet)>();
-        private int _viewLive, _viewWait, _viewWaitAll, _viewFrames, _viewCreated0, _fastFrames;
-        private double _viewLogAt, _createGameMs, _createAllMs, _createPreMs, _createPostMs;
-        private static double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
-        // Поля врага (float, bool) — по смещению: через GetMember/SetMember это рефлексия и переход в IL2CPP на каждое обращение.
-        // key — адрес объекта (KeyOf); не адрес (тесты) — рефлексия. Первое слово объекта IL2CPP — его класс. Объект держит
+        // Поля врага читаются по смещению: GetMember/SetMember стоят рефлексии и перехода в IL2CPP на каждое обращение.
+        // key адрес объекта (KeyOf), в тестах вместо адреса рефлексия. Первое слово объекта IL2CPP его класс. Объект держит
         // обёртка, так что память жива и у уничтоженного Unity
         private static readonly Dictionary<(IntPtr, string), int> FieldOffsets = new Dictionary<(IntPtr, string), int>();
         private static bool FieldAddr(object key, string name, out IntPtr addr)
@@ -1063,7 +833,7 @@ namespace MagicSurvivalCoop
             pp.Placed = true;
         }
 
-        /// <summary>Полуразмеры экрана в единицах мира с запасом 30% — граница «копия за экраном».</summary>
+        /// <summary>Полуразмеры экрана в единицах мира с запасом 30%.</summary>
         private double _viewHalfX, _viewHalfY;
         private bool _viewLogged;
         private void UpdateViewHalf(double now, double hx, double hy)
@@ -1083,7 +853,7 @@ namespace MagicSurvivalCoop
             catch { _viewHalfX = 0; }
         }
 
-        /// <summary>Гость дальше «worldZone» от хоста (оба — от своих точек старта) — свой спавн включён, ближе — погашен.</summary>
+        /// <summary>Расстояние до хоста считается от точек старта обоих.</summary>
         private void UpdateAway(Partner host, bool hasHero, double hx, double hy)
         {
             double r = _ctx.Setting("worldZone");
@@ -1101,7 +871,7 @@ namespace MagicSurvivalCoop
             {
                 if (_away)
                 {
-                    _awayTimes++; _awayLogAt = 0;
+                    _awayTimes++;
                     _ctx.Log($"общие враги: отошёл от «{host.Name}» дальше {r:0} — {(boss ? "идёт босс-волна, свой спавн включится после неё" : "свой спавн включён")}");
                     _ctx.Toast("Далеко от хоста: враги идут на вас", 2);
                 }
@@ -1116,16 +886,13 @@ namespace MagicSurvivalCoop
             if (own == _ownSpawn) return;
             _ownSpawn = own;
             if (own) RestoreSpawn();
-            else _sweepAt = 0;                                              // погасить спавн в этом же кадре
+            else _sweepAt = 0;                                              // Погасить спавн в этом же кадре
         }
 
         /// <summary>
-        /// Хвосты босс-волны гостя (1.6.61). Босс гостя в общих врагах не умирает — мод убирает его по обелиску хоста, и после
-        /// волны у гостя оставались счётчик убийств волны (ApplyMonsterClearKillNum 2240, …Plus 1) и ярость босса
-        /// (BossWave_SpeedRatio/SizeRatio ≈ 15, HitDamageRatio 0,9); у хоста после смерти босса — 0, 0, 0, 0, 1. С ними игра
-        /// гостя ставит «только босс» (OnlyBossON 1) и каждый кадр зовёт Create_UnitEnemy_Stop: вдали от хоста своих врагов
-        /// не было (телефоны 26.10.2026, 1.6.59–1.6.60; снятый один OnlyBossON игра возвращала тут же). Вне босс-волны —
-        /// как у хоста; ApplyBossNum не трогаем (держит 1 ObeliskSync).
+        /// Босс гостя не умирает, мод убирает его по обелиску хоста, и после волны остаются счётчик убийств волны и ярость
+        /// босса. С ними игра ставит «только босс» и останавливает свой спавн, так что вдали от хоста врагов нет. Ставим
+        /// значения, как у хоста после смерти босса. ApplyBossNum держит ObeliskSync.
         /// </summary>
         private static readonly (string name, double value)[] BossLeftovers =
         {
@@ -1149,8 +916,8 @@ namespace MagicSurvivalCoop
         }
         private int _onlyBossCleared;
 
-        // спавн игры гостя остановлен (Create_UnitEnemy_Stop — босс-волна, «только босс»): сама игра запускает его снова только
-        // на следующем шаге волн (до 30 с) — вдали от хоста запускаем сами; второй Start при идущей корутине удвоил бы спавн
+        // Остановленный спавн игра запускает только на следующем шаге волн, до 30 с. Вдали от хоста запускаем сами, но только
+        // остановленный: второй Start при идущей корутине удвоил бы спавн
         private bool _spawnStopped;
         private double _spawnRestartAt;
         private int _spawnRestarts;
@@ -1180,13 +947,13 @@ namespace MagicSurvivalCoop
                 w.WriteEndArray();
                 if (_spawnOut.Count > 0)
                 {
-                    w.WriteStartArray("s");                                 // [тип, varA, varB, x, y] от старта гостя
+                    w.WriteStartArray("s");                                 // Тип, varA, varB, x, y от старта гостя
                     foreach (var s in _spawnOut) { w.WriteNumberValue(s.type); w.WriteNumberValue(s.a); w.WriteNumberValue(s.b); w.WriteNumberValue(Math.Round(s.x, 2)); w.WriteNumberValue(Math.Round(s.y, 2)); }
                     w.WriteEndArray();
-                    w.WriteStartArray("so");                                // 1.6.65: откуда каждый (3 — переход)
+                    w.WriteStartArray("so");
                     foreach (var s in _spawnOut) w.WriteNumberValue(s.origin);
                     w.WriteEndArray();
-                    w.WriteStartArray("sf");                                // 1.6.66: поля моба перехода (TransitionStats), без них — []
+                    w.WriteStartArray("sf");                                // TransitionStats моба перехода или пустой массив
                     foreach (var s in _spawnOut)
                     {
                         w.WriteStartArray();
@@ -1201,7 +968,7 @@ namespace MagicSurvivalCoop
             _dmgOut.Clear(); _spawnOut.Clear();
         }
 
-        /// <summary>Хост: особые враги гостя (от его действий) — создать у себя там же относительно старта (тип; varA/varB пока не передаются игре).</summary>
+        /// <summary>Хост создаёт врагов от действий гостя там же относительно старта.</summary>
         private void OnRemoteSpawns(JsonElement e)
         {
             if (!_hosting || !WorldOn || !_inRun || _battleMgr == null || !e.TryGetProperty("s", out var s) || s.ValueKind != JsonValueKind.Array) return;
@@ -1223,7 +990,7 @@ namespace MagicSurvivalCoop
                 {
                     try { bossNum = bossProp?.GetValue(null); } catch { }
                     RefillBossPool(_battleMgr);
-                    commonItem = PutPrefabFirst(_battleMgr, origin);          // заготовка из пула особых — с меткой и обводкой
+                    commonItem = PutPrefabFirst(_battleMgr, origin);          // Заготовка из пула особых с меткой и обводкой
                     CallMethod(_battleMgr, "Create_UnitEnemyBoss", type, 1);
                 }
                 catch (Exception ex) { if (++_wFails <= 5) _ctx.Log($"общие враги: враг гостя тип {type}: {Inner(ex).Message}"); }
@@ -1235,10 +1002,10 @@ namespace MagicSurvivalCoop
                 try { sa = s[i + 1].GetSingle(); sb = s[i + 2].GetSingle(); } catch { }
                 if (sa != 0 || sb != 0 || origin == OriginTransition)
                 {
-                    _spawningPuppet = true;                                     // особый враг гостя (усиление мобов у гостя): как у игры
+                    _spawningPuppet = true;
                     try
                     {
-                        if (origin == OriginTransition) SetMember(obj, "UnitCreateID", 3);   // вид «перехода» игра ставит от способа создания
+                        if (origin == OriginTransition) SetMember(obj, "UnitCreateID", 3);   // Вид перехода Start_Unit берёт из UnitCreateID
                         CallMethod(obj, "Start_Unit", type, sa, sb);
                         if (origin == OriginTransition) SetMember(obj, "UnitCreateID", 3);
                     }
@@ -1246,7 +1013,7 @@ namespace MagicSurvivalCoop
                     finally { _spawningPuppet = false; _justCreated = null; }
                     if (sf.ValueKind == JsonValueKind.Array && i / 5 < sf.GetArrayLength() && sf[i / 5].ValueKind == JsonValueKind.Array && sf[i / 5].GetArrayLength() > 0)
                     {
-                        ApplyStats(obj, sf[i / 5]);                             // сила моба перехода — как у гостя
+                        ApplyStats(obj, sf[i / 5]);
                         var marks = ShowSpecialMarks(obj, Convert.ToSingle(GetMember(obj, "MonsterIcon_Size") ?? 0f), true, null);
                         if (marks.back != null && _hostMarked.Count < 100) _hostMarked.Add((obj, marks.main, marks.back, marks.color));
                         if (_spawnInLogs < 40) _ctx.Log($"общие враги: моб перехода гостя — здоровье {GetMember(obj, "Unit_Hp")}/{GetMember(obj, "UnitApply_HpMax")}, бонус {GetMember(obj, "UnitApply_HpMax_Bonus")}, размер {GetMember(obj, "UnitApply_UnitSize")}");
@@ -1257,11 +1024,9 @@ namespace MagicSurvivalCoop
                 FixSpriteScale(obj, KeyOf(obj));
                 _spawnIn++;
                 if (_spawnInLogs++ < 40) _ctx.Log($"общие враги: враг от действий гостя — тип {type}, varA {s[i + 1]}, varB {s[i + 2]}, создан у меня");
-                if (origin == OriginTransition && !_guestVisDumped) { _guestVisDumped = true; _originDumps.Add((obj, -1, Clock.Elapsed.TotalSeconds + 0.5)); }
             }
         }
 
-        /// <summary>Хост: урон гостя по общим врагам — по настоящему врагу.</summary>
         private void OnRemoteDamage(JsonElement e)
         {
             OnRemoteSpawns(e);
@@ -1276,10 +1041,10 @@ namespace MagicSurvivalCoop
             }
         }
 
-        /// <summary>Повтор магии этого друга — только картинка: урон идёт через здоровье копий (общие враги, 1.5.5).</summary>
+        /// <summary>Урон этого друга идёт через здоровье копий, повтор его магии только для вида.</summary>
         private bool ReplayWithoutDamage(Partner p) => (_hosting && WorldOn && p.WorldGuest) || (_worldActive && p == _worldHost);
 
-        /// <summary>Позиция врага хоста (от старта хоста) на момент rt по часам хоста: между точками — линейно, после последней — не дальше 0,2 с.</summary>
+        /// <summary>Позиция врага от старта хоста на момент rt по часам хоста. После последней точки не дальше 0,2 с.</summary>
         private static bool PuppetPos(Puppet pp, double rt, out double x, out double y)
         {
             x = y = 0;
@@ -1310,7 +1075,6 @@ namespace MagicSurvivalCoop
         private bool CreatePuppet(object mgr, Puppet pp)
         {
             if (pp.Type < 0) { pp.LocalDead = true; return false; }
-            long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
             var bossProp = FindAny(mgr.GetType(), "ApplyBossNum")?.Prop;
             object bossNum = null;
             object commonItem = null, front = null, pool = null;
@@ -1320,30 +1084,25 @@ namespace MagicSurvivalCoop
             {
                 try { bossNum = bossProp?.GetValue(null); } catch { }
                 RefillBossPool(mgr);
-                if (pp.Special) commonItem = PutPrefabFirst(mgr, pp.Origin);  // особой копии — заготовка из пула особых (метка, обводка)
-                // обычной — из обычного пула: иначе копии съедали настоящие заготовки боссов (у них свои дочерние объекты), и
-                // Start_Unit босса на заготовке обычного моба падал с NullReferenceException (Terra 5:00, тип 41, телефоны 01.11)
+                if (pp.Special) commonItem = PutPrefabFirst(mgr, pp.Origin);  // Особой копии нужна заготовка с меткой и обводкой
+                // Обычной копии заготовка из обычного пула: заготовки боссов нужны боссам, Start_Unit босса на обычной падает
                 else if (!_bossTypes.Contains(pp.Type)) PutPrefabFirst(mgr, OriginNormal);
                 pool = GetAny(mgr, "List_BattleUnitEnemyBoss_Empty");
                 poolN = Count(pool);
                 if (poolN > 0) front = ItemAt(pool, 0);
-                long g0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                _createPreMs += Ms(c0, g0);
-                CallMethod(mgr, "Create_UnitEnemyBoss", pp.Type, 1);     // синхронно создаёт обычного врага этого типа (разведка A1)
-                c0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                _createGameMs += Ms(g0, c0);
+                CallMethod(mgr, "Create_UnitEnemyBoss", pp.Type, 1);     // Синхронно создаёт обычного врага этого типа
             }
             catch (Exception e) { pp.LocalDead = true; if (++_wFails <= 5) _ctx.Log($"общие враги: создать тип {pp.Type}: {Inner(e).Message}"); return false; }
             finally
             {
                 _spawningPuppet = false;
-                if (bossNum != null) { try { bossProp.SetValue(null, bossNum); } catch { } }   // побочный счётчик боссов — вернуть
+                if (bossNum != null) { try { bossProp.SetValue(null, bossNum); } catch { } }   // Create_UnitEnemyBoss растит счётчик боссов
             }
             var obj = _justCreated; _justCreated = null;
             CheckCommonUsed(commonItem, obj);
             if (obj == null)
             {
-                // босс на заготовке обычного моба (тип ещё не знали боссом) — повторить через 2 с на заготовке босса
+                // Босс на заготовке обычного моба не создаётся: через 2 с повтор на заготовке босса
                 if (front != null && !pp.Special && Count(pool) == poolN - 1)
                 {
                     if (_bossTypes.Add(pp.Type)) _ctx.Log($"общие враги: тип {pp.Type} — босс, ему нужна заготовка босса");
@@ -1352,28 +1111,19 @@ namespace MagicSurvivalCoop
                 pp.LocalDead = true; pp.DeadAt = _frameNow;
                 _bossPoolEst = -1;
                 if (++_wFails <= 5) _ctx.Log($"общие враги: тип {pp.Type} не создался");
-                if (!_mgrFailLogged) { _mgrFailLogged = true; _ctx.Log($"общие враги: менеджер при первой неудаче (было при первой копии → сейчас): {MgrDiff(mgr)}"); }
                 return false;
-            }
-            if (_mgrAtFirst == null)
-            {
-                _mgrAtFirst = MgrSnapshot(mgr);
-                _ctx.Log($"общие враги: копия — размер {GetMember(obj, "UnitApply_UnitSize")}, масштаб {GetMember(GetMember(obj, "transform"), "localScale")}, спрайт-масштаб до подгонки {GetMember(GetMember(obj, "Transform_ObjUnitSprite"), "localScale")}");
             }
             pp.Obj = obj; pp.Placed = false; pp.Key = KeyOf(obj); _puppetKeys.Add(pp.Key);
             if (pp.Key != null) _ownerByKey[pp.Key] = pp;
             if (pp.Special) ApplySpecialLook(pp, obj);
             pp.Tr = GetMember(obj, "Transform_ObjUnit") as Transform;
             SetupPuppet(obj, pp.Key);
-            _createPostMs += Ms(c0, System.Diagnostics.Stopwatch.GetTimestamp());
-            AuditMade(pp.Id, pp.Type);
             if (_wCreated++ == 0) _ctx.Log($"общие враги: первая копия — тип {pp.Type}, «{NameOf(obj)}», спрайт-масштаб после подгонки {GetMember(GetMember(obj, "Transform_ObjUnitSprite"), "localScale")}, здоровье {GetMember(obj, "Unit_Hp")}");
             return true;
         }
 
         /// <summary>
-        /// Особый враг (усиленный): игра создаёт его «переходом» (UnitCreateID 3) и Start_Unit(тип, varA, varB) — повторяем
-        /// на копии; способ создания — до Start_Unit (от него игра выставляет вид), эффект, обводку и размер — после.
+        /// UnitCreateID ставим до Start_Unit, от него игра выставляет вид. Эффект, обводку и размер после.
         /// </summary>
         private void ApplySpecialLook(Puppet pp, object obj)
         {
@@ -1386,35 +1136,32 @@ namespace MagicSurvivalCoop
                 if (pp.CreateId > 0) SetMember(obj, "UnitCreateID", pp.CreateId);
                 SetMember(obj, "ApplyCreateEffectID", pp.CreateEffect);
                 SetMember(obj, "LineColorR", pp.LineR); SetMember(obj, "LineColorG", pp.LineG); SetMember(obj, "LineColorB", pp.LineB);
-                if (pp.Size > 0.01f) SetMember(obj, "UnitApply_UnitSize", pp.Size);   // картинку под размер подгонит FixSpriteScale
+                if (pp.Size > 0.01f) SetMember(obj, "UnitApply_UnitSize", pp.Size);   // Картинку под размер подгонит FixSpriteScale
                 (pp.MainSr, pp.BackSr, pp.BackColorUse) = ShowSpecialMarks(obj, pp.IconSize, pp.Back, pp.BackColor);
                 pp.LastSprite = null;
                 _wSpecial++;
-                if (_specialCopy == null && (_wSpecial == 1 || _wSpecial == 20 || pp.Origin != OriginNormal && _originDumped.Add(pp.Origin))) { _specialCopy = obj; _specialCopyOrigin = pp.Origin; _specialCopyAt = Clock.Elapsed.TotalSeconds + 0.5; }
             }
             catch (Exception e) { if (++_wFails <= 5) _ctx.Log($"общие враги: особая копия {pp.Type}/{pp.VarA}/{pp.VarB}: {Inner(e).Message}"); }
             finally { _spawningPuppet = false; _justCreated = null; }
         }
 
-        /// <summary>Копия: картинка под размер, неуязвима, без своей скорости, тело кинематическое (и после повторного Start_Unit).</summary>
+        /// <summary>Нужно и после повторного Start_Unit.</summary>
         private void SetupPuppet(object obj, object key)
         {
-            // 1.5.0 останавливал все корутины — вместе с ИИ вставали кадры ходьбы (их меняет Unit_Move). Теперь ИИ работает
-            // (анимация, поворот, атаки), но скорость нулевая — двигает только мод. «puppetAi» = 0 — по-старому.
+            // ИИ копии работает ради анимации и атак, а двигает её только мод: скорость нулевая. Без ИИ встают и кадры ходьбы
             _ctx.Mark("общие враги: настройка копии (здоровье, скорость, тело)");
             FixSpriteScale(obj, key);
             Invulnerable(obj, key);
             if (_ctx.Setting("puppetAi") > 0) ZeroSpeed(obj, key);
             else try { CallMethod(obj, "StopAllCoroutines"); } catch { }
-            try { SetMember(GetMember(obj, "Rigidbody_ObjUnit"), "isKinematic", true); } catch { }   // соседи не расталкивают
+            try { SetMember(GetMember(obj, "Rigidbody_ObjUnit"), "isKinematic", true); } catch { }   // Соседи не расталкивают
         }
 
         private static readonly string[] SpeedFields = { "UnitBase_MoveSpeed", "UnitApply_MoveSpeed", "BUnitApply_MoveSpeed", "UnitApply_MoveSpeed_Bonus", "UnitApply_MoveSpeed_Buff", "ApplyMoveSpeedBonus" };
-        /// <summary>Свойство или поле (обычное или статическое) по имени — поиск один раз на тип и имя, как у CallMethod.</summary>
         private sealed class AnyMember
         {
             public PropertyInfo Prop; public FieldInfo Field; public bool Static; public Type ValueType;
-            public FieldInfo SetField;                     // свойство только для чтения — запись в одноимённое поле (как раньше)
+            public FieldInfo SetField;                     // Запись в одноимённое поле, если свойство только для чтения
         }
         private static readonly Dictionary<(Type, string), AnyMember> AnyCache = new Dictionary<(Type, string), AnyMember>();
         private static AnyMember FindAny(Type t, string name)
@@ -1429,7 +1176,7 @@ namespace MagicSurvivalCoop
                                         SetField = p.CanWrite ? null : t.GetField(name, any) };
                 else if (t.GetField(name, any) is FieldInfo f)
                     m = new AnyMember { Field = f, Static = f.IsStatic, ValueType = f.FieldType };
-                AnyCache[(t, name)] = m;   // null — нет такого члена (тоже запоминаем)
+                AnyCache[(t, name)] = m;   // Отсутствие члена тоже запоминаем
                 return m;
             }
         }
@@ -1442,7 +1189,7 @@ namespace MagicSurvivalCoop
             return m.Prop != null ? m.Prop.GetValue(target) : m.Field.GetValue(target);
         }
 
-        /// <summary>У копии из пула боссов картинка 1,00, у обычного врага — как размер (1,25) (журнал 1.5.2).</summary>
+        /// <summary>У копии из пула боссов масштаб картинки 1, а у обычного врага он равен размеру.</summary>
         private static void FixSpriteScale(object enemy, object key)
         {
             try
@@ -1469,14 +1216,8 @@ namespace MagicSurvivalCoop
         }
 
         /// <summary>
-        /// Create_UnitEnemyBoss берёт врага из пула боссов (14 штук), а погибшие возвращаются в обычный пул (журнал 1.5.1:
-        /// List_BattleUnitEnemyBoss_Empty 14 → 1, List_BattleUnitEnemy_Empty 451 → 455) — перекладываем из обычного.
-        /// </summary>
-        /// <summary>
-        /// 1.6.74: у заготовок пула боссов и обычного пула нет метки особого моба и обводки (у перехода гостя у хоста
-        /// «icon obj нет», у своего перехода хоста — есть, и при переходе хоста пул List_BattleUnitEnemySpecial_Empty 80 → 66):
-        /// особые мобы игры — из своего пула. Особого врага создаём из заготовки того же пула: кладём её туда, откуда
-        /// Create_UnitEnemyBoss берёт (сначала — в начало списка; не взял — дальше в конец).
+        /// Create_UnitEnemyBoss берёт заготовку из пула боссов. Кладём туда заготовку нужного пула: у особых мобов игры свой пул
+        /// с меткой и обводкой. Сначала в начало списка, а если игра её не взяла, дальше в конец.
         /// </summary>
         private object PutPrefabFirst(object mgr, int origin)
         {
@@ -1494,7 +1235,7 @@ namespace MagicSurvivalCoop
         private static string PoolOf(int origin) => origin == OriginEpic ? "List_BattleUnitEnemyEpic_Empty" : origin == OriginNormal ? "List_BattleUnitEnemy_Empty" : "List_BattleUnitEnemySpecial_Empty";
         private readonly HashSet<int> _bossTypes = new HashSet<int>();
 
-        /// <summary>Заготовку, на которой Start_Unit упал, игра уже включила и вынула из пула — выключить и вернуть в обычный пул.</summary>
+        /// <summary>Заготовку, на которой Start_Unit упал, игра уже включила и вынула из пула.</summary>
         private void DropBrokenPrefab(object mgr, object item)
         {
             try { CallMethod(item, "SetActive", false); CallMethod(GetAny(mgr, "List_BattleUnitEnemy_Empty"), "Add", item); }
@@ -1512,14 +1253,15 @@ namespace MagicSurvivalCoop
             if (!used && !_commonAtEnd) _commonAtEnd = true;
         }
 
+        /// <summary>Погибшие копии возвращаются в обычный пул, и пул боссов пустеет: перекладываем из обычного.</summary>
         private void RefillBossPool(object mgr)
         {
             if (_bossPoolEst >= 4) { _bossPoolEst--; return; }
-            var boss = GetAny(mgr, "List_BattleUnitEnemyBoss_Empty");          // статические поля (1.5.2 искал только обычные — не находил)
+            var boss = GetAny(mgr, "List_BattleUnitEnemyBoss_Empty");
             var common = GetAny(mgr, "List_BattleUnitEnemy_Empty");
             if (boss == null || common == null) { if (!_poolLogged) { _poolLogged = true; _ctx.Log("общие враги: пулов врагов нет — не перекладываю"); } return; }
             int nb = Count(boss);
-            if (nb >= 4) { _bossPoolEst = nb - 1; return; }                    // при 1 заготовке Create_UnitEnemyBoss уже не создаёт
+            if (nb >= 4) { _bossPoolEst = nb - 1; return; }                    // При 1 заготовке Create_UnitEnemyBoss уже не создаёт
             if (boss.GetType() != common.GetType()) { if (!_poolLogged) { _poolLogged = true; _ctx.Log($"общие враги: пулы разного типа ({boss.GetType().Name} / {common.GetType().Name}) — не перекладываю"); } return; }
             int n = Count(common);
             if (n < 20) { _bossPoolEst = -1; return; }
@@ -1533,13 +1275,10 @@ namespace MagicSurvivalCoop
             }
             _bossPoolEst = nb - 1;
         }
-        // сколько заготовок в пуле боссов по нашему счёту (каждая копия берёт одну): чтение пулов — пять обращений к игре
-        // через рефлексию, раньше перед каждой копией. -1 — не знаем, прочитать
+        // Счёт заготовок в пуле боссов без чтения пулов перед каждой копией. -1: не знаем, прочитать
         private int _bossPoolEst = -1;
 
-        /// <summary>Враг пропал у хоста — копию убить уроном (гостю — убийство и выпадения); не вышло — убрать без награды.</summary>
-        // 1.6.95: копия в очереди убийств, а её объект уже погиб у гостя (Армагеддон…) и пул игры отдал его новой копии —
-        // убивали новую (у хоста враг жив): она пропадала и через 2 с создавалась снова
+        // Пока копия ждёт в очереди убийств, её объект мог погибнуть и уйти из пула новой копии
         private readonly Dictionary<object, Puppet> _ownerByKey = new Dictionary<object, Puppet>();
 
         private void KillPuppet(Puppet pp)
@@ -1549,8 +1288,7 @@ namespace MagicSurvivalCoop
             _ownerByKey.Remove(pp.Key);
             try
             {
-                // сразу Unit_Death, без Unit_Damage (эффекты попадания, статусы, расчёт урона): при Unit_Hp <= 0 и Unit_IsLive игра
-                // засчитывает убийство и награду так же (телефон, 30.10: на каждый вызов +1 Game_KillMonsterNum и событие enemyDeath)
+                // Unit_Death без Unit_Damage: при Unit_Hp <= 0 и Unit_IsLive игра засчитывает убийство и награду так же
                 if (UnitAlive(pp.Obj, pp.Key))
                 {
                     SetUnitFloat(pp.Obj, pp.Key, "Unit_Hp", 0);
@@ -1563,7 +1301,7 @@ namespace MagicSurvivalCoop
             catch (Exception e) { if (++_wFails <= 5) _ctx.Log($"общие враги: убить копию {pp.Id}: {Inner(e).Message}"); }
         }
 
-        /// <summary>Свой спавн гостя: обнулить число врагов в пачке (разведка E) — игра может вернуть его на новой волне, поэтому раз в 0,5 с.</summary>
+        /// <summary>Новая волна возвращает число врагов в пачке, поэтому зовётся раз в 0,5 с.</summary>
         private static readonly string[] SpawnFields = { "EnemyCreateNum", "EnemyCreateNum_Min", "EnemyCreateNum_Max" };
         private object[] _savedSpawn;
         private void SuppressSpawn(object mgr)
@@ -1573,14 +1311,13 @@ namespace MagicSurvivalCoop
             for (int i = 0; i < SpawnFields.Length; i++)
                 try
                 {
-                    // новое значение игры (новая волна) — запомнить его: вернём спавн гостю вдали от хоста таким, как сейчас у игры
+                    // Значение новой волны запоминаем, чтобы вернуть спавн таким, как сейчас у игры
                     var v = GetMember(mgr, SpawnFields[i]);
                     if (first || (v != null && Convert.ToDouble(v) != 0)) _savedSpawn[i] = v;
                     SetMember(mgr, SpawnFields[i], 0);
                 }
                 catch { }
         }
-        /// <summary>Общие враги выключились посреди боя — вернуть свой спавн (иначе до новой волны врагов не будет).</summary>
         private void RestoreSpawn()
         {
             var saved = _savedSpawn; _savedSpawn = null;
@@ -1589,10 +1326,10 @@ namespace MagicSurvivalCoop
                 if (saved[i] != null) try { SetMember(_battleMgr, SpawnFields[i], saved[i]); } catch { }
         }
 
-        /// <summary>Чистка: все живые враги гостя, которые не копии и не свои (появились вдали от хоста), — убрать без награды (разведка D).</summary>
         private readonly HashSet<object> _localAlive = new HashSet<object>();
         private double _worldStepAt;
 
+        /// <summary>Чистка: убрать без награды живых врагов гостя, кроме копий и его собственных.</summary>
         private void Sweep()
         {
             _localAlive.Clear();
@@ -1602,11 +1339,11 @@ namespace MagicSurvivalCoop
                 var key = KeyOf(e.Raw);
                 if (key != null && _forwardKeys.Contains(key) && !_toForward.Any(f => Equals(KeyOf(f.obj), key)))
                 {
-                    ForwardKillStep(e.Raw, key, now);                       // отправлен хосту, у гостя ещё жив — убрать (без награды)
+                    ForwardKillStep(e.Raw, key, now);
                     continue;
                 }
                 if (key == null || _puppetKeys.Contains(key) || _heldKeys.Contains(key) || _forwardKeys.Contains(key)) continue;
-                // свой моб перехода гостя, которого не поймал Start_Unit (появился, пока общий мир был выключен), — тоже хосту
+                // Переход, появившийся, пока общий мир был выключен
                 if (_hostBossWave == 0 && MyBossWave() == 0 && _toForward.Count < 40 && IsTransitionMob(e.Raw))
                 {
                     int type = -1; try { type = Convert.ToInt32(GetMember(e.Raw, "UnitID") ?? -1); } catch { }
@@ -1615,7 +1352,7 @@ namespace MagicSurvivalCoop
                     _ownTransitionSent++;
                     continue;
                 }
-                if (_ownSpawn || _localKeys.Contains(key)) { _localAlive.Add(key); continue; }   // вдали — все свои враги гостя его
+                if (_ownSpawn || _localKeys.Contains(key)) { _localAlive.Add(key); continue; }
                 if (_destroyTried.Contains(key))
                 {
                     try { CallMethod(e.Raw, "Unit_Disappear_Peace"); _peaceRemoved++; }
@@ -1624,17 +1361,14 @@ namespace MagicSurvivalCoop
                 }
                 _toDestroy.Enqueue(e.Raw);
             }
-            _localKeys.Clear(); _localKeys.UnionWith(_localAlive);           // погибшие свои — забыть (объект уйдёт в пул)
+            _localKeys.Clear(); _localKeys.UnionWith(_localAlive);           // Погибшие объекты уходят в пул
         }
-
-        // ------------------------------------------------------------ свой босс гостя (1.6.13)
 
         private readonly List<object> _held = new List<object>();
         private readonly HashSet<object> _heldKeys = new HashSet<object>();
         private readonly Queue<object> _heldNew = new Queue<object>();
-        private int _heldKilled;
 
-        /// <summary>Каждый кадр: новых спрятать (без ИИ, неуязвимы, далеко от героя); хост победил своего босса — убить уроном.</summary>
+        /// <summary>Свой босс гостя: без ИИ, неуязвим и далеко от героя, пока хост не поднимет обелиск.</summary>
         private void HeldStep(double hx, double hy)
         {
             while (_heldNew.Count > 0)
@@ -1646,17 +1380,13 @@ namespace MagicSurvivalCoop
                 Invulnerable(e, KeyOf(e));
                 _ctx.Log($"общие враги: своя босс-волна — прячу своего врага «{NameOf(e)}» тип {GetMember(e, "UnitID")} до победы хоста");
             }
-            // 1.6.42: хост победил — не убиваем: смерть босса закончила бы этап у гостя и положила обелиск. Убираем без смерти,
-            // когда хост поднимет обелиск (CatchUpBoss)
+            // Смерть босса закончила бы этап у гостя и положила обелиск, поэтому CatchUpBoss убирает его без смерти
             if (_held.Count == 0) return;
             foreach (var e in _held)
                 try { if (GetMember(e, "Transform_ObjUnit") is Transform tr) { var z = tr.position.z; tr.position = new Vector3((float)hx + 400f, (float)hy + 400f, z); } } catch { }
         }
 
-        /// <summary>
-        /// Общие враги выключились посреди босс-волны (мод выключен, хост пропал): спрятанный свой босс неуязвим и без ИИ — бой
-        /// с боссом не кончился бы никогда. Убиваем его, как после победы хоста.
-        /// </summary>
+        /// <summary>Спрятанный босс неуязвим и без ИИ: без общих врагов бой с ним не кончился бы никогда.</summary>
         private void ReleaseHeld()
         {
             _heldNew.Clear();
@@ -1678,7 +1408,6 @@ namespace MagicSurvivalCoop
                         foreach (var en in _enemies.Alive)
                             if (Equals(KeyOf(en.Raw), key)) { done = _combat.Damage(en, 1e9); break; }
                     if (!done) CallMethod(e, "Unit_Destroy");
-                    _heldKilled++;
                     _ctx.Log($"общие враги: {why} — свой враг «{NameOf(e)}» убит (бой с боссом у меня закончит игра)");
                 }
                 catch (Exception ex) { if (++_wFails <= 5) _ctx.Log("общие враги: убить своего босса: " + Inner(ex).Message); }
@@ -1693,15 +1422,14 @@ namespace MagicSurvivalCoop
             if (own) { var k = KeyOf(enemy); if (k != null && _destroyTried.Count < 2000) _destroyTried.Add(k); }
         }
 
-        // 1.6.71: свои враги гостя, которым уже звали Unit_Destroy_Simple, — пережил (моб перехода во время появления, журнал
-        // 1.6.70) — чистка убирает его Unit_Disappear_Peace (без награды)
+        // Пережившего Unit_Destroy_Simple (моб перехода во время появления) чистка убирает Unit_Disappear_Peace
         private readonly HashSet<object> _destroyTried = new HashSet<object>();
         private int _peaceRemoved;
 
         private void StopWorld(string why, bool touchObjects = true)
         {
             _ctx.Mark("общие враги: выключение — уборка копий, возврат спавна");
-            if (touchObjects) ReleaseBossHold("общие враги выключены");   // дальше боссы гостя — его собственные
+            if (touchObjects) ReleaseBossHold("общие враги выключены");   // Дальше боссы гостя его собственные
             if (touchObjects)
             {
                 foreach (var pp in _puppets.Values.Concat(_dying)) if (pp.Obj != null && !pp.LocalDead) DestroySimple(pp.Obj, own: false);
@@ -1714,7 +1442,7 @@ namespace MagicSurvivalCoop
         }
 
         private string WorldSummary() => _hosting
-            ? $"отправлено врагов за раз до {_enSentMax}; урон гостей нанесён {_dmgIn:0} (врагов уже не было: {_dmgInMiss}); врагов от действий гостей создано {_spawnIn}" + SpecialSummary()
+            ? $"отправлено врагов за раз до {_enSentMax}; урон гостей нанесён {_dmgIn:0} (врагов уже не было: {_dmgInMiss}); врагов от действий гостей создано {_spawnIn}"
             : $"копий создано {_wCreated} (особых {_wSpecial}, одновременно до {_wMax}), убито по хосту {_wKilled}, погибло у себя {_wLocalDead} (создано заново {_wRespawned}), убрано своих врагов {_wDestroyed}, объект у другой копии {_wReused}, переложено в пул боссов {_poolMoved}, урона отправлено хосту {_dmgSent:0}, своих врагов отправлено хосту {_spawnSent}; " +
               $"уходил от хоста {_awayTimes} раз, переносов к хосту на босса {_gatherTimes}, своих врагов вдали {_localSpawned}, сняты хвосты босс-волны {_onlyBossCleared}, перезапусков спавна {_spawnRestarts}; " +
               $"копий стали особыми позже {_wUpgraded}, свои переходы убраны со 2-й/3-й попытки {_forwardKillHow[1]}/{_forwardKillHow[2]}, своих убрано Unit_Disappear_Peace {_peaceRemoved}, своих особых/эпических убрано {_ownSpecialSwept}, своих переходов отправлено хосту {_ownTransitionSent}; " +
@@ -1724,58 +1452,8 @@ namespace MagicSurvivalCoop
         private void LogWorldSummary()
         {
             if (!WorldOn || (_enSentMax == 0 && _wCreated == 0 && _wDestroyed == 0 && _dmgIn == 0)) return;
-            _ctx.Log("общие враги за бой: " + WorldSummary() + ClockSummary());
-            _ctx.Log("сверка спавна за бой: " + SpawnAuditLine(MyClock()));
+            _ctx.Log("общие враги за бой: " + WorldSummary());
         }
-
-        // ------------------------------------------------------------ журнал: менеджер и устройство врага
-
-        private static readonly System.Text.RegularExpressions.Regex EnemyWords = new System.Text.RegularExpressions.Regex("Enemy|Boss|Unit|Create|Spawn|Wave|Num", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-        /// <summary>Числа, флаги и размеры коллекций менеджера, в имени которых Enemy/Boss/Unit/Create/Wave/Num.</summary>
-        private static Dictionary<string, string> MgrSnapshot(object mgr)
-        {
-            var d = new Dictionary<string, string>();
-            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
-            foreach (var p in mgr.GetType().GetProperties(any))
-            {
-                if (p.GetIndexParameters().Length > 0 || p.Name.StartsWith("Native") || !EnemyWords.IsMatch(p.Name)) continue;
-                try
-                {
-                    var t = p.PropertyType;
-                    var v = p.GetValue(p.GetGetMethod(true)?.IsStatic == true ? null : mgr);
-                    if (t.IsPrimitive || t.IsEnum) d[p.Name] = Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture);
-                    else if (v != null && (GetMember(v, "Count") ?? GetMember(v, "Length")) is object c) d[p.Name] = "[" + c + "]";
-                }
-                catch { }
-            }
-            return d;
-        }
-        private string MgrDiff(object mgr)
-        {
-            var now = MgrSnapshot(mgr);
-            var first = _mgrAtFirst ?? new Dictionary<string, string>();
-            var parts = new List<string>();
-            foreach (var kv in now)
-                if (!first.TryGetValue(kv.Key, out var old) || old != kv.Value) parts.Add($"{kv.Key} {old ?? "?"} → {kv.Value}");
-            return parts.Count == 0 ? "без изменений; всё: " + string.Join(", ", System.Linq.Enumerable.Take(now, 60)) : string.Join(", ", parts);
-        }
-        /// <summary>Методы врага про движение/поворот/анимацию и поля с картинками/аниматором — один раз.</summary>
-        private static string EnemyShape(object enemy)
-        {
-            var rx = new System.Text.RegularExpressions.Regex("Move|Rotat|Motion|Anim|Sprite|Flip|Attack|Dead|Die|Hit|Destroy|Disappear", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
-            var t = enemy.GetType();
-            var ms = new List<string>();
-            foreach (var m in t.GetMethods(any))
-                if (!m.IsSpecialName && !m.Name.StartsWith("Native") && rx.IsMatch(m.Name)) ms.Add($"{m.ReturnType.Name} {m.Name}/{m.GetParameters().Length}");
-            var fs = new List<string>();
-            foreach (var p in t.GetProperties(any))
-                if (!p.Name.StartsWith("Native") && rx.IsMatch(p.Name)) fs.Add($"{p.PropertyType.Name} {p.Name}");
-            return $"методы: {string.Join(", ", ms)}; поля: {string.Join(", ", fs)}";
-        }
-
-        // ------------------------------------------------------------ рефлексия
 
         private static readonly Dictionary<(Type, string, int), (MethodInfo m, ParameterInfo[] ps)> MethodCache = new Dictionary<(Type, string, int), (MethodInfo, ParameterInfo[])>();
         private static object CallMethod(object o, string name, params object[] args)
@@ -1796,7 +1474,7 @@ namespace MagicSurvivalCoop
             return m.Invoke(o, args);
         }
 
-        /// <summary>Перегрузка с одним string (у StartCoroutine/StopCoroutine есть и IEnumerator — CallMethod взял бы любую).</summary>
+        /// <summary>У StartCoroutine и StopCoroutine есть перегрузка и с IEnumerator, CallMethod взял бы любую.</summary>
         private static object CallByString(object o, string name, string arg)
         {
             var m = o.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { typeof(string) }, null)

@@ -8,12 +8,11 @@ using UnityEngine;
 namespace MagicSurvivalCoop
 {
     /// <summary>
-    /// Лобби: локацию, сложность и режим (обычный или Infinite Mode) выбирает хост, персонажа каждый выбирает сам.
-    /// У гостя на экране локации стоит выбор хоста, стрелки скрыты, кнопки старта скрыты до начала боя у хоста;
-    /// гость, ждавший на этом экране, входит в бой сам, когда хост начал.
+    /// Лобби: локацию, сложность и режим выбирает хост, персонажа каждый сам. У гостя на экране локации стоит выбор хоста,
+    /// стрелки и кнопки старта скрыты, а когда хост начал бой, гость входит сам.
     ///
-    /// Поля Z_Database (libil2cpp, 01.11): Game_AreaID — локация, Game_AreaLevel — сложность (кнопки Button_AreaLevel0/1),
-    /// Game_BattleLoopON — режим, его ставят сами кнопки старта (Button_AreaStart — 0, Button_AreaStart_Loop — 1).
+    /// Поля Z_Database: Game_AreaID локация, Game_AreaLevel сложность, Game_BattleLoopON режим. Режим ставят сами кнопки
+    /// старта: Button_AreaStart 0, Button_AreaStart_Loop 1.
     /// </summary>
     internal sealed partial class Session
     {
@@ -25,8 +24,8 @@ namespace MagicSurvivalCoop
         private object _menu;                      // A_MainMenuInformation текущей сцены меню
         private double _menuLookAt, _lobbyAt, _levelFixAt;
         private bool _onAreaScreen, _lobbyWaited;
-        private int _startButton = -1;             // кнопка старта, которой хост начал бой (индекс в StartButtons)
-        private int _shownArea = -1;               // локация, которую мод показал на открытом экране локации
+        private int _startButton = -1;             // Индекс в StartButtons кнопки, которой хост начал бой
+        private int _shownArea = -1;
         private readonly List<GameObject> _hiddenArrows = new List<GameObject>(), _hiddenStarts = new List<GameObject>();
         private UiKit.HudButton _lobbyBtn;
         private Action _lobbyAction;
@@ -39,7 +38,7 @@ namespace MagicSurvivalCoop
                 {
                     string m = StartButtons[i];
                     int button = i;
-                    // до кнопки: проверка платной локации идёт по Game_AreaID; после: кнопка сама ставит Game_BattleLoopON
+                    // До кнопки: проверка платной локации идёт по Game_AreaID. После: кнопка сама ставит Game_BattleLoopON
                     _ctx.Before("A_MainMenuInformation", m, 0, Hook("лобби: " + m, (self, a) => { if (_hosting) _startButton = button; ForceHostArea(false); }));
                     _ctx.After("A_MainMenuInformation", m, 0, Hook("лобби: " + m, (self, a) => ForceHostArea(true)));
                 }
@@ -118,13 +117,13 @@ namespace MagicSurvivalCoop
             return $"Готовы к бою: {ready} из {_partners.Count}";
         }
 
-        /// <summary>Локация и сложность хоста у гостя. Сложность могла не открыться у гостя — повтор не чаще раза в секунду.</summary>
+        /// <summary>Сложность могла не открыться у гостя, поэтому повтор не чаще раза в секунду.</summary>
         private void ApplyHostArea(Partner host, double now)
         {
             int area = host.LobbyArea, level = Math.Max(0, host.LobbyLevel);
             if (!_onAreaScreen) _shownArea = -1;
             if (DbInt("Game_AreaID") != area) SetDbInt("Game_AreaID", area);
-            // Вне экрана меняется только поле, поэтому при каждом открытии экрана перерисовываем
+            // Вне экрана меняется только поле, поэтому при открытии экрана перерисовываем
             if (_onAreaScreen && _shownArea != area)
             {
                 SetDbInt("Game_AreaLevel", level);
@@ -182,7 +181,6 @@ namespace MagicSurvivalCoop
             _lobbyBtn.SetVisible(true);
         }
 
-        /// <summary>Конец меню (бой, отключение, выключение мода): вернуть скрытые кнопки.</summary>
         private void ResetLobby()
         {
             try { ShowAll(_hiddenArrows); ShowAll(_hiddenStarts); } catch { }

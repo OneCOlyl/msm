@@ -76,8 +76,6 @@ namespace MagicSurvivalCoop.Debug
             return res.ToArray();
         }
 
-        // ------------------------------------------------------------ путь
-
         private static readonly Regex Seg = new Regex(@"^([^\[\]]+)((\[\d+\])*)$");
 
         public object Resolve(string path)
@@ -152,8 +150,6 @@ namespace MagicSurvivalCoop.Debug
             }
             return v is ICollection c ? c.Count : (int?)null;
         }
-
-        // ------------------------------------------------------------ вывод
 
         public string Describe(object v, int depth)
         {
@@ -237,8 +233,6 @@ namespace MagicSurvivalCoop.Debug
             return $"{t.FullName}: вложенных {ns.Count}\n" + string.Join("\n", ns);
         }
 
-        // ------------------------------------------------------------ изменения
-
         private string Set(string path, string value)
         {
             int dot = path.LastIndexOf('.');
@@ -272,7 +266,7 @@ namespace MagicSurvivalCoop.Debug
             if (t == typeof(string)) return s;
             if (t == typeof(bool)) return s == "1" || s.Equals("true", StringComparison.OrdinalIgnoreCase);
             if (t.IsEnum) return Enum.Parse(t, s, true);
-            // ObscuredFloat/ObscuredInt и т.п. — через неявное приведение из числа
+            // ObscuredFloat, ObscuredInt и подобные через неявное приведение из числа
             var imp = t.IsPrimitive ? null : t.GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .FirstOrDefault(m => m.Name == "op_Implicit" && m.ReturnType == t && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType.IsPrimitive);
             if (imp != null) return imp.Invoke(null, new[] { Convert.ChangeType(double.Parse(s, CultureInfo.InvariantCulture), imp.GetParameters()[0].ParameterType, CultureInfo.InvariantCulture) });

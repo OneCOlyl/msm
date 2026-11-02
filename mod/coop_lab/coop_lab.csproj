@@ -1,18 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <AssemblyName>coop_probe</AssemblyName>
+    <AssemblyName>coop_lab</AssemblyName>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>0.6.2</Version>
+    <Version>0.1.8</Version>
     <Libs Condition="'$(Libs)' == ''">$(MSBuildThisFileDirectory)../../libs</Libs>
     <Stubs>$(MSBuildThisFileDirectory)../../stubs/out</Stubs>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="ModKit"><HintPath>$(Libs)/ModKit.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="modkit_combat"><HintPath>$(Libs)/modkit_combat.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="modkit_spells"><HintPath>$(Libs)/modkit_spells.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="modkit_hero"><HintPath>$(Libs)/modkit_hero.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(Stubs)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.UI"><HintPath>$(Stubs)/UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>

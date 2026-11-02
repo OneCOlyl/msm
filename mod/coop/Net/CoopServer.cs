@@ -12,10 +12,8 @@ using System.Threading;
 namespace MagicSurvivalCoop.Net
 {
     /// <summary>
-    /// Сервер комнат. Запускается прямо в игре у хоста (VPS и Termux не нужны) или в консоли для тестов.
-    /// Комнаты по коду, до 4 игроков, слоты 1..4. JOIN_ROOM без кода заходит в единственную комнату — так работает «подключиться по IP».
-    /// Защита от перегрузки: ограничено число соединений (всего и с одного адреса), комнат и входов в комнату в минуту с адреса;
-    /// соединение, которое долго не входит в комнату, закрывается. Шифрования и пароля нет — сервер только для виртуальной сети.
+    /// Сервер комнат, запускается в игре у хоста. Комнаты по коду, до 4 игроков. JOIN_ROOM без кода заходит в единственную
+    /// комнату: так работает подключение по IP. Шифрования и пароля нет, сервер только для виртуальной сети.
     /// </summary>
     public sealed class CoopServer : IDisposable
     {
@@ -33,26 +31,24 @@ namespace MagicSurvivalCoop.Net
         private readonly Dictionary<string, RoomOps> _roomOps = new Dictionary<string, RoomOps>();
 
         public Action<string> Log = _ => { };
-        /// <summary>Сколько соединений всего (лишние получают server_busy и закрываются).</summary>
+        /// <summary>Лишние получают server_busy.</summary>
         public int MaxConnections = 32;
-        /// <summary>Сколько соединений с одного адреса.</summary>
         public int MaxConnectionsPerIp = 8;
-        /// <summary>Сколько CREATE_ROOM / JOIN_ROOM в минуту с одного адреса (больше — rate_limited, соединение закрывается).</summary>
+        /// <summary>CREATE_ROOM и JOIN_ROOM с одного адреса за окно RoomOpsWindowSec. Сверх предела rate_limited.</summary>
         public int RoomOpsPerMinute = 60;
-        /// <summary>Окно счётчика входов (секунды). Адрес без входов дольше окна забывается — и при следующем входе, и по таймеру.</summary>
+        /// <summary>Адрес без входов дольше окна забывается.</summary>
         public double RoomOpsWindowSec = 60;
-        /// <summary>Сколько адресов помнит счётчик входов; при переполнении забывается адрес, входивший давнее всех.</summary>
+        /// <summary>При переполнении забывается адрес, дольше всех не обращавшийся.</summary>
         public int MaxTrackedIps = 4096;
-        /// <summary>Сколько комнат одновременно.</summary>
         public int MaxRooms = 16;
         /// <summary>Соединение без комнаты дольше этого закрывается.</summary>
         public double JoinTimeoutSec = 30;
         /// <summary>
-        /// JOIN_ROOM без кода, когда комнат нет, создаёт комнату (отдельный сервер). У сервера в игре хоста — false: комнату создаёт
-        /// только хост (CREATE_ROOM), и гость, успевший раньше, не займёт слот 1 — он подождёт и войдёт в комнату хоста.
+        /// JOIN_ROOM без кода при пустом сервере создаёт комнату. В игре хоста false: комнату создаёт только хост, и гость,
+        /// успевший раньше, ждёт её, а не занимает слот 1.
         /// </summary>
         public bool AutoCreateRoom = true;
-        /// <summary>Зовётся при пересылке состояния/события между снимком под замком и сборкой сообщения — для теста гонки.</summary>
+        /// <summary>Для теста гонки: зовётся между снимком под замком и сборкой сообщения.</summary>
         internal Action RelayHook;
         public int Port { get; private set; }
         public bool Running => _running;
@@ -86,8 +82,6 @@ namespace MagicSurvivalCoop.Net
 
         public void Dispose() => Stop();
 
-        // ------------------------------------------------------------ соединения
-
         private sealed class Room
         {
             public string Code;
@@ -104,21 +98,24 @@ namespace MagicSurvivalCoop.Net
             public TcpClient Tcp;
             public NetworkStream Stream;
             public string Ip = "";
-            public readonly BlockingCollection<string> Out = new BlockingCollection<string>(512);
+            public readonly BlockingCollection<byte[]> Out = new BlockingCollection<byte[]>(512);
             public long LastSeenTicks = DateTime.UtcNow.Ticks;
             public long LastInRoomTicks = DateTime.UtcNow.Ticks;
             public volatile bool Closed;
             private volatile bool _ending;
 
-            public void Send(string line)
+            public void Send(string line) => Send(Bytes(line));
+
+            /// <summary>Массив может уйти нескольким получателям, его не меняют.</summary>
+            public void Send(byte[] bytes)
             {
                 if (Closed || _ending) return;
                 bool ok;
-                try { ok = Out.TryAdd(line); } catch (InvalidOperationException) { return; }
-                if (!ok) Close();      // клиент не успевает читать — отключаем, а не копим память
+                try { ok = Out.TryAdd(bytes); } catch (InvalidOperationException) { return; }
+                if (!ok) Close();      // Клиент не успевает читать: отключаем, а не копим память
             }
 
-            /// <summary>Отправить последнее сообщение (ошибку) и закрыть соединение, когда оно уйдёт.</summary>
+            /// <summary>Закрывает соединение, когда это последнее сообщение уйдёт.</summary>
             public void SendAndClose(string line)
             {
                 Send(line);
@@ -164,7 +161,7 @@ namespace MagicSurvivalCoop.Net
             }
         }
 
-        /// <summary>Ошибка и закрытие без потоков соединения: дописать, закрыть отправку, дочитать то, что клиент успел прислать (иначе сброс съест ошибку).</summary>
+        /// <summary>Дочитывает присланное клиентом: иначе сброс соединения съест ошибку.</summary>
         private static void Reject(TcpClient tcp, string code, string message)
         {
             System.Threading.Tasks.Task.Run(async () =>
@@ -172,7 +169,7 @@ namespace MagicSurvivalCoop.Net
                 try
                 {
                     var s = tcp.GetStream();
-                    var b = Encoding.UTF8.GetBytes(ErrorLine(code, message) + "\n");
+                    var b = Bytes(ErrorLine(code, message));
                     using var cts = new CancellationTokenSource(1500);
                     await s.WriteAsync(b, 0, b.Length, cts.Token);
                     tcp.Client.Shutdown(SocketShutdown.Send);
@@ -188,11 +185,7 @@ namespace MagicSurvivalCoop.Net
         {
             try
             {
-                foreach (var line in c.Out.GetConsumingEnumerable())
-                {
-                    var bytes = Encoding.UTF8.GetBytes(line + "\n");
-                    c.Stream.Write(bytes, 0, bytes.Length);
-                }
+                foreach (var bytes in c.Out.GetConsumingEnumerable()) c.Stream.Write(bytes, 0, bytes.Length);
             }
             catch { }
             finally { c.Close(); }
@@ -253,7 +246,7 @@ namespace MagicSurvivalCoop.Net
             }
         }
 
-        // ------------------------------------------------------------ сообщения
+        private static byte[] Bytes(string line) => Encoding.UTF8.GetBytes(line + "\n");
 
         private static string ErrorLine(string code, string message) =>
             Protocol.Build(w => { w.WriteString("type", Protocol.Error); w.WriteString("code", code); w.WriteString("message", message); });
@@ -261,8 +254,8 @@ namespace MagicSurvivalCoop.Net
         private static void SendError(Conn c, string code, string message) => c.Send(ErrorLine(code, message));
 
         /// <summary>
-        /// Версия протокола из CREATE_ROOM / JOIN_ROOM. Нет поля (или null) — старый клиент без проверки, пускаем. Иначе это должно
-        /// быть целое число, равное нашей версии: дробное, строка, огромное или другое число — protocol_mismatch (как в coop_server.py).
+        /// Без поля protocol клиент старый и проверку не проходит, пускаем. Иначе нужно целое, равное нашей версии, как в
+        /// coop_server.py.
         /// </summary>
         internal static bool ProtocolOk(JsonElement m, out string shown)
         {
@@ -279,7 +272,7 @@ namespace MagicSurvivalCoop.Net
             var type = Protocol.TypeOf(m);
             if (type == Protocol.CreateRoom || type == Protocol.JoinRoom)
             {
-                // разные версии протокола не поймут друг друга — сразу понятная ошибка вместо странных обрывов
+                // Понятная ошибка вместо странных обрывов между разными версиями
                 if (!ProtocolOk(m, out var shown))
                 {
                     SendError(c, "protocol_mismatch", $"Версия «Кооператива» не совпадает с хостом (протокол {shown}, у хоста {Protocol.Version}). Обновите мод у всех игроков.");
@@ -311,7 +304,7 @@ namespace MagicSurvivalCoop.Net
                 case Protocol.JoinRoom:
                     lock (_lock)
                     {
-                        // тот же игрок переподключился раньше, чем сервер заметил обрыв: старое соединение закрываем, слот отдаём ему
+                        // Тот же игрок переподключился раньше, чем сервер заметил обрыв: слот отдаём ему
                         var stale = DropStaleLocked(c, Protocol.Str(m, "clientId") ?? "");
                         var code = (Protocol.Str(m, "roomCode") ?? "").Trim().ToUpperInvariant();
                         Room room = null;
@@ -323,7 +316,7 @@ namespace MagicSurvivalCoop.Net
                                 if (_rooms.Count > 0) { SendError(c, "room_full", "Комната заполнена (максимум 4 игрока)."); break; }
                                 if (!AutoCreateRoom) { SendError(c, "room_not_found", "Хост ещё не создал игру."); break; }
                                 if (_rooms.Count >= MaxRooms) { SendError(c, "server_busy", "На сервере слишком много комнат, попробуйте позже."); break; }
-                                room = new Room { Code = NewCodeLocked() };   // никого нет — первый вошедший создаёт комнату сам
+                                room = new Room { Code = NewCodeLocked() };
                                 _rooms[room.Code] = room;
                             }
                         }
@@ -344,17 +337,17 @@ namespace MagicSurvivalCoop.Net
                         if (payload.ValueKind != JsonValueKind.Object) { SendError(c, "invalid_message", isState ? "Нет поля state." : "Нет поля event."); break; }
                         string to = isState ? null : Protocol.Str(payload, "to");
                         string raw = payload.GetRawText();
-                        Conn[] targets;
+                        var targets = new List<Conn>(Protocol.MaxPlayers);
                         int slot;
-                        // комната, слот и получатели — одним снимком под замком: повторный вход того же игрока (DropStaleLocked)
-                        // в другом потоке обнуляет c.Slot и c.Room, и прочитанный после замка слот мог уйти как 0
+                        // Одним снимком под замком: повторный вход того же игрока в другом потоке обнуляет c.Slot и c.Room
                         lock (_lock)
                         {
                             if (c.Room == null) { SendError(c, "not_in_room", "Сначала войдите в комнату."); break; }
                             slot = c.Slot;
-                            targets = c.Room.Players.Where(p => p != c && (to == null || p.Id == to)).ToArray();
+                            foreach (var p in c.Room.Players) if (p != c && (to == null || p.Id == to)) targets.Add(p);
                         }
                         RelayHook?.Invoke();
+                        if (targets.Count == 0) break;
                         var line = Protocol.Build(w =>
                         {
                             w.WriteString("type", isState ? Protocol.RemotePlayerState : Protocol.RemoteEvent);
@@ -363,7 +356,8 @@ namespace MagicSurvivalCoop.Net
                             w.WritePropertyName(isState ? "state" : "event");
                             w.WriteRawValue(raw, skipInputValidation: true);
                         });
-                        foreach (var p in targets) p.Send(line);
+                        var bytes = Bytes(line);
+                        foreach (var p in targets) p.Send(bytes);
                     }
                     break;
 
@@ -395,7 +389,6 @@ namespace MagicSurvivalCoop.Net
             throw new InvalidOperationException("не удалось выдать код комнаты");
         }
 
-        /// <summary>Общий вход в комнату для CREATE_ROOM и JOIN_ROOM: имя, clientId, слот, ответ входящему, PLAYER_JOINED остальным.</summary>
         private void EnterRoomLocked(Conn c, Room room, JsonElement m, string replyType, int preferSlot)
         {
             LeaveRoomLocked(c);
@@ -403,19 +396,19 @@ namespace MagicSurvivalCoop.Net
             c.ClientId = Protocol.Str(m, "clientId") ?? "";
             AddToRoomLocked(c, room, preferSlot);
             c.Send(RoomMessage(replyType, room, c));
-            var joined = Protocol.Build(w =>
+            var joined = Bytes(Protocol.Build(w =>
             {
                 w.WriteString("type", Protocol.PlayerJoined);
                 w.WriteString("playerId", c.Id);
                 w.WriteString("name", c.Name);
                 w.WriteNumber("slot", c.Slot);
-            });
+            }));
             foreach (var p in room.Players) if (p != c) p.Send(joined);
         }
 
         /// <summary>
-        /// Другие соединения с тем же clientId — это тот же игрок, чей обрыв сервер ещё не заметил: убрать их из комнат и закрыть,
-        /// чтобы не было двойника. Возвращает комнату и слот такого соединения (слот вернём игроку, если он входит в ту же комнату).
+        /// Другое соединение с тем же clientId это тот же игрок, чей обрыв сервер ещё не заметил. Закрываем его, чтобы не было
+        /// двойника, и возвращаем его комнату и слот: слот вернётся игроку, если он входит в ту же комнату.
         /// </summary>
         private (Room room, int slot) DropStaleLocked(Conn c, string cid)
         {
@@ -432,7 +425,6 @@ namespace MagicSurvivalCoop.Net
             return found;
         }
 
-        /// <summary>Не больше RoomOpsPerMinute входов в комнату за окно RoomOpsWindowSec с одного адреса.</summary>
         private bool RoomOpAllowedLocked(string ip)
         {
             long now = DateTime.UtcNow.Ticks;
@@ -454,12 +446,12 @@ namespace MagicSurvivalCoop.Net
         private sealed class RoomOps
         {
             public readonly Queue<long> Ops = new Queue<long>();
-            public long LastOp, LastTry;     // последний разрешённый вход и последняя попытка (в том числе отказанная)
+            public long LastOp, LastTry;     // Последний разрешённый вход и последняя попытка, в том числе отказанная
         }
 
         private long RoomOpsWindowTicks => (long)(RoomOpsWindowSec * TimeSpan.TicksPerSecond);
 
-        /// <summary>Убрать адреса, у которых все входы старше окна: их счётчик уже ни на что не влияет (зовётся и по таймеру из ReapLoop).</summary>
+        /// <summary>Счётчик адреса, у которого все входы старше окна, уже ни на что не влияет.</summary>
         private void SweepRoomOpsLocked(long now)
         {
             long window = RoomOpsWindowTicks;
@@ -470,9 +462,8 @@ namespace MagicSurvivalCoop.Net
         }
 
         /// <summary>
-        /// Все MaxTrackedIps адресов ещё в окне (входы с очень многих адресов за минуту) — забыть тот, что дольше всех не обращался.
-        /// По последней попытке, а не входу: адрес, который упёрся в предел и продолжает стучаться, не забывается и не получает
-        /// сброс счётчика; память не растёт, сколько бы адресов ни было.
+        /// Забывает адрес, дольше всех не обращавшийся. По последней попытке, а не входу: адрес, упёршийся в предел и продолжающий
+        /// стучаться, не получает сброс счётчика.
         /// </summary>
         private void EvictIdlestRoomOpsLocked()
         {
@@ -482,10 +473,8 @@ namespace MagicSurvivalCoop.Net
             if (idlest != null) _roomOps.Remove(idlest);
         }
 
-        /// <summary>Сколько адресов сейчас в счётчике входов — для тестов.</summary>
         internal int RoomOpsTracked { get { lock (_lock) return _roomOps.Count; } }
 
-        /// <summary>Проверка счётчика входов без сети — для тестов.</summary>
         internal bool RoomOpAllowedForTest(string ip) { lock (_lock) return RoomOpAllowedLocked(ip); }
 
         private static void AddToRoomLocked(Conn c, Room room, int preferSlot = 0)
