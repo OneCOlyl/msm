@@ -1,4 +1,4 @@
-# Проверка на каждый push и pull request: сборка, совпадение версий, все тесты (build.sh).
+# Проверка на каждый push и pull request: статический анализ, сборка, совпадение версий, все тесты (build.sh).
 name: ci
 
 on:
@@ -14,6 +14,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+      - name: Статический анализ
+        run: |
+          pipx run ruff==0.17.3 check --output-format github .
+          shellcheck build.sh
       - name: Сборка и тесты
         run: |
           set -o pipefail
