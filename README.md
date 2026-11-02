@@ -1,4 +1,4 @@
-# Magic Survival — Co-op
+vjc# Magic Survival — Co-op
 
 English | [Русский](README.ru.md)
 
@@ -111,6 +111,7 @@ Tested on two phones (host and guest) over Anywherelan. Not yet tested on phones
 | [docs/CONNECT.md](docs/CONNECT.md) | Virtual network, creating a game, joining, connection check, errors |
 | [docs/FEATURES.md](docs/FEATURES.md) | Features, sync, settings, version compatibility, limitations, security |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Repository layout, build, tests, protocol, publishing a release |
+| [docs/TOOLS.md](docs/TOOLS.md) | Developer tools: debug console, cheat and test arena (`tools-*` releases) |
 | [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) | Release checklist for testing on phones |
 | [docs/ENEMY_SYNC.md](docs/ENEMY_SYNC.md), [docs/ORBITALS.md](docs/ORBITALS.md), [docs/ARMAGEDDON.md](docs/ARMAGEDDON.md) | Research into the game's internals |
 | [.github/release_notes.md](.github/release_notes.md) | Changes by version |

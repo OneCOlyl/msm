@@ -19,8 +19,9 @@ document: [installation](INSTALL.md) and [connecting](CONNECT.md) are enough for
 | Path | Contents |
 |---|---|
 | `mod/coop/` | Mod sources. `Net/` is network code with no Unity dependencies (client, embedded server, protocol). |
-| `mod/coop_probe/` | Development probe: writes to `UserData/ModKit/coop_probe.txt` how the relevant parts of the game work. Players don't need it. |
+| `mod/coop_lab/`, `tools/lab.py` | Test arena: an in-battle «ПОЛИГОН» button (calm arena, any mobs, battle mechanics) and co-op check scenarios on two phones. Players don't need it. |
 | `mod/coop_debug/`, `tools/coop_dbg.py` | Debug console: port 8770 on the phone, read and change game fields during a battle. Players don't need it. |
+| `mod/coop_cheat/` | Cheat: an in-battle «ЧИТ» button that gives levels of spells, traits, combinations, synergies and the hero. Players don't need it. The three developer mods are described in [TOOLS.md](TOOLS.md). |
 | `tools/release_notes.py` | Release description: changes from `.github/release_notes.md` since the last published release (called by the `release` workflow). |
 | `server/coop_server.py` | Standalone room server (Python 3.8+), for when the server shouldn't run inside the game, e.g. in Termux or on a PC. |
 | `server/coop_client.py` | Connection check without the game. |
@@ -28,11 +29,11 @@ document: [installation](INSTALL.md) and [connecting](CONNECT.md) are enough for
 | `tests/server_test.py` | Internal checks of `coop_server.py`: the per-address join counter (window, expiry, address limit) and per-recipient backpressure. |
 | `tests/ModSim` | Game simulation: two mod instances (host and guest) in one process. |
 | `tests/DebugSim` | Debug console checks: command parsing, port closing on shutdown. |
-| `tests/ProbeSim` | Probe checks on fake game classes. |
+| `tests/CheatSim` | Cheat checks against a fake game: giving and removing levels, hero level, all spells to max. |
 | `stubs/` | Unity stubs for building without a phone. |
-| `libs/` | `ModKit.dll` and `modkit_*.dll` from the MS_KIT 2.0 release (MIT), for building only. Hashes are in `libs/SHA256SUMS`; CI checks them. |
+| `libs/` | `ModKit.dll` and `modkit_*.dll` (including `modkit_spells_data.dll` for the cheat) from the MS_KIT 2.0 release (MIT), for building only. Hashes are in `libs/SHA256SUMS`; CI checks them. |
 | `docs/` | Documentation, game research, the checklist and phone test results. Each document exists in English (`*.md`) and Russian (`*.ru.md`); update both. |
-| `.github/workflows/` | `ci.yml`: build and tests on every push; `release.yml`: publishing a release. |
+| `.github/workflows/` | `ci.yml`: build and tests on every push; `release.yml`: publishing a Co-op release; `tools-release.yml`: a developer tools release on a `tools-*` tag. |
 | `.github/release_notes.md` | Changes by version; the release description gets the changes since the last release. |
 
 ## Build and tests
@@ -43,8 +44,8 @@ Requires .NET SDK 8, Python 3 and bash (Git Bash on Windows).
 bash build.sh
 ```
 
-The script builds the Unity stubs, checks that versions match, builds `coop`, `coop_probe` and `coop_debug`, packs them
-into `dist/coop.zip`, `dist/coop_probe.zip`, `dist/coop_debug.zip` and runs all tests. If tests fail or versions don't
+The script builds the Unity stubs, checks that versions match, builds `coop`, `coop_debug`, `coop_cheat` and
+`coop_lab`, packs them into `dist/<mod>.zip` and runs all tests. If tests fail or versions don't
 match, the script exits with an error. `SKIP_TESTS=1 bash build.sh` only builds and packs.
 
 Building against the real game assemblies (the `net8/` and `il2cpp/` folders copied from the phone after Zombix's first
@@ -53,6 +54,15 @@ launch):
 ```bash
 REF=/path/to/ref bash build.sh
 ```
+
+## Static analysis
+
+- C#: .NET analyzers (`Directory.Build.props`, level `latest-recommended`); their warnings show up in the build output.
+  Disabled rules are in `.editorconfig`.
+- Python: `ruff check .` (rules in `ruff.toml`).
+- `build.sh`: `shellcheck build.sh`.
+
+CI fails on ruff and shellcheck findings.
 
 ## Testing on a phone
 
@@ -76,6 +86,31 @@ The debug console (with `coop_debug` enabled on the phone) is reachable over USB
 adb forward tcp:8771 tcp:8770
 python tools/coop_dbg.py 8771 "get mgr.Time_Sec"
 ```
+
+### Test arena
+
+Enable `coop_lab` in the Mods window (a new ModKit mod is disabled by default). In battle the «ПОЛИГОН» button opens
+three tabs:
+
+- Arena: game spawn, immortality, experience (no experience means no magic selection windows; the cheat's hero level
+  button still works), stopping and shifting the clock, removing or killing enemies;
+- Mobs: any enemy type (0–50), epic, special, transition;
+- Mechanics: clock to the boss, boss wave, obelisk, area change, mana pull, item by id.
+
+The same actions from a PC through the console: `call T:coop_lab:MagicSurvivalLab.Lab/Current.Spawn 6 10`, `.Status`,
+`.CoopStatus`. Spells come from `coop_cheat`, which the arena calls in `Spell <id> <level>`.
+
+Scenarios on two phones (both in battle, connected, with `coop`, `coop_debug`, `coop_lab` and `coop_cheat`):
+
+```bash
+python tools/lab.py mobs drop spells                 # everything; --spells 13,17 --wait 20 for selected spells
+python tools/lab.py --shots shots magic              # every spell, trait and combo (~35 min)
+```
+
+`mobs` checks that the host's mobs of every kind appear at the guest, `spells` that the host's spells are visible at the
+guest, `drop` reconnection after a dropped link and matching clocks, `magic` that every projectile of every host spell, trait
+and combo (MagicCom) is replayed at the guest with no exceptions in the game log. Before the checks the scenario makes both heroes
+immortal, turns experience off and removes spells.
 
 Standalone server and a connection check without the game:
 
@@ -120,6 +155,9 @@ room after connecting, disconnect after 40 s without data.
 4. On GitHub open Actions → release → Run workflow. GitHub builds the mod, runs the tests and publishes the
    `v<version>` release with `coop.zip`; the test results go into the release description. Without the results file
    the release isn't published; the Russian file is appended if present.
+
+Developer tools (`coop_debug`, `coop_cheat`, `coop_lab`) are released separately with a `tools-<number>` tag: see
+[TOOLS.md](TOOLS.md#publishing).
 
 ## Game research
 

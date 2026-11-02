@@ -1,0 +1,49 @@
+# Релиз инструментов разработчика по метке tools-<номер>: coop_debug, coop_cheat и coop_lab одним релизом.
+# Релиз не становится «последним»: ссылка releases/latest в README ведёт на «Кооператив».
+name: tools-release
+
+on:
+  push:
+    tags: ["tools-*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Сборка и тесты
+        run: |
+          set -o pipefail
+          bash build.sh | tee build.log
+
+      - name: Описание релиза
+        run: |
+          {
+            echo "| Мод / Mod | Версия / Version |"
+            echo "|---|---|"
+            for m in coop_debug coop_cheat coop_lab; do
+              python3 -c "import json,sys;d=json.load(open(sys.argv[1],encoding='utf-8'));print(f\"| \`{d['id']}\` | {d['version']} |\")" "mod/$m/mod.json"
+            done
+            echo
+            cat docs/TOOLS.md
+            echo; echo "---"; echo
+            cat docs/TOOLS.ru.md
+          } > notes.md
+
+      - name: Публикация релиза
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/coop_debug.zip dist/coop_cheat.zip dist/coop_lab.zip \
+            --target "$GITHUB_SHA" \
+            --title "Инструменты разработчика / Developer tools ($GITHUB_REF_NAME)" \
+            --notes-file notes.md \
+            --latest=false

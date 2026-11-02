@@ -1,0 +1,10 @@
+{
+  "id": "coop_cheat",
+  "name": "Чит: заклинания",
+  "description": "Для проверки: в бою кнопка «ЧИТ» — выдать или снять уровень любого заклинания, способности, комбинации и синергии игры, поднять уровень героя или сразу все магии на максимум.",
+  "version": "0.4.7",
+  "author": "coop",
+  "main": "coop_cheat.dll",
+  "icon": "icon.png",
+  "depends": { "modkit_spells": ">=1.0", "modkit_spells_data": ">=1.0", "modkit_effects": ">=1.0", "modkit_data": ">=1.0" }
+}

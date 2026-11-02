@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Libs>$(MSBuildThisFileDirectory)../../libs</Libs>
+    <Stubs>$(MSBuildThisFileDirectory)../../stubs/out</Stubs>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="FakeGame/**" />
+    <ProjectReference Include="FakeGame/FakeGame.csproj" />
+    <Reference Include="coop_cheat"><HintPath>../../mod/coop_cheat/bin/Release/net8.0/coop_cheat.dll</HintPath></Reference>
+    <Reference Include="ModKit"><HintPath>$(Libs)/ModKit.dll</HintPath></Reference>
+    <Reference Include="modkit_spells"><HintPath>$(Libs)/modkit_spells.dll</HintPath></Reference>
+    <Reference Include="modkit_effects"><HintPath>$(Libs)/modkit_effects.dll</HintPath></Reference>
+    <Reference Include="modkit_data"><HintPath>$(Libs)/modkit_data.dll</HintPath></Reference>
+    <Reference Include="modkit_spells_data"><HintPath>$(Libs)/modkit_spells_data.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(Stubs)/UnityEngine.CoreModule.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

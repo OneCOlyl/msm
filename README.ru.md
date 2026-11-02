@@ -105,6 +105,7 @@ bash build.sh
 | [docs/CONNECT.md](docs/CONNECT.ru.md) | Виртуальная сеть, создание игры, подключение, проверка соединения, ошибки |
 | [docs/FEATURES.md](docs/FEATURES.ru.md) | Возможности, синхронизация, настройки, совместимость версий, ограничения, безопасность |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.ru.md) | Структура репозитория, сборка, тесты, протокол, выпуск релиза |
+| [docs/TOOLS.md](docs/TOOLS.ru.md) | Инструменты разработчика: отладочная консоль, чит и полигон (релизы `tools-*`) |
 | [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.ru.md) | Чек-лист проверки релиза на телефонах |
 | [docs/ENEMY_SYNC.md](docs/ENEMY_SYNC.ru.md), [docs/ORBITALS.md](docs/ORBITALS.ru.md), [docs/ARMAGEDDON.md](docs/ARMAGEDDON.ru.md) | Исследования устройства игры |
 | [.github/release_notes.md](.github/release_notes.md) | Изменения по версиям |
