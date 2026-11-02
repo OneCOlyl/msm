@@ -1,3 +1,17 @@
+## Co-op 1.7.4
+
+- **The friend's upgraded and combined spells look the same as in their game.** The game takes a projectile's size, area, speed, duration and count from the hero that casts it, so a friend's repeated spell used to get your upgrades: a Flame Storm or a Meteor with the friend's +20% size was smaller and shorter at your end. Now the friend's game sends these values once a second, and your game uses them for each repeat of the friend's spell. Damage is still computed from your hero.
+- **Spells without a target point are no longer lost.** Electric Shock, Blizzard, Chain Lightning and other spells the game creates at (0, 0) and aims by itself didn't reach a friend who was more than 40 units from the map centre. Now they are repeated at the friend too.
+- **A shorter log.** One-off investigation logs are removed: enemy audit every 30 s, battle clock fields, obelisk coroutines, special enemy dumps, Electric Zone and Armageddon frame logs. The battle totals (shared enemies, magic, frames) remain.
+- Both players need 1.7.4 for the friend's spells to look the same.
+
+**По-русски:**
+
+- **Прокачанные и комбинированные магии друга выглядят как у него.** Размер, площадь, скорость, время и число снарядов игра берёт у героя, который кастует, поэтому повтор магии друга получал ваши улучшения: Flame Storm или Метеорит с +20% размера у друга выходили у вас меньше и короче. Теперь игра друга раз в секунду присылает эти значения, и ваша игра подставляет их в каждый повтор его магии. Урон, как и раньше, считается по вашему герою.
+- **Магии без точки цели больше не теряются.** Электричество, Метель, Chain Lightning и другие магии, которые игра создаёт в (0, 0) и наводит сама, не доходили до друга, если он стоял дальше 40 единиц от центра карты. Теперь они повторяются и у него.
+- **Журнал короче.** Убраны разовые журналы расследований: сверка врагов раз в 30 с, поля часов боя, корутины обелиска, дампы особых врагов, кадры Электрозоны и Армагеддона. Итоги боя (общие враги, магия, кадры) остались.
+- Чтобы магии друга выглядели одинаково, версия 1.7.4 нужна обоим игрокам.
+
 ## Co-op 1.7.0
 
 - **Lobby.** The host picks the area, difficulty and mode (normal or Infinite Mode); each player still picks their own character. On a guest's area screen the host's choice is shown, the area arrows are hidden, and the enter buttons stay hidden until the host starts. A guest waiting on that screen enters the battle automatically, through the same button the host pressed. The host's area screen shows how many guests are ready. A guest enters the host's area even if they haven't unlocked it.
