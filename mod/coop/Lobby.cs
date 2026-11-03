@@ -27,7 +27,7 @@ namespace MagicSurvivalCoop
         private int _startButton = -1;             // Индекс в StartButtons кнопки, которой хост начал бой
         private int _shownArea = -1;
         private readonly List<GameObject> _hiddenArrows = new List<GameObject>(), _hiddenStarts = new List<GameObject>();
-        private UiKit.HudButton _lobbyBtn;
+        private UiKit.HudButton _lobbyBtn, _chestBtn;
         private Action _lobbyAction;
 
         private void InstallLobby()
@@ -58,6 +58,7 @@ namespace MagicSurvivalCoop
                 w.WriteNumber("ll", DbInt("Game_AreaLevel"));
                 w.WriteNumber("lp", DbInt("Game_BattleLoopON"));
                 if (_startButton >= 0) w.WriteNumber("lb", _startButton);
+                if (ChestsOn) w.WriteNumber("chs", 1);
             }
             else if (!_inRun && _onAreaScreen && LobbyHost() != null) w.WriteNumber("rdy", 1);
         }
@@ -68,6 +69,7 @@ namespace MagicSurvivalCoop
             p.LobbyLevel = (int)Net.Protocol.Num(s, "ll", 0);
             p.LobbyLoop = (int)Net.Protocol.Num(s, "lp", -1);
             p.LobbyButton = (int)Net.Protocol.Num(s, "lb", -1);
+            p.LobbyChests = Net.Protocol.Bool(s, "chs");
             bool was = p.Ready;
             p.Ready = Net.Protocol.Bool(s, "rdy");
             if (_hosting && p.Ready && !was) _ctx.Toast($"{p.Name} готов к бою", 2);
@@ -88,9 +90,11 @@ namespace MagicSurvivalCoop
                 ShowAll(_hiddenArrows); ShowAll(_hiddenStarts);
                 _lobbyWaited = false;
                 UpdateLobbyLabel(_hosting && _onAreaScreen ? HostLobbyText() : null);
+                UpdateChestButton(_hosting && _onAreaScreen ? ChestsOn : (bool?)null);
                 return;
             }
 
+            UpdateChestButton(host.LobbyChests);
             Hide("Obj_ButtonAreaMoveL", _hiddenArrows);
             Hide("Obj_ButtonAreaMoveR", _hiddenArrows);
             if (!host.Battle)
@@ -181,6 +185,24 @@ namespace MagicSurvivalCoop
             _lobbyBtn.SetVisible(true);
         }
 
+        /// <summary>null прячет кнопку. Нажать может только хост, у гостя на ней выбор хоста.</summary>
+        private void UpdateChestButton(bool? on)
+        {
+            if (on == null) { if (_chestBtn != null) _chestBtn.SetVisible(false); return; }
+            if (_chestBtn == null || !_chestBtn.Alive)
+                _chestBtn = UiKit.AddHudButton("coop_chests", "", 205, 148, 430, 44, 18, BtnGray, () => _ctx.Guard("сундуки в лобби", ToggleChests));
+            _chestBtn.SetText(on.Value ? "Сундуки: общие, берёт кто первый" : "Сундуки: у каждого свои");
+            _chestBtn.SetVisible(true);
+        }
+
+        private void ToggleChests()
+        {
+            if (!_hosting) { _ctx.Toast("Сундуки выбирает хост", 2); return; }
+            _ctx.SetSetting("chests", ChestsOn ? 0 : 1);
+            _ctx.Log("лобби: сундуки " + (ChestsOn ? "общие" : "у каждого свои"));
+            UpdateChestButton(ChestsOn);
+        }
+
         private void ResetLobby()
         {
             try { ShowAll(_hiddenArrows); ShowAll(_hiddenStarts); } catch { }
@@ -189,6 +211,7 @@ namespace MagicSurvivalCoop
             _shownArea = -1;
             if (!_hosting) _startButton = -1;
             DestroyBtn(ref _lobbyBtn);
+            DestroyBtn(ref _chestBtn);
         }
 
         private static PropertyInfo DbProp(string name)

@@ -266,6 +266,11 @@ namespace MagicSurvivalCoop.Debug
             if (t == typeof(string)) return s;
             if (t == typeof(bool)) return s == "1" || s.Equals("true", StringComparison.OrdinalIgnoreCase);
             if (t.IsEnum) return Enum.Parse(t, s, true);
+            if (t.Name == "Vector3")
+            {
+                var xyz = s.Trim('(', ')').Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries).Select(x => (object)float.Parse(x, CultureInfo.InvariantCulture)).ToArray();
+                return Activator.CreateInstance(t, xyz);
+            }
             // ObscuredFloat, ObscuredInt и подобные через неявное приведение из числа
             var imp = t.IsPrimitive ? null : t.GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .FirstOrDefault(m => m.Name == "op_Implicit" && m.ReturnType == t && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType.IsPrimitive);
