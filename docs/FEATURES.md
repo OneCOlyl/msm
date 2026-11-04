@@ -41,7 +41,7 @@ The host picks the area, difficulty and mode (normal or Infinite Mode). Each pla
   host also gets a pop-up when a guest is ready.
 - **Locked area.** A guest enters the host's area even if they haven't unlocked it: the game checks unlocking only with
   the arrows on the selection screen.
-- **Chests.** Below the label the host has a button «Сундуки: общие, берёт кто первый» (shared) / «Сундуки: у каждого
+- **Chests.** Next to the label the host has a button «Сундуки: общие» (shared) / «Сундуки: у каждого
   свои» (separate), shared by default. The guest sees the host's choice. Shared chests are placed only by the host's
   game: the guest gets the same chest at the same spot, and chests from the guest's own game are removed. A chest goes to
   one player, the first to reach it. The host takes a chest at once. A guest who reaches a chest asks the host for it.

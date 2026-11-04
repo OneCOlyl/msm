@@ -180,7 +180,7 @@ namespace MagicSurvivalCoop
         {
             if (text == null) { if (_lobbyBtn != null) _lobbyBtn.SetVisible(false); return; }
             if (_lobbyBtn == null || !_lobbyBtn.Alive)
-                _lobbyBtn = UiKit.AddHudButton("coop_lobby", text, 205, 98, 430, 44, 18, BtnGray, () => _ctx.Guard("окно", OpenWindow));
+                _lobbyBtn = UiKit.AddHudButton("coop_lobby", text, 20, 100, 450, 38, 16, BtnGray, () => _ctx.Guard("окно", OpenWindow));
             _lobbyBtn.SetText(text);
             _lobbyBtn.SetVisible(true);
         }
@@ -190,8 +190,8 @@ namespace MagicSurvivalCoop
         {
             if (on == null) { if (_chestBtn != null) _chestBtn.SetVisible(false); return; }
             if (_chestBtn == null || !_chestBtn.Alive)
-                _chestBtn = UiKit.AddHudButton("coop_chests", "", 205, 148, 430, 44, 18, BtnGray, () => _ctx.Guard("сундуки в лобби", ToggleChests));
-            _chestBtn.SetText(on.Value ? "Сундуки: общие, берёт кто первый" : "Сундуки: у каждого свои");
+                _chestBtn = UiKit.AddHudButton("coop_chests", "", 480, 100, 220, 38, 16, BtnGray, () => _ctx.Guard("сундуки в лобби", ToggleChests));
+            _chestBtn.SetText(on.Value ? "Сундуки: общие" : "Сундуки: у каждого свои");
             _chestBtn.SetVisible(true);
         }
 

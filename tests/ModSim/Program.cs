@@ -773,17 +773,20 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         Check(k3.Destroyed == 1 && k3.BoxCollider_ObjItem.center.y > 100, "хост взял сундук раньше заявки — гостю не отдан, копия так и не отперта и убрана");
         G.Combat.Pos = new Vector3(50, 50, 0);
 
-        var mine = new FakeChest(5, 51, 49);                                // артефакт гостя положил ему сундук
-        G.Ctx.Fire("Before V_Artifact_Manager.Button_Artifact_Select/3", null, new object[3]);
-        gm.Chests.Add(mine);
-        G.Ctx.Fire("After V_Artifact_Manager.Button_Artifact_Select/3", null, new object[3]);
+        var mine = new FakeChest(5, 51, 49);                                // окно артефакта гостя: сундук лёг посреди паузы
+        var mine2 = new FakeChest(5, 52, 49);                               // и при закрытии окна
+        own.Add(G.Ctx); F(10);
+        gm.Chests.Add(mine); F(40);
+        gm.Chests.Add(mine2); own.Remove(G.Ctx);
         var hostMine = new FakeChest(6, 1, 1);
-        H.Ctx.Fire("Before X_Select_Ability.Button_SelectAbility/0", null, new object[0]);
-        hm.Chests.Add(hostMine);
-        H.Ctx.Fire("After X_Select_Ability.Button_SelectAbility/0", null, new object[0]);
+        own.Add(H.Ctx); F(10);
+        hm.Chests.Add(hostMine); own.Remove(H.Ctx);
         F(80);
-        Check(mine.Destroyed == 0, "сундук от артефакта гостя остаётся у гостя");
+        Check(mine.Destroyed == 0 && mine2.Destroyed == 0, "сундуки от выбора артефакта гостя остаются у гостя");
         Check(gm.Created == 3, $"сундук от умения хоста гостю не повторяется (копий создано {gm.Created})");
+        var later = new FakeChest(6, 60, 60); gm.Chests.Add(later);
+        Until(() => later.Destroyed > 0);
+        Check(later.Destroyed == 1, "после паузы свой сундук гостя снова убирается");
         sess.GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
     }
     own.Add(H.Ctx); Time.timeScale = 0;                                  // хост выбирает умение — у гостя общая пауза

@@ -1,13 +1,13 @@
 ## Co-op 1.7.8
 
-- **Shared chests.** On the area screen the host picks «Сундуки: общие, берёт кто первый» (shared, the default) or «Сундуки: у каждого свои» (separate). With shared chests only the host's game places them: a guest gets the same chest at the same spot, and the guest's own chests are removed. A chest goes to one player only: the host takes it at once, a guest who reaches it asks the host, and the host gives it to the first request. The others' chest disappears.
+- **Shared chests.** On the area screen the host picks «Сундуки: общие» (shared, the default) or «Сундуки: у каждого свои» (separate). With shared chests only the host's game places them: a guest gets the same chest at the same spot, and the guest's own chests are removed. A chest goes to one player only: the host takes it at once, a guest who reaches it asks the host, and the host gives it to the first request. The others' chest disappears.
 - Chests from an artifact or ability choice (for example, three chests from an artifact) stay with the player who chose.
 - All players need 1.7.8 for shared chests.
 - For developers: `bash build.sh` runs the tests in parallel, about 80 s instead of 5 minutes. `coop_debug` 0.1.7: `set` accepts a Vector3 as `(x, y, z)`.
 
 **По-русски:**
 
-- **Общие сундуки.** На экране локации хост выбирает «Сундуки: общие, берёт кто первый» (по умолчанию) или «Сундуки: у каждого свои». С общими сундуками их кладёт только игра хоста: у гостя такой сундук лежит на том же месте, а свои сундуки его игры убираются. Сундук достаётся одному игроку: хост берёт его сразу, гость, дойдя до сундука, просит его у хоста, и хост отдаёт сундук первому, кто попросил. У остальных сундук пропадает.
+- **Общие сундуки.** На экране локации хост выбирает «Сундуки: общие» (по умолчанию) или «Сундуки: у каждого свои». С общими сундуками их кладёт только игра хоста: у гостя такой сундук лежит на том же месте, а свои сундуки его игры убираются. Сундук достаётся одному игроку: хост берёт его сразу, гость, дойдя до сундука, просит его у хоста, и хост отдаёт сундук первому, кто попросил. У остальных сундук пропадает.
 - Сундуки от выбора артефакта или умения (например, три сундука от артефакта) остаются у того, кто выбирал.
 - Общие сундуки работают, когда у всех игроков 1.7.8.
 - Для разработчиков: `bash build.sh` гоняет тесты параллельно, около 80 с вместо 5 минут. `coop_debug` 0.1.7: `set` принимает Vector3 в виде `(x, y, z)`.

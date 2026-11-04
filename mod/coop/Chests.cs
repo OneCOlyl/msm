@@ -19,26 +19,20 @@ namespace MagicSurvivalCoop
     /// появления ставит центр коллайдера сразу при создании и больше его не трогает, поэтому копию запирает сдвиг центра.
     ///
     /// Сундуки, которые игра кладёт после выбора артефакта или умения (артефакт 75 кладёт три рядом с героем), остаются у того,
-    /// кто выбирал: хост их не шлёт, гость не убирает.
+    /// кто выбирал: хост их не шлёт, гость не убирает. Их кладёт кнопка окна выбора, пока своя игра на паузе, поэтому личные это
+    /// сундуки, появившиеся за свою паузу. Хук на сами кнопки не годится: любой хук на V_Artifact_Manager.Button_Artifact_Select
+    /// роняет игру при нажатии.
     /// </summary>
     internal sealed partial class Session
     {
         private static readonly int[] ChestKinds = { 5, 6 };
         private const double ChestScanSec = 0.5, ChestClaimRadius = 0.5, ChestClaimRetrySec = 2;
         private static readonly Vector3 ChestLockedCenter = new Vector3(0, 1000, 0);
-        private static readonly (string type, string method, int args)[] PersonalChestButtons =
-        {
-            ("V_Artifact_Manager", "Button_Artifact_Select", 3),
-            ("V_Artifact_Manager", "Button_MagicUpgrade_Decision", 0),
-            ("X_Select_Ability", "Button_SelectAbility", 0),
-            ("V_Ability_Manager", "Button_MagicCom_Decision", 0),
-            ("V_Ability_Manager", "Button_Ultimate_Decision", 0),
-        };
         private bool ChestsOn => _ctx.Setting("chests") > 0;
 
         private double _chestScanAt;
         private readonly HashSet<object> _personalChests = new HashSet<object>();
-        private HashSet<object> _chestsBeforeButton;
+        private HashSet<object> _chestsBeforePause;
         // Хост: id лежащих сундуков
         private int _chestSeq;
         private readonly Dictionary<object, int> _chestIds = new Dictionary<object, int>();
@@ -62,39 +56,29 @@ namespace MagicSurvivalCoop
             public double ClaimAt = -100;
         }
 
-        private void InstallChestHooks()
-        {
-            foreach (var (type, method, args) in PersonalChestButtons)
-                try
-                {
-                    _ctx.Before(type, method, args, Hook("сундуки: " + method, (self, a) => BeforeChestButton()));
-                    _ctx.After(type, method, args, Hook("сундуки: " + method, (self, a) => AfterChestButton(method)));
-                }
-                catch (Exception e) { _ctx.Log($"сундуки: хук {type}.{method} недоступен: {e.Message}"); }
-        }
-
         private bool ChestsShared => _hosting ? ChestsOn && _partners.Count > 0 : _chestHost != null;
 
-        private void BeforeChestButton()
+        /// <summary>Перед каждым сканом паузы и на её конце: скан гостя убрал бы новый сундук как свой.</summary>
+        private void PersonalChestStep(double now)
         {
-            _chestsBeforeButton = _inRun && ChestsShared ? LyingChests().Select(KeyOf).ToHashSet() : null;
-        }
-
-        private void AfterChestButton(string method)
-        {
-            var before = _chestsBeforeButton;
-            _chestsBeforeButton = null;
-            if (before == null) return;
+            bool paused = ChestsShared && OwnPause();
+            if (paused && _chestsBeforePause == null) { _chestsBeforePause = LyingChests().Select(KeyOf).ToHashSet(); return; }
+            if (_chestsBeforePause == null || paused && now < _chestScanAt) return;
+            var copies = new HashSet<object>(_chestCopies.Values.Select(c => c.Key));
             int n = 0;
             foreach (var box in LyingChests())
-                if (!before.Contains(KeyOf(box)) && _personalChests.Add(KeyOf(box))) n++;
-            if (n > 0) _ctx.Log($"сундук: {method} положил мне {n} — они только мои");
+            {
+                var key = KeyOf(box);
+                if (!_chestsBeforePause.Contains(key) && !copies.Contains(key) && _personalChests.Add(key)) n++;
+            }
+            if (n > 0) _ctx.Log($"сундук: окно выбора положило мне {n} — они только мои");
+            if (!paused) _chestsBeforePause = null;
         }
 
         private void ResetChests()
         {
             _chestScanAt = 0;
-            _personalChests.Clear(); _chestsBeforeButton = null;
+            _personalChests.Clear(); _chestsBeforePause = null;
             _chestIds.Clear(); _chestBoxes.Clear(); _chestList.Clear();
             _hostChests.Clear(); _chestCopies.Clear(); _chestDone.Clear();
             _chestHost = null; _hostChestsAt = -100; _ownChestsRemoved = 0;
@@ -163,6 +147,7 @@ namespace MagicSurvivalCoop
         private void ChestStep(double now)
         {
             if (!_startX.HasValue) return;
+            PersonalChestStep(now);
             if (!_hosting && _chestCopies.Count > 0) ClaimStep(now);
             if (now < _chestScanAt) return;
             _chestScanAt = now + ChestScanSec;

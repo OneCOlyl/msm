@@ -209,7 +209,6 @@ namespace MagicSurvivalCoop
             InstallMagicHook();
             InstallWorldHooks();
             InstallLobby();
-            InstallChestHooks();
             try { ctx.Before("C_Battle_Manager", "Update", 0, Hook("кадр боя", (self, args) => { if (self != null) _battleMgr = self; FrameStep(); })); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
             ctx.Log($"кооператив {CoopMod.ModVersion} включён, имя «{_myName}»");
