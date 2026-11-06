@@ -1,5 +1,6 @@
 ## Не выпущено
 
+- Less memory garbage from the network code: the state is written straight into a reused buffer and incoming messages are not copied. Fewer garbage collections during battle.
 - The host's game no longer talks to its own room server through a network socket, and the server relays states and events without rebuilding them: less work for the host's phone. Guests see no difference.
 - Smaller host messages with special enemies: an enemy's look is sent after it appears or changes and then once every 2 s, not in every send. The name, max HP, kills and lobby are sent on change and once every 2 s. All players need the same version.
 - For developers: network numbers at the end of a battle in `modkit.log` (`сеть за … с`: bytes per second sent and received, the longest line, ping average, maximum and spread), the same in `Lab.CoopStatus`. `tools/lab.py`: the `perf` scenario (200 enemies, all spells maxed, 60 s), `--json`, exit code 1 on any failure, adb from `ADB` or `PATH`. The `device-test` skill for agents.
@@ -7,6 +8,7 @@
 
 **По-русски:**
 
+- Меньше мусора в памяти от сетевого кода: состояние пишется сразу в переиспользуемый буфер, входящие сообщения не копируются. Меньше сборок мусора в бою.
 - Игра хоста больше не общается со своим сервером комнаты через сетевой сокет, а сервер пересылает состояния и события, не собирая их заново: телефону хоста меньше работы. Для гостей ничего не меняется.
 - Меньше сообщений хоста при особых врагах: вид врага уходит после появления или изменения и затем раз в 2 с, а не в каждой отправке. Имя, здоровье максимум, убийства и лобби — при изменении и раз в 2 с. Нужна одна версия у всех игроков.
 - Для разработчиков: сетевые цифры в итоге боя в `modkit.log` (`сеть за … с`: байт в секунду на отправку и приём, самая длинная строка, пинг: среднее, максимум, разброс), то же в `Lab.CoopStatus`. `tools/lab.py`: сценарий `perf` (200 врагов, все магии на максимум, 60 с), `--json`, код выхода 1 при любом провале, adb из `ADB` или `PATH`. Скилл `device-test` для агентов.

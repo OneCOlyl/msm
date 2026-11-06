@@ -76,11 +76,11 @@ namespace MagicSurvivalCoop.Net
         public LocalPeer ConnectLocal(Action<byte[]> deliver, Action closed)
         {
             var c = new Conn { Id = "p" + Interlocked.Increment(ref _nextId), Ip = "local", Local = deliver };
-            var peer = new LocalPeer(line =>
+            var peer = new LocalPeer((line, len) =>
             {
                 if (c.Closed) return;
-                if (line.Length > Protocol.MaxLineBytes) { SendError(c, "message_too_large", "Сообщение слишком большое."); c.Close(); return; }
-                Process(c, line, line.Length);
+                if (len > Protocol.MaxLineBytes) { SendError(c, "message_too_large", "Сообщение слишком большое."); c.Close(); return; }
+                Process(c, line, len);
             }, c.Close, () => c.Closed);
             c.OnLocalClose = () => { Drop(c); closed?.Invoke(); };
             lock (_lock) _conns.Add(c);
@@ -91,14 +91,14 @@ namespace MagicSurvivalCoop.Net
 
         public sealed class LocalPeer
         {
-            private readonly Action<byte[]> _receive;
+            private readonly Action<byte[], int> _receive;
             private readonly Action _close;
             private readonly Func<bool> _closed;
-            internal LocalPeer(Action<byte[]> receive, Action close, Func<bool> closed) { _receive = receive; _close = close; _closed = closed; }
+            internal LocalPeer(Action<byte[], int> receive, Action close, Func<bool> closed) { _receive = receive; _close = close; _closed = closed; }
             public bool Closed => _closed();
 
-            // line без перевода строки
-            public void Receive(byte[] line) => _receive(line);
+            // Строка без перевода строки; сервер читает buf только во время вызова.
+            public void Receive(byte[] buf, int len) => _receive(buf, len);
 
             public void Close() => _close();
         }

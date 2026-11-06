@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -375,7 +376,7 @@ namespace MagicSurvivalCoop
         {
             _lastPumpSec = Clock.Elapsed.TotalSeconds;
             int n = 0;
-            while (n++ < 200 && _client.Incoming.TryDequeue(out var m))
+            while (n++ < 200 && _client.Incoming.TryTake(out var m))
             {
                 switch (Protocol.TypeOf(m))
                 {
@@ -690,7 +691,12 @@ namespace MagicSurvivalCoop
             bool writeKills = writeRare || _killsLeft > 0;
             if (_killsLeft > 0) _killsLeft--;
             _send.Lap(1);
-            _client.SendState(Protocol.Build(w =>
+            _stateBuf.ResetWrittenCount();
+            if (_stateW == null) _stateW = new Utf8JsonWriter(_stateBuf); else _stateW.Reset(_stateBuf);
+            var w = _stateW;
+            w.WriteStartObject();
+            w.WriteString("type", Protocol.PlayerState);
+            w.WriteStartObject("state");
             {
                 if (writeRare) w.WriteString("name", _myName);
                 w.WriteNumber("run", _inRun ? 1 : 0);
@@ -718,10 +724,18 @@ namespace MagicSurvivalCoop
                 if (_inRun && _hosting) WriteChests(w);
                 if (writeRare) WriteLobby(w, lobby);
                 w.WriteNumber("t", Math.Round(Clock.Elapsed.TotalSeconds, 4));   // Время снятия позиции для интерполяции у друзей
-            }));
+            }
+            w.WriteEndObject();
+            w.WriteEndObject();
+            w.Flush();
+            _client.SendStateMessage(_stateBuf.WrittenSpan);
             _send.Lap(4);
             _send.Count++;
         }
+
+        // Сообщение PLAYER_STATE пишется сразу в байты и в один и тот же буфер: отправка состояния без выделений.
+        private readonly ArrayBufferWriter<byte> _stateBuf = new ArrayBufferWriter<byte>(16 * 1024);
+        private Utf8JsonWriter _stateW;
 
         // Имя, здоровье максимум, убийства и лобби меняются редко: при изменении RareSends отправок подряд, иначе раз в RareRefreshSec.
         private const int RareSends = 3;
