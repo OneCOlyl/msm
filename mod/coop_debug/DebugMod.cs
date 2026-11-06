@@ -24,7 +24,7 @@ namespace MagicSurvivalCoop.Debug
         {
             Id = "coop_debug",
             Name = "Кооператив: отладка",
-            Version = "0.1.7",
+            Version = typeof(DebugMod).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion,
             Description = "Для разработки: консоль на порту 8770 (только через USB/adb) — читать и менять поля игры во время боя. Игрокам не нужна.",
             OnEnable = ctx => _c = new DebugConsole(ctx),
             OnDisable = ctx => { _c?.Stop(); _c = null; },

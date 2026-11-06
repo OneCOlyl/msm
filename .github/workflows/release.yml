@@ -1,11 +1,8 @@
-# Публикация релиза: GitHub → Actions → release → Run workflow.
-# Версия берётся из mod/coop/mod.json; GitHub собирает мод, прогоняет тесты,
-# создаёт метку v<версия> и релиз с coop.zip. Нужны результаты проверки на телефонах:
-# docs/device-tests/<версия>.md (docs/RELEASE_CHECKLIST.md).
+# Публикация релиза по метке v<версия>: GitHub собирает мод с версией из метки, прогоняет тесты и выпускает релиз
+# с coop.zip. Нужны результаты проверки на телефонах: docs/device-tests/<версия>.md (docs/RELEASE_CHECKLIST.md).
 name: release
 
 on:
-  workflow_dispatch:
   push:
     tags: ["v*"]
 
@@ -25,12 +22,12 @@ jobs:
       - name: Версия
         id: ver
         run: |
-          VER=$(python3 -c "import json;print(json.load(open('mod/coop/mod.json',encoding='utf-8'))['version'])")
-          echo "tag=v$VER" >> "$GITHUB_OUTPUT"
-          echo "ver=$VER" >> "$GITHUB_OUTPUT"
-          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$VER" ]; then
-            echo "::error::метка $GITHUB_REF_NAME, а в mod.json версия $VER"; exit 1
+          VER="${GITHUB_REF_NAME#v}"
+          if ! [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::метка $GITHUB_REF_NAME, нужна v<X.Y.Z>"; exit 1
           fi
+          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Проверка на телефонах и описание релиза
         env:
@@ -51,14 +48,14 @@ jobs:
       - name: Сборка и тесты
         run: |
           set -o pipefail
-          bash build.sh | tee build.log      # build.sh сам завершается с ошибкой, если тесты не прошли или версии не совпадают
+          VERSION="${{ steps.ver.outputs.ver }}" bash build.sh | tee build.log
 
       - name: Публикация релиза
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
-            echo "::error::релиз ${{ steps.ver.outputs.tag }} уже есть — поднимите версию в mod/coop/mod.json"; exit 1
+            echo "::error::релиз ${{ steps.ver.outputs.tag }} уже есть — нужна новая метка"; exit 1
           fi
           gh release create "${{ steps.ver.outputs.tag }}" dist/coop.zip \
             --target "$GITHUB_SHA" \

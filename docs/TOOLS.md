@@ -1,7 +1,7 @@
 # Developer tools
 
 Three ModKit mods for testing Co-op on phones. Players don't need them: the cheat and the test arena change how a
-battle goes. They ship together in a release tagged `tools-<number>` (workflow `tools-release`), separate from Co-op
+battle goes. They ship together in a release tagged `tools-<version>` (workflow `tools-release`), separate from Co-op
 releases.
 
 | Mod | What it does | MS_KIT libraries needed |
@@ -12,7 +12,7 @@ releases.
 
 ## Installation
 
-1. Download the archives you need from the `tools-<number>` release: `coop_debug.zip`, `coop_cheat.zip`, `coop_lab.zip`.
+1. Download the archives you need from the `tools-<version>` release: `coop_debug.zip`, `coop_cheat.zip`, `coop_lab.zip`.
 2. Put them on the phone in `/sdcard/Download/` and install them in Zombix: «Моды» (Mods) → «+».
 3. A new ModKit mod starts disabled: enable it in the Mods window and restart the game.
 
@@ -64,13 +64,11 @@ The same actions from a PC through the `coop_debug` console: `call T:coop_lab:Ma
 
 ## Publishing
 
-1. Raise the version of the changed mod in three places: `version` in `mod/<mod>/mod.json`, `<Version>` in
-   `mod/<mod>/<mod>.csproj` and `Version = "…"` in the mod's code (`build.sh` checks that they match).
-2. Create the tag with the next number and push it:
+The three mods share one version, taken from the `tools-X.Y.Z` tag. Tag the commit and push the tag:
 
-   ```bash
-   git tag tools-2 && git push origin tools-2
-   ```
+```bash
+git tag tools-0.2.0 && git push origin tools-0.2.0
+```
 
-GitHub builds the mods, runs the tests and publishes a release with the three archives. The mod versions go into the
-release description.
+GitHub builds the mods with that version, runs the tests and publishes a release with the three archives. The version
+goes into the release description.

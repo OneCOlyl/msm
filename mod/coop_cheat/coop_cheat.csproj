@@ -5,7 +5,8 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>0.4.7</Version>
+    <Version>0.0.0-dev</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Libs Condition="'$(Libs)' == ''">$(MSBuildThisFileDirectory)../../libs</Libs>
     <Stubs>$(MSBuildThisFileDirectory)../../stubs/out</Stubs>
   </PropertyGroup>

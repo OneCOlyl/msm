@@ -19,7 +19,7 @@ namespace MagicSurvivalLab
         {
             Id = "coop_lab",
             Name = "Кооператив: полигон",
-            Version = "0.1.11",
+            Version = typeof(LabMod).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion,
             Description = "Для разработки: в бою кнопка «ПОЛИГОН» — спокойная арена, любые мобы, босс-волна, обелиск и другие механики. Игрокам не нужен.",
             Depends = { ["modkit_combat"] = ">=1.0 <2", ["modkit_hero"] = ">=1.0 <2" },
             OnEnable = ctx => Lab.Current = new Lab(ctx),

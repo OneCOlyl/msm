@@ -12,7 +12,8 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Version>1.7.8</Version>
+    <Version>0.0.0-dev</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Libs Condition="'$(Libs)' == ''">$(MSBuildThisFileDirectory)../../libs</Libs>
     <Stubs>$(MSBuildThisFileDirectory)../../stubs/out</Stubs>
   </PropertyGroup>
