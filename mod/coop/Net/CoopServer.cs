@@ -71,6 +71,44 @@ namespace MagicSurvivalCoop.Net
 
         public void Dispose() => Stop();
 
+        // Хост в той же игре: та же логика комнат, слотов и выхода, но без сокета. deliver зовётся из любого потока,
+        // в том числе под замком сервера, поэтому не должен ждать других замков.
+        public LocalPeer ConnectLocal(Action<byte[]> deliver, Action closed)
+        {
+            var c = new Conn { Id = "p" + Interlocked.Increment(ref _nextId), Ip = "local", Local = deliver };
+            var peer = new LocalPeer(line =>
+            {
+                if (c.Closed) return;
+                if (line.Length > Protocol.MaxLineBytes) { SendError(c, "message_too_large", "Сообщение слишком большое."); c.Close(); return; }
+                Process(c, line, line.Length);
+            }, c.Close, () => c.Closed);
+            c.OnLocalClose = () => { Drop(c); closed?.Invoke(); };
+            lock (_lock) _conns.Add(c);
+            Log($"подключение {c.Id} (хост в этой игре)");
+            c.Send(Bytes(Protocol.Build(w => { w.WriteString("type", Protocol.Welcome); w.WriteNumber("protocol", Protocol.Version); w.WriteString("playerId", c.Id); })));
+            return peer;
+        }
+
+        public sealed class LocalPeer
+        {
+            private readonly Action<byte[]> _receive;
+            private readonly Action _close;
+            private readonly Func<bool> _closed;
+            internal LocalPeer(Action<byte[]> receive, Action close, Func<bool> closed) { _receive = receive; _close = close; _closed = closed; }
+            public bool Closed => _closed();
+
+            // line без перевода строки
+            public void Receive(byte[] line) => _receive(line);
+
+            public void Close() => _close();
+        }
+
+        private void Drop(Conn c)
+        {
+            lock (_lock) { LeaveRoomLocked(c); _conns.Remove(c); }
+            Log($"отключение {c.Id}");
+        }
+
         private sealed class Room
         {
             public string Code;
@@ -87,6 +125,9 @@ namespace MagicSurvivalCoop.Net
             public TcpClient Tcp;
             public NetworkStream Stream;
             public string Ip = "";
+            // Хост в той же игре: строки отдаются ему вызовом, без сокета и потока записи.
+            public Action<byte[]> Local;
+            public Action OnLocalClose;
             public readonly BlockingCollection<byte[]> Out = new BlockingCollection<byte[]>(512);
             public long LastSeenTicks = DateTime.UtcNow.Ticks;
             public long LastInRoomTicks = DateTime.UtcNow.Ticks;
@@ -99,6 +140,7 @@ namespace MagicSurvivalCoop.Net
             public void Send(byte[] bytes)
             {
                 if (Closed || _ending) return;
+                if (Local != null) { Local(bytes); return; }
                 bool ok;
                 try { ok = Out.TryAdd(bytes); } catch (InvalidOperationException) { return; }
                 if (!ok) Close();      // Клиент не успевает читать: отключаем, а не копим память
@@ -107,6 +149,7 @@ namespace MagicSurvivalCoop.Net
             public void SendAndClose(string line)
             {
                 Send(line);
+                if (Local != null) { Close(); return; }
                 _ending = true;
                 try { Out.CompleteAdding(); } catch { }
             }
@@ -116,7 +159,8 @@ namespace MagicSurvivalCoop.Net
                 if (Closed) return;
                 Closed = true;
                 try { Out.CompleteAdding(); } catch { }
-                try { Tcp.Close(); } catch { }
+                try { Tcp?.Close(); } catch { }
+                OnLocalClose?.Invoke();
             }
         }
 
@@ -184,17 +228,7 @@ namespace MagicSurvivalCoop.Net
             try
             {
                 var reader = new LineReader(c.Stream);
-                while (_running && !c.Closed)
-                {
-                    var line = reader.ReadLine();
-                    if (line == null) break;
-                    Interlocked.Exchange(ref c.LastSeenTicks, DateTime.UtcNow.Ticks);
-                    if (line.Length == 0) continue;
-                    JsonDocument doc;
-                    try { doc = JsonDocument.Parse(line); }
-                    catch (JsonException) { SendError(c, "invalid_json", "Некорректный JSON."); continue; }
-                    using (doc) Handle(c, doc.RootElement);
-                }
+                while (_running && !c.Closed && reader.ReadLineBytes(out var buf, out int len)) Process(c, buf, len);
             }
             catch (IOException e) when (e.Message.Contains("строка")) { SendError(c, "message_too_large", "Сообщение слишком большое."); }
             catch { }
@@ -204,6 +238,92 @@ namespace MagicSurvivalCoop.Net
                 c.Close();
                 Log($"отключение {c.Id}");
             }
+        }
+
+        private void Process(Conn c, byte[] buf, int len)
+        {
+            Interlocked.Exchange(ref c.LastSeenTicks, DateTime.UtcNow.Ticks);
+            while (len > 0 && buf[len - 1] == (byte)'\r') len--;
+            if (len == 0 || TryRelay(c, new ReadOnlySpan<byte>(buf, 0, len))) return;
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(new ReadOnlyMemory<byte>(buf, 0, len)); }
+            catch (JsonException) { SendError(c, "invalid_json", "Некорректный JSON."); return; }
+            using (doc) Handle(c, doc.RootElement);
+        }
+
+        // PLAYER_STATE и EVENT без дерева JSON: строка целиком проверяется ридером, а state или event уходит теми же
+        // байтами, что дал бы GetRawText. При повторе ключа берётся последний, как у JsonElement. Всё необычное — в Handle.
+        private bool TryRelay(Conn c, ReadOnlySpan<byte> line)
+        {
+            int type = 0, stateAt = -1, stateEnd = 0, eventAt = -1, eventEnd = 0;
+            try
+            {
+                var r = new Utf8JsonReader(line);
+                if (!r.Read() || r.TokenType != JsonTokenType.StartObject) return false;
+                while (r.Read() && r.TokenType == JsonTokenType.PropertyName)
+                {
+                    int key = r.ValueTextEquals("type") ? 1 : r.ValueTextEquals("state") ? 2 : r.ValueTextEquals("event") ? 3 : 0;
+                    r.Read();
+                    if (key == 1)
+                        type = r.TokenType != JsonTokenType.String ? 0 : r.ValueTextEquals(Protocol.PlayerState) ? 2 : r.ValueTextEquals(Protocol.Event) ? 3 : 0;
+                    int at = r.TokenType == JsonTokenType.StartObject ? (int)r.TokenStartIndex : -1;
+                    r.Skip();
+                    if (key == 2) { stateAt = at; stateEnd = (int)r.BytesConsumed; }
+                    else if (key == 3) { eventAt = at; eventEnd = (int)r.BytesConsumed; }
+                }
+                if (r.TokenType != JsonTokenType.EndObject || r.Read()) return false;
+            }
+            catch (JsonException) { return false; }
+            if (type == 0) return false;
+            bool isState = type == 2;
+            int start = isState ? stateAt : eventAt, end = isState ? stateEnd : eventEnd;
+            if (start < 0) return false;
+            var payload = line.Slice(start, end - start);
+            Relay(c, isState, isState ? null : ToOf(payload), payload);
+            return true;
+        }
+
+        private static string ToOf(ReadOnlySpan<byte> payload)
+        {
+            string to = null;
+            var r = new Utf8JsonReader(payload);
+            r.Read();
+            while (r.Read() && r.TokenType == JsonTokenType.PropertyName)
+            {
+                bool isTo = r.ValueTextEquals("to");
+                r.Read();
+                if (isTo) to = r.TokenType == JsonTokenType.String ? r.GetString() : null;
+                r.Skip();
+            }
+            return to;
+        }
+
+        private static readonly byte[] StatePrefix = Encoding.UTF8.GetBytes("{\"type\":\"" + Protocol.RemotePlayerState + "\",\"playerId\":\"");
+        private static readonly byte[] EventPrefix = Encoding.UTF8.GetBytes("{\"type\":\"" + Protocol.RemoteEvent + "\",\"playerId\":\"");
+
+        // Байт в байт то, что раньше собирал Utf8JsonWriter: playerId — «p» и число, экранировать нечего.
+        private void Relay(Conn c, bool isState, string to, ReadOnlySpan<byte> payload)
+        {
+            var targets = new List<Conn>(Protocol.MaxPlayers);
+            int slot;
+            // Одним снимком под замком: повторный вход того же игрока в другом потоке обнуляет c.Slot и c.Room
+            lock (_lock)
+            {
+                if (c.Room == null) { SendError(c, "not_in_room", "Сначала войдите в комнату."); return; }
+                slot = c.Slot;
+                foreach (var p in c.Room.Players) if (p != c && (to == null || p.Id == to)) targets.Add(p);
+            }
+            RelayHook?.Invoke();
+            if (targets.Count == 0) return;
+            var head = Encoding.UTF8.GetBytes(c.Id + "\",\"slot\":" + slot + (isState ? ",\"state\":" : ",\"event\":"));
+            var prefix = isState ? StatePrefix : EventPrefix;
+            var bytes = new byte[prefix.Length + head.Length + payload.Length + 2];
+            prefix.CopyTo(bytes, 0);
+            head.CopyTo(bytes, prefix.Length);
+            payload.CopyTo(bytes.AsSpan(prefix.Length + head.Length));
+            bytes[bytes.Length - 2] = (byte)'}';
+            bytes[bytes.Length - 1] = (byte)'\n';
+            foreach (var p in targets) p.Send(bytes);
         }
 
         private void ReapLoop()
@@ -216,6 +336,7 @@ namespace MagicSurvivalCoop.Net
                 lock (_lock) { all = _conns.ToArray(); SweepRoomOpsLocked(now); }
                 foreach (var c in all)
                 {
+                    if (c.Local != null) continue;
                     if (TimeSpan.FromTicks(now - Interlocked.Read(ref c.LastSeenTicks)).TotalSeconds > IdleTimeoutSec)
                     {
                         Log($"{c.Id}: нет данных {IdleTimeoutSec} с, отключаю");
@@ -320,29 +441,7 @@ namespace MagicSurvivalCoop.Net
                         bool isState = type == Protocol.PlayerState;
                         var payload = Protocol.Obj(m, isState ? "state" : "event");
                         if (payload.ValueKind != JsonValueKind.Object) { SendError(c, "invalid_message", isState ? "Нет поля state." : "Нет поля event."); break; }
-                        string to = isState ? null : Protocol.Str(payload, "to");
-                        string raw = payload.GetRawText();
-                        var targets = new List<Conn>(Protocol.MaxPlayers);
-                        int slot;
-                        // Одним снимком под замком: повторный вход того же игрока в другом потоке обнуляет c.Slot и c.Room
-                        lock (_lock)
-                        {
-                            if (c.Room == null) { SendError(c, "not_in_room", "Сначала войдите в комнату."); break; }
-                            slot = c.Slot;
-                            foreach (var p in c.Room.Players) if (p != c && (to == null || p.Id == to)) targets.Add(p);
-                        }
-                        RelayHook?.Invoke();
-                        if (targets.Count == 0) break;
-                        var line = Protocol.Build(w =>
-                        {
-                            w.WriteString("type", isState ? Protocol.RemotePlayerState : Protocol.RemoteEvent);
-                            w.WriteString("playerId", c.Id);
-                            w.WriteNumber("slot", slot);
-                            w.WritePropertyName(isState ? "state" : "event");
-                            w.WriteRawValue(raw, skipInputValidation: true);
-                        });
-                        var bytes = Bytes(line);
-                        foreach (var p in targets) p.Send(bytes);
+                        Relay(c, isState, isState ? null : Protocol.Str(payload, "to"), Encoding.UTF8.GetBytes(payload.GetRawText()));
                     }
                     break;
 

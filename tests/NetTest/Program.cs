@@ -650,6 +650,65 @@ Console.WriteLine("22. сервер не читает: очередь событ
     sc.Stop(); stuck.Stop(); lock (keep) foreach (var k in keep) k.Close();
 }
 
+if (server != null)
+{
+    Console.WriteLine("23. хост в той же игре без сокета: комнаты, слоты, пересылка байт в байт, выход");
+    var ls = new CoopServer { Log = s => Console.WriteLine("    [srv-local] " + s), AutoCreateRoom = false };
+    ls.Start(0);
+    var lh = new CoopClient(); var lbox = new List<JsonElement>();
+    lh.StartLocal(ls, "Хост", "cid-local-host");
+    var lc = WaitFor(lh, Protocol.RoomCreated, lbox, 2000);
+    Check(lc.HasValue && lh.Connected && Protocol.Num(lc.Value, "slot") == 1, "локальный хост создал комнату, слот 1");
+    string lroom = lc.HasValue ? Protocol.Str(lc.Value, "roomCode") : null, lhId = lc.HasValue ? Protocol.Str(lc.Value, "playerId") : null;
+    Check(ls.ConnectionCount == 1, $"локальное подключение учтено сервером ({ls.ConnectionCount})");
+
+    var (gt, gr, gs) = Raw("127.0.0.1", ls.Port);
+    ReadType(gr, Protocol.Welcome);
+    SendLine(gs, "{\"type\":\"JOIN_ROOM\",\"roomCode\":\"\",\"name\":\"Гость\",\"protocol\":2}");
+    var gj = ReadType(gr, Protocol.RoomJoined);
+    Check(gj.HasValue && Protocol.Str(gj.Value, "roomCode") == lroom && Protocol.Num(gj.Value, "slot") == 2, "гость по TCP вошёл в комнату локального хоста, слот 2");
+    string gId = gj.HasValue ? Protocol.Str(gj.Value, "playerId") : null;
+    var lpj = WaitFor(lh, Protocol.PlayerJoined, lbox);
+    Check(lpj.HasValue && Protocol.Str(lpj.Value, "playerId") == gId, "локальный хост получил PLAYER_JOINED");
+
+    // Ровно то, что раньше давали GetRawText и Utf8JsonWriter.WriteRawValue
+    string Expected(string type, string id, int slot, string key, string raw) =>
+        Protocol.Build(w => { w.WriteString("type", type); w.WriteString("playerId", id); w.WriteNumber("slot", slot); w.WritePropertyName(key); w.WriteRawValue(raw, true); });
+    var odd = "{ \"x\" : 1.50, \"name\":\"Тест \\\"кавычки\\\" \\u00e9 😀\", \"a\":[1, {\"b\":null}] }";
+    lh.SendState(odd);
+    var line = gr.ReadLine();
+    Check(line == Expected(Protocol.RemotePlayerState, lhId, 1, "state", odd), $"состояние хоста у гостя байт в байт как раньше: {line}");
+
+    SendLine(gs, "{\"type\":\"PLAYER_STATE\",\"state\":" + odd + "}");
+    var gsMsg = WaitFor(lh, Protocol.RemotePlayerState, lbox);
+    Check(gsMsg.HasValue && Protocol.Obj(gsMsg.Value, "state").GetRawText() == odd && Protocol.Num(gsMsg.Value, "slot") == 2, "состояние гостя у локального хоста без искажений");
+
+    SendLine(gs, "{\"state\":{\"x\":1},\"type\":\"PLAYER_STATE\",\"state\":{\"x\":2}}");
+    var dup = WaitFor(lh, Protocol.RemotePlayerState, lbox);
+    Check(dup.HasValue && Protocol.Obj(dup.Value, "state").GetRawText() == "{\"x\":2}", "повтор ключа: берётся последний, как у JsonElement");
+
+    lh.SendEvent("{\"kind\":\"heal\",\"to\":\"" + gId + "\"}");
+    var ev = ReadType(gr, Protocol.RemoteEvent);
+    Check(ev.HasValue && Protocol.Str(Protocol.Obj(ev.Value, "event"), "to") == gId, "событие хоста с to дошло до адресата");
+    lh.SendEvent("{\"kind\":\"heal\",\"to\":\"нет-такого\"}");
+    lh.SendEvent("{\"kind\":\"sos\"}");
+    var ev2 = ReadType(gr, Protocol.RemoteEvent);
+    Check(ev2.HasValue && Protocol.Str(Protocol.Obj(ev2.Value, "event"), "kind") == "sos", "событие другому адресату гостю не пришло, общее пришло");
+
+    SendLine(gs, "{\"type\":\"PLAYER_STATE\",\"state\":{\"x\":1}} мусор");
+    var bad = ReadType(gr, Protocol.Error);
+    Check(bad.HasValue && Protocol.Str(bad.Value, "code") == "invalid_json", "мусор после JSON: invalid_json, как раньше");
+    SendLine(gs, "{\"type\":\"PLAYER_STATE\",\"state\":5}");
+    var bad2 = ReadType(gr, Protocol.Error);
+    Check(bad2.HasValue && Protocol.Str(bad2.Value, "code") == "invalid_message", "state не объект: invalid_message, как раньше");
+
+    lh.Stop();
+    var hostLeft = ReadType(gr, Protocol.PlayerLeft);
+    Check(hostLeft.HasValue && Protocol.Str(hostLeft.Value, "playerId") == lhId, "локальный хост вышел — гость получил PLAYER_LEFT");
+    Check(!lh.Connected && ls.ConnectionCount == 1, $"после выхода хоста на сервере только гость ({ls.ConnectionCount})");
+    gt.Close(); ls.Stop();
+}
+
 server?.Stop();
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;

@@ -309,8 +309,8 @@ namespace MagicSurvivalCoop
             }
             _hosting = true;
             _server.AutoCreateRoom = false;   // Гость, успевший раньше хоста, ждёт комнату, а не занимает слот 1
-            // Хост создаёт комнату и получает слот 1, после обрыва возвращается в неё по коду
-            _client.Start("127.0.0.1", _hostPort, _myName, create: true, clientId: _clientId);
+            // Хост создаёт комнату и получает слот 1; со своим сервером он в одной игре, поэтому без сокета
+            _client.StartLocal(_server, _myName, _clientId);
             _hostNotice = _hostPort == Port
                 ? "Игра создана. Сообщите друзьям IP, отмеченный «← VPN»."
                 : $"Порт {Port} занят другой программой, игра создана на порту {_hostPort}. Друзья с портом {Port} найдут её сами.";

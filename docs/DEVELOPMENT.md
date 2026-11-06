@@ -182,8 +182,11 @@ JSON lines (UTF-8, one line is one message, at most 16 KB) over TCP, default por
 - **Server → client:** `WELCOME`, `ROOM_CREATED`, `ROOM_JOINED`, `PLAYER_JOINED`, `PLAYER_LEFT`, `REMOTE_PLAYER_STATE`,
   `REMOTE_EVENT`, `PONG`, `ERROR`.
 
-The host sends `CREATE_ROOM` and after a disconnect returns to its room with `JOIN_ROOM` and the room code. `JOIN_ROOM`
-with an empty code joins the room on the server; if there are no rooms, the standalone server creates one, while the
+The host in the game is connected to its own server without a socket (`CoopServer.ConnectLocal`,
+`CoopClient.StartLocal`), with the same room, slot and leaving logic, and sends `CREATE_ROOM`. A guest returns to the room
+after a disconnect with `JOIN_ROOM` and the room code. The server checks `PLAYER_STATE` and `EVENT` with `Utf8JsonReader`
+without a JSON tree and relays the original bytes of `state`/`event`: the replies on the wire are the same as before.
+`JOIN_ROOM` with an empty code joins the room on the server; if there are no rooms, the standalone server creates one, while the
 server inside the host's game answers `room_not_found` («Хост ещё не создал игру», the host hasn't created the game yet),
 and the client retries. If the port is closed, the client tries ports from the given one up to +4.
 
