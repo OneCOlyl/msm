@@ -58,7 +58,8 @@ python tools/coop_dbg.py 8771 "get mgr.Time_Sec" "ls hero Circle"
 - магии полигон выдаёт через `coop_cheat` (`Spell <id> <уровень>`), без чита эта команда не работает.
 
 Те же действия с ПК через консоль `coop_debug`: `call T:coop_lab:MagicSurvivalLab.Lab/Current.Spawn 6 10`, `.Status`,
-`.CoopStatus`. Сценарии проверок на двух телефонах — `tools/lab.py` (см. [DEVELOPMENT.ru.md](DEVELOPMENT.ru.md#полигон)).
+`.CoopStatus`. Для автоматики: `Buttons` (активные кнопки интерфейса: путь, место, доступность, текст), `Click <номер> <путь>`
+(нажатие, как касанием), `Pickups` (лежащие сундуки, торговец, обелиски), `GoTo <x> <y>` (герой в точку). Сценарии проверок на двух телефонах — `tools/lab.py` (см. [DEVELOPMENT.ru.md](DEVELOPMENT.ru.md#полигон)).
 
 ## Выпуск
 

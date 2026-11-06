@@ -20,6 +20,8 @@ document: [installation](INSTALL.md) and [connecting](CONNECT.md) are enough for
 |---|---|
 | `mod/coop/` | Mod sources. `Net/` is network code with no Unity dependencies (client, embedded server, protocol). |
 | `mod/coop_lab/`, `tools/lab.py` | Test arena: an in-battle «ПОЛИГОН» button (calm arena, any mobs, battle mechanics) and co-op check scenarios on two phones. Players don't need it. |
+| `tools/terra.py` | Two-player Terra autoplay: choice windows, chests, merchant, obelisks. |
+| `tools/phones.py` | Hands-free run on two USB phones: install the build from `dist/`, restart the game, connect, enter a battle, run `lab.py` scenarios, collect logs. |
 | `mod/coop_debug/`, `tools/coop_dbg.py` | Debug console: port 8770 on the phone, read and change game fields during a battle. Players don't need it. |
 | `mod/coop_cheat/` | Cheat: an in-battle «ЧИТ» button that gives levels of spells, traits, combinations, synergies and the hero. Players don't need it. The three developer mods are described in [TOOLS.md](TOOLS.md). |
 | `tools/release_notes.py` | Release description: changes from `.github/release_notes.md` since the last published release (called by the `release` workflow). |
@@ -67,6 +69,39 @@ REF=/path/to/ref bash build.sh
 CI fails on ruff and shellcheck findings.
 
 ## Testing on a phone
+
+With two phones on USB, ModKit and the MS_KIT libraries on both, and the host IP set in the guest's coop settings, one
+script does everything:
+
+```bash
+python tools/phones.py run --build                  # build, install, restart, connect, battle, lab.py mobs drop, logs
+python tools/phones.py run --no-deploy --lab "spells --spells 13,17"
+python tools/phones.py status                       # mod versions on the phones and coop state
+```
+
+Separate steps: `deploy`, `restart`, `connect`, `battle [--area N] [--loop]`, `logs`. The result is PASS/FAIL and the
+exit code; both phones' logs go to `dist/phones/<time>/`. The script:
+
+- installs an archive only when the phone has a different version: ModKit ignores an archive with the same version (a FAIL for `coop`);
+- removes `running.lock` after `am force-stop`, otherwise ModKit treats the restart as a crash and disables the mods;
+- enables `coop`, `coop_debug`, `coop_cheat`, `coop_lab` in `config.json` if they are off;
+- connects and enters the battle through the `coop_debug` console (`Host`, `Join`, `Button_AreaStart`), without screen taps;
+- after the checks, looks for Unity exceptions in logcat and errors in `modkit.log` since the last coop start.
+
+On Terra (`--area 14`) the battle stands still and enemies vanish until the special obelisk is picked up, so `lab.py`
+scenarios don't work there. Terra has an autoplay script:
+
+```bash
+python tools/terra.py --minutes 6        # restart, a two-player Terra battle, everything up to 6:00, logs in dist/terra/<time>/
+```
+
+The script presses window buttons through `coop_lab` (`Buttons`, `Click`), with no screen taps. Spell and attribute: the
+top card. Magic upgrade: the top-left magic first, then the next one to the right, row by row, in each following window.
+Chest: the first artifact. Merchant: the first item if there is enough mana (the game then enables Buy), then leave. The
+host steps onto obelisks (`Pickups`, `GoTo`), both players onto chests and the merchant. Nobody steers the heroes, so both
+get the arena's immortality. A window the script doesn't know is printed with its buttons and a screenshot.
+
+Manually:
 
 Install a fresh build over USB:
 
