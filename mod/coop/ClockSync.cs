@@ -19,6 +19,7 @@ namespace MagicSurvivalCoop
         {
             _hostClock = -1; _hostBossWave = 0; _hostClockAt = -100; _hostBwPrev = 0;
             _clockCheckAt = 0;
+            _clockSent = (-1, -1, -1, -1); _clockSentAt = -100;
             _hostObelisk = _hostObPrev = -1; _hostPicked = false; _bossHold = false; _clockColor = null;
             _treasureScanAt = 0; _treasureGone.Clear(); _hostHadBoss = false; _treasureRewards = 0;
         }
@@ -34,14 +35,23 @@ namespace MagicSurvivalCoop
             try { return Convert.ToInt32(GetAny(_battleMgr, "Battle_ClearWaveON") ?? 0) != 0 ? 1 : 0; } catch { return 0; }
         }
 
+        // Часы и босс-волна: при изменении и не реже раза в ClockSendSec, а не в каждом состоянии.
+        private const double ClockSendSec = 0.5;
+        private (int, int, int, int) _clockSent = (-1, -1, -1, -1);
+        private double _clockSentAt = -100;
+
         private void WriteClock(Utf8JsonWriter w)
         {
             int c = MyClock();
             if (c < 0) return;
+            int bw = MyBossWave(), ob = MyObelisk(), ac = MyAreaChange();
+            double now = Clock.Elapsed.TotalSeconds;
+            if ((c, bw, ob, ac).Equals(_clockSent) && now - _clockSentAt < ClockSendSec) return;
+            _clockSent = (c, bw, ob, ac); _clockSentAt = now;
             w.WriteNumber("tm", c);
-            w.WriteNumber("bw", MyBossWave());
-            int ob = MyObelisk(); if (ob >= 0) w.WriteNumber("ob", ob);
-            int ac = MyAreaChange(); if (ac >= 0) w.WriteNumber("ac", ac);
+            w.WriteNumber("bw", bw);
+            if (ob >= 0) w.WriteNumber("ob", ob);
+            if (ac >= 0) w.WriteNumber("ac", ac);
             if (_hosting) WriteBossGround(w);
         }
 

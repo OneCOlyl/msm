@@ -18,6 +18,10 @@ namespace MagicSurvivalCoop
         // Любое состояние может не дойти: SendState заменяет неотправленное новым.
         private const int LookSends = 3, LookPerSend = 8;
         private const double LookRefreshSec = 2, LookWaitSec = 1;
+        // Ближние к гостям враги идут в каждой отправке, дальние через раз; полный снимок раз в FullSnapshotSec.
+        // Погибших хост называет явно (eg) GoneSends отправок подряд: без полного снимка отсутствие врага ничего не значит.
+        private const double NearDist = 15, FullSnapshotSec = 1;
+        private const int GoneSends = 3;
         // Создание копии ~1 мс работы игры. Нужно ~20 копий/с, 2 за кадр догоняют волну за пару секунд без рывков
         private const int MaxPuppetSpawnsPerFrame = 2;
         private const double PuppetSpawnBudgetMs = 2.5;
@@ -67,6 +71,7 @@ namespace MagicSurvivalCoop
         private readonly HashSet<object> _puppetKeys = new HashSet<object>();
         private readonly Queue<object> _toDestroy = new Queue<object>();
         private readonly List<int> _gone = new List<int>();
+        private readonly HashSet<int> _goneIds = new HashSet<int>();
         private readonly Queue<(object obj, int type, float a, float b, int origin, double at)> _toForward = new Queue<(object, int, float, float, int, double)>();
         private readonly List<(int type, float a, float b, double x, double y, int origin, float[] stats)> _spawnOut = new List<(int, float, float, double, double, int, float[])>();
         private readonly HashSet<object> _forwardKeys = new HashSet<object>();          // Свои переходы гостя ждут, пока игра выставит им силу
@@ -144,6 +149,7 @@ namespace MagicSurvivalCoop
             _worldHost = null; _enSnap = 0; _enSnapAt = -100; _worldActive = false; _spawningPuppet = false; _justCreated = null;
             _wCreated = _wKilled = _wLocalDead = _wDestroyed = _wFails = _wMax = _wRespawned = _wSpecial = _wReused = 0;
             _enVars.Clear(); _enVarsNext.Clear();
+            _goneIds.Clear(); _goneLeft.Clear(); _enFullAt = -100; _enSendIdx = 0; _enSends = 0; _enSentSum = 0;
             _toForward.Clear(); _forwardKeys.Clear(); _spawnOut.Clear(); _sweptTypes.Clear();
             _held.Clear(); _heldKeys.Clear(); _heldNew.Clear(); _spawnSent = _spawnIn = _spawnInLogs = 0;
             _createMsMax = _createMsSum = _stepMsMax = 0; _createN = 0;
@@ -182,21 +188,18 @@ namespace MagicSurvivalCoop
                 _ctx.Log($"общие враги: отправляю своих врагов друзьям; мой враг — размер {GetMember(r0, "UnitApply_UnitSize")}, масштаб {GetMember(GetMember(r0, "transform"), "localScale")}, спрайт-масштаб {GetMember(GetMember(r0, "Transform_ObjUnitSprite"), "localScale")}");
             }
             double sx = _startX ?? 0, sy = _startY ?? 0;
-            bool nearest = alive.Count > MaxSentEnemies && OrderByGuests(alive, sx, sy);
+            bool full = now - _enFullAt >= FullSnapshotSec;
+            if (full) _enFullAt = now;
+            _enSendIdx++;
+            GuestPoints(sx, sy);
+            bool nearest = alive.Count > MaxSentEnemies && OrderByGuests(alive);
             int total = nearest ? _sendOrder.Count : alive.Count;
             int n = 0, lookBudget = LookPerSend;
             _enById.Clear();
-            w.WriteStartArray("en");
+            _sel.Clear();
             for (int i = 0; i < total; i++)
             {
                 var e = nearest ? alive[_sendOrder[i].i] : alive[i];
-                if (n >= MaxSentEnemies)
-                {
-                    // Номер сохраняем: иначе у гостя старая копия убьётся и создастся новая
-                    var k2 = KeyOf(e.Raw);
-                    if (k2 != null && _enIds.TryGetValue(k2, out var v2)) _enIdsNext[k2] = v2;
-                    continue;
-                }
                 var raw = e.Raw; var key = KeyOf(raw);
                 if (key == null) continue;
                 if (!_enIds.TryGetValue(key, out var v))
@@ -205,49 +208,99 @@ namespace MagicSurvivalCoop
                     try { type = Convert.ToInt32(GetMember(raw, "UnitID") ?? -1); } catch { }
                     v = (_enNextId++, type, 0);
                 }
+                // Урон гостя приходит и по врагам, которых в этой отправке нет
+                _enById[v.id] = e;
+                Vector3 pos;
+                double d;
+                if (nearest) (pos, d) = (_sendOrder[i].pos, _sendOrder[i].d);
+                else { try { pos = e.Pos; } catch { _enIdsNext[key] = v; KeepLook(key); continue; } d = GuestDistSq(pos); }
+                bool send = n < MaxSentEnemies && (full || d <= NearDist * NearDist || ((_enSendIdx + v.id) & 1) == 0);
+                if (!send) { _enIdsNext[key] = v; KeepLook(key); continue; }
+                bool withType = full || v.sends < 3;
                 if (v.sends < 3) { v.sends++; NoteVarsFromFields(raw, key); }  // Вид особого игра ставит после Start_Unit
                 _enIdsNext[key] = v;
-                _enById[v.id] = e;
-                var p = nearest ? _sendOrder[i].pos : e.Pos;
-                w.WriteStartArray();
-                w.WriteNumberValue(v.id); w.WriteNumberValue(v.type);
-                w.WriteNumberValue((int)Math.Round((p.x - sx) * 100)); w.WriteNumberValue((int)Math.Round((p.y - sy) * 100));
-                if (_enVars.TryGetValue(key, out var vars))
+                bool lookNow = false;
+                if (_enVars.TryGetValue(key, out var look))
                 {
-                    if (vars.Left > 0 || (now - vars.At >= LookRefreshSec && lookBudget-- > 0))
-                    {
-                        w.WriteNumberValue(vars.A); w.WriteNumberValue(vars.B); WriteLook(w, raw, vars.Origin);
-                        if (vars.Left > 0) vars.Left--;
-                        vars.At = now;
-                    }
-                    else w.WriteNumberValue(1);
-                    _enVarsNext[key] = vars;
+                    lookNow = look.Left > 0 || (now - look.At >= LookRefreshSec && lookBudget-- > 0);
+                    if (lookNow) { if (look.Left > 0) look.Left--; look.At = now; }
+                    _enVarsNext[key] = look;
                 }
-                w.WriteEndArray();
+                _sel.Add((v.id, v.type, (int)Math.Round((pos.x - sx) * 100), (int)Math.Round((pos.y - sy) * 100), withType, raw, look, lookNow));
                 n++;
             }
+            foreach (var kv in _enIds) if (!_enIdsNext.ContainsKey(kv.Key)) _goneLeft[kv.Value.id] = GoneSends;
+            if (full) w.WriteNumber("ef", 1);
+            w.WriteStartArray("en");
+            foreach (var t in _sel) { w.WriteNumberValue(t.id); w.WriteNumberValue(t.x); w.WriteNumberValue(t.y); }
             w.WriteEndArray();
+            bool any = false;
+            foreach (var t in _sel)
+                if (t.withType) { if (!any) { w.WriteStartArray("et"); any = true; } w.WriteNumberValue(t.id); w.WriteNumberValue(t.type); }
+            if (any) w.WriteEndArray();
+            any = false;
+            foreach (var t in _sel)
+                if (t.lookNow)
+                {
+                    if (!any) { w.WriteStartArray("el"); any = true; }
+                    w.WriteStartArray(); w.WriteNumberValue(t.id); w.WriteNumberValue(t.look.A); w.WriteNumberValue(t.look.B); WriteLook(w, t.raw, t.look.Origin); w.WriteEndArray();
+                }
+            if (any) w.WriteEndArray();
+            any = false;
+            foreach (var t in _sel)
+                if (t.look != null && !t.lookNow) { if (!any) { w.WriteStartArray("es"); any = true; } w.WriteNumberValue(t.id); }
+            if (any) w.WriteEndArray();
+            if (_goneLeft.Count > 0)
+            {
+                w.WriteStartArray("eg");
+                _goneTmp.Clear();
+                foreach (var kv in _goneLeft) { w.WriteNumberValue(kv.Key); _goneTmp.Add(kv.Key); }
+                w.WriteEndArray();
+                foreach (var id in _goneTmp) if (--_goneLeft[id] <= 0) _goneLeft.Remove(id);
+            }
             (_enIds, _enIdsNext) = (_enIdsNext, _enIds);
             _enIdsNext.Clear();
-            if (n < MaxSentEnemies) { (_enVars, _enVarsNext) = (_enVarsNext, _enVars); _enVarsNext.Clear(); }
+            (_enVars, _enVarsNext) = (_enVarsNext, _enVars);
+            _enVarsNext.Clear();
             if (n > _enSentMax) _enSentMax = n;
+            _enSentSum += n; _enSends++;
         }
+
+        private void KeepLook(object key) { if (_enVars.TryGetValue(key, out var l)) _enVarsNext[key] = l; }
 
         private readonly List<(int i, double d, Vector3 pos)> _sendOrder = new List<(int, double, Vector3)>();
         private readonly List<(double x, double y)> _guestPts = new List<(double, double)>();
-        private bool OrderByGuests(IReadOnlyList<IEnemy> alive, double sx, double sy)
+        private readonly List<(int id, int type, int x, int y, bool withType, object raw, LookVars look, bool lookNow)> _sel = new List<(int, int, int, int, bool, object, LookVars, bool)>();
+        private readonly Dictionary<int, int> _goneLeft = new Dictionary<int, int>();
+        private readonly List<int> _goneTmp = new List<int>();
+        private double _enFullAt = -100;
+        private int _enSendIdx, _enSends;
+        private long _enSentSum;
+
+        private void GuestPoints(double sx, double sy)
         {
             _guestPts.Clear();
             foreach (var p in _partners.Values) if (p.HasState && p.Battle) _guestPts.Add((sx + p.RelX, sy + p.RelY));
+        }
+
+        // Нет гостей с позицией — все враги ближние.
+        private double GuestDistSq(Vector3 pos)
+        {
+            if (_guestPts.Count == 0) return 0;
+            double d = double.MaxValue;
+            foreach (var g in _guestPts) { double dx = pos.x - g.x, dy = pos.y - g.y, dd = dx * dx + dy * dy; if (dd < d) d = dd; }
+            return d;
+        }
+
+        private bool OrderByGuests(IReadOnlyList<IEnemy> alive)
+        {
             if (_guestPts.Count == 0) return false;
             _sendOrder.Clear();
             for (int i = 0; i < alive.Count; i++)
             {
                 Vector3 pos;
                 try { pos = alive[i].Pos; } catch { continue; }
-                double d = double.MaxValue;
-                foreach (var g in _guestPts) { double dx = pos.x - g.x, dy = pos.y - g.y, dd = dx * dx + dy * dy; if (dd < d) d = dd; }
-                _sendOrder.Add((i, d, pos));
+                _sendOrder.Add((i, GuestDistSq(pos), pos));
             }
             _sendOrder.Sort((a, b) => a.d.CompareTo(b.d));
             return true;
@@ -255,39 +308,24 @@ namespace MagicSurvivalCoop
 
         private void ReadEnemies(Partner p, JsonElement s)
         {
-            if (_hosting || !WorldOn || !s.TryGetProperty("en", out var arr) || arr.ValueKind != JsonValueKind.Array) return;
+            if (_hosting || !WorldOn || !s.TryGetProperty("en", out var en) || en.ValueKind != JsonValueKind.Array) return;
             _worldHost = p;
             double st = Protocol.Num(s, "t", -1);
             _enSnap++; _enSnapAt = Clock.Elapsed.TotalSeconds;
-            foreach (var it in arr.EnumerateArray())
+            if (s.TryGetProperty("et", out var et) && et.ValueKind == JsonValueKind.Array)
+                for (int i = 0; i + 1 < et.GetArrayLength(); i += 2)
+                    if (et[i].TryGetInt32(out int id) && et[i + 1].TryGetInt32(out int type) && !_puppets.ContainsKey(id))
+                        _puppets[id] = new Puppet { Id = id, Type = type, FirstSeen = _enSnapAt };
+            if (s.TryGetProperty("es", out var es) && es.ValueKind == JsonValueKind.Array)
+                foreach (var it in es.EnumerateArray())
+                    if (it.TryGetInt32(out int id) && _puppets.TryGetValue(id, out var pp) && !pp.Special) pp.LookPending = true;
+            if (s.TryGetProperty("el", out var el) && el.ValueKind == JsonValueKind.Array)
+                foreach (var it in el.EnumerateArray()) ReadLook(it);
+            int len = en.GetArrayLength();
+            for (int i = 0; i + 2 < len; i += 3)
             {
-                if (it.ValueKind != JsonValueKind.Array || it.GetArrayLength() < 4) continue;
-                if (!it[0].TryGetInt32(out int id) || !it[1].TryGetInt32(out int type) || !it[2].TryGetInt32(out int x) || !it[3].TryGetInt32(out int y)) continue;
-                bool fresh = !_puppets.TryGetValue(id, out var pp);
-                if (fresh) { _puppets[id] = pp = new Puppet { Id = id, Type = type, FirstSeen = _enSnapAt }; }
-                if (it.GetArrayLength() == 5 && !pp.Special) pp.LookPending = true;
-                if (it.GetArrayLength() >= 6 && it[4].TryGetSingle(out float va) && it[5].TryGetSingle(out float vb))
-                {
-                    pp.LookPending = false;
-                    // Вид особого хост узнаёт после Start_Unit, поэтому изменившийся вид дообновляет готовую копию
-                    int cid = 0;
-                    if (it.GetArrayLength() >= 11) it[6].TryGetInt32(out cid);
-                    bool changed = !pp.Special || pp.VarA != va || pp.VarB != vb || pp.CreateId != cid;
-                    if (changed)
-                    {
-                        pp.VarA = va; pp.VarB = vb; pp.Special = true; pp.CreateId = cid;
-                        if (it.GetArrayLength() >= 11)
-                        {
-                            it[7].TryGetInt32(out pp.CreateEffect);
-                            it[8].TryGetSingle(out pp.LineR); it[9].TryGetSingle(out pp.LineG); it[10].TryGetSingle(out pp.LineB);
-                        }
-                        if (it.GetArrayLength() >= 13) { it[11].TryGetInt32(out pp.Origin); it[12].TryGetSingle(out pp.Size); }
-                        if (it.GetArrayLength() >= 15) { it[13].TryGetSingle(out pp.IconSize); pp.Back = it[14].TryGetInt32(out int bk) && bk != 0; }
-                        if (it.GetArrayLength() >= 18) { pp.BackColor = new float[3]; it[15].TryGetSingle(out pp.BackColor[0]); it[16].TryGetSingle(out pp.BackColor[1]); it[17].TryGetSingle(out pp.BackColor[2]); }
-                        if (pp.Origin < 0 || pp.Origin >= OriginNames.Length) pp.Origin = OriginNormal;
-                        if (!fresh && pp.Obj != null && !pp.LocalDead && _toUpgrade.Count < 40) _toUpgrade.Add(pp);
-                    }
-                }
+                if (!en[i].TryGetInt32(out int id) || !en[i + 1].TryGetInt32(out int x) || !en[i + 2].TryGetInt32(out int y)) continue;
+                if (!_puppets.TryGetValue(id, out var pp)) continue;      // Тип придёт в «et»: первые отправки и полный снимок
                 pp.Seen = _enSnap;
                 if (pp.Track.Count == 0 || st > pp.Track[pp.Track.Count - 1].t)
                 {
@@ -295,6 +333,36 @@ namespace MagicSurvivalCoop
                     if (pp.Track.Count > 4) pp.Track.RemoveAt(0);
                 }
             }
+            if (s.TryGetProperty("eg", out var eg) && eg.ValueKind == JsonValueKind.Array)
+                foreach (var it in eg.EnumerateArray()) if (it.TryGetInt32(out int id)) _goneIds.Add(id);
+            // Дальних хост шлёт через раз, поэтому «нет в снимке — погиб» верно только для полного снимка
+            if (Protocol.Bool(s, "ef"))
+                foreach (var pp in _puppets.Values) if (pp.Seen != _enSnap) _goneIds.Add(pp.Id);
+        }
+
+        // [id, varA, varB, UnitCreateID, эффект, r, g, b, origin, размер, метка, обводка, r, g, b] обводки
+        private void ReadLook(JsonElement it)
+        {
+            if (it.ValueKind != JsonValueKind.Array || it.GetArrayLength() < 3) return;
+            if (!it[0].TryGetInt32(out int id) || !_puppets.TryGetValue(id, out var pp)) return;
+            if (!it[1].TryGetSingle(out float va) || !it[2].TryGetSingle(out float vb)) return;
+            int n = it.GetArrayLength();
+            pp.LookPending = false;
+            // Вид особого хост узнаёт после Start_Unit, поэтому изменившийся вид дообновляет готовую копию
+            int cid = 0;
+            if (n >= 8) it[3].TryGetInt32(out cid);
+            if (pp.Special && pp.VarA == va && pp.VarB == vb && pp.CreateId == cid) return;
+            pp.VarA = va; pp.VarB = vb; pp.Special = true; pp.CreateId = cid;
+            if (n >= 8)
+            {
+                it[4].TryGetInt32(out pp.CreateEffect);
+                it[5].TryGetSingle(out pp.LineR); it[6].TryGetSingle(out pp.LineG); it[7].TryGetSingle(out pp.LineB);
+            }
+            if (n >= 10) { it[8].TryGetInt32(out pp.Origin); it[9].TryGetSingle(out pp.Size); }
+            if (n >= 12) { it[10].TryGetSingle(out pp.IconSize); pp.Back = it[11].TryGetInt32(out int bk) && bk != 0; }
+            if (n >= 15) { pp.BackColor = new float[3]; it[12].TryGetSingle(out pp.BackColor[0]); it[13].TryGetSingle(out pp.BackColor[1]); it[14].TryGetSingle(out pp.BackColor[2]); }
+            if (pp.Origin < 0 || pp.Origin >= OriginNames.Length) pp.Origin = OriginNormal;
+            if (pp.Obj != null && !pp.LocalDead && _toUpgrade.Count < 40) _toUpgrade.Add(pp);
         }
 
         private void OnEnemyStart(object self, object[] a)
@@ -542,6 +610,7 @@ namespace MagicSurvivalCoop
         private void ResendLooks()
         {
             foreach (var v in _enVars.Values) v.Left = LookSends;
+            _enFullAt = -100;                   // Типы врагов есть только в первых отправках и в полном снимке
         }
 
         private void SetLookVars(object key, float va, float vb, int origin)
@@ -683,7 +752,7 @@ namespace MagicSurvivalCoop
             _ctx.Mark("общие враги: перемещение копий");
             foreach (var pp in _puppets.Values)
             {
-                if (pp.Seen != _enSnap) { _gone.Add(pp.Id); continue; }
+                if (_goneIds.Contains(pp.Id)) { _gone.Add(pp.Id); continue; }
                 if (pp.LocalDead)
                 {
                     if (pp.DeadAt <= 0 || now - pp.DeadAt < 2) continue;
@@ -785,6 +854,7 @@ namespace MagicSurvivalCoop
             // Смерть врага делает игра (награда, эффекты), и пачка смертей за кадр давала кадр до 72 мс, поэтому убиваем по очереди.
             // Не созданные и уже погибшие копии в очередь не идут, иначе живые ждут за ними секундами
             foreach (var id in _gone) { var pp = _puppets[id]; _puppets.Remove(id); if (pp.Obj != null && !pp.LocalDead) _dying.Enqueue(pp); }
+            _goneIds.Clear();
             if (_dying.Count > 0)
             {
                 _ctx.Mark("общие враги: убиваю копии (враг погиб у хоста)");
@@ -1059,7 +1129,7 @@ namespace MagicSurvivalCoop
             if (rt >= last.t)
             {
                 var prev = tr[tr.Count - 2];
-                double dtl = last.t - prev.t, ex = Math.Min(rt - last.t, 0.2);
+                double dtl = last.t - prev.t, ex = Math.Min(rt - last.t, 0.3);
                 if (dtl <= 1e-4) { x = last.x; y = last.y; return true; }
                 x = last.x + (last.x - prev.x) / dtl * ex; y = last.y + (last.y - prev.y) / dtl * ex;
                 return true;
@@ -1434,12 +1504,12 @@ namespace MagicSurvivalCoop
             }
             RestoreSpawn();
             _ctx.Log($"общие враги: выключено ({why}); {WorldSummary()}");
-            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _toUpgrade.Clear(); _toForward.Clear(); _forwardKeys.Clear();
+            _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _toUpgrade.Clear(); _toForward.Clear(); _forwardKeys.Clear(); _goneIds.Clear();
             _worldActive = false; _worldHost = null; _away = _ownSpawn = false; _localKeys.Clear(); ResetGather();
         }
 
         private string WorldSummary() => _hosting
-            ? $"отправлено врагов за раз до {_enSentMax}; урон гостей нанесён {_dmgIn:0} (врагов уже не было: {_dmgInMiss}); врагов от действий гостей создано {_spawnIn}"
+            ? $"отправлено врагов за раз до {_enSentMax}, в среднем {(_enSends > 0 ? (double)_enSentSum / _enSends : 0):0}; урон гостей нанесён {_dmgIn:0} (врагов уже не было: {_dmgInMiss}); врагов от действий гостей создано {_spawnIn}"
             : $"копий создано {_wCreated} (особых {_wSpecial}, одновременно до {_wMax}), убито по хосту {_wKilled}, погибло у себя {_wLocalDead} (создано заново {_wRespawned}), убрано своих врагов {_wDestroyed}, объект у другой копии {_wReused}, переложено в пул боссов {_poolMoved}, урона отправлено хосту {_dmgSent:0}, своих врагов отправлено хосту {_spawnSent}; " +
               $"уходил от хоста {_awayTimes} раз, переносов к хосту на босса {_gatherTimes}, своих врагов вдали {_localSpawned}, сняты хвосты босс-волны {_onlyBossCleared}, перезапусков спавна {_spawnRestarts}; " +
               $"копий стали особыми позже {_wUpgraded}, свои переходы убраны со 2-й/3-й попытки {_forwardKillHow[1]}/{_forwardKillHow[2]}, своих убрано Unit_Disappear_Peace {_peaceRemoved}, своих особых/эпических убрано {_ownSpecialSwept}, своих переходов отправлено хосту {_ownTransitionSent}; " +
