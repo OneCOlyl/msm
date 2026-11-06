@@ -294,7 +294,12 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     var e6 = new FakeEnemy(A, 6); e6.Transform_ObjUnit.position = new Vector3((float)asx + 2, (float)asy + 1, 0);
     var e11 = new FakeEnemy(A, 11); e11.Transform_ObjUnit.position = new Vector3((float)asx - 4, (float)asy + 0.5f, 0);
     A.Combat.Enemies.AddRange(new IEnemy[] { e6, e11 });
+    var findAll = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session").GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static);
+    var walls = new GameObject { activeSelf = true }; walls.transform.gameObject = walls;
+    var wall = new GameObject(); wall.transform.parent = walls.transform;
+    findAll.SetValue(null, (Func<ModContext, string, List<object>>)((ctx, type) => type == "C_DestroyArea_A" && ctx == B.Ctx ? new List<object> { wall } : new List<object>()));
     Frames(60);
+    Check(!walls.activeSelf, "стены DestroyArea у героя гостя выключены: копии в них гибли бы");
     var pups = B.Combat.Enemies.OfType<FakeEnemy>().Where(e => e.Puppet).ToList();
     Check(own.DestroyedSimple && !B.Combat.Enemies.Contains(own), "свой враг гостя убран без награды (Unit_Destroy_Simple)");
     Check(bm.EnemyCreateNum == 0 && bm.EnemyCreateNum_Max == 0, "свой спавн гостя погашен (EnemyCreateNum = 0)");
@@ -472,6 +477,7 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
         B.Combat.Pos = new Vector3(home.x + 30, home.y, 0);
         Frames(10);
         Check((bool)B.Get("_away") && bm.EnemyCreateNum == 5 && bm.EnemyCreateNum_Max == 300, $"гость в 30 от хоста — свой спавн вернулся, как у игры сейчас: {bm.EnemyCreateNum}/{bm.EnemyCreateNum_Max}");
+        Check(walls.activeSelf, "и стены DestroyArea снова включены: они убирают его врагов");
         var mine = new FakeEnemy(B, 1); mine.Transform_ObjUnit.position = new Vector3(home.x + 38, home.y, 0); B.Combat.Enemies.Add(mine); mine.Fire();
         Frames(50);
         Check(!mine.DestroyedSimple && mine.Unit_IsLive && bm.EnemyCreateNum == 5, "враг игры гостя вдали не убран — идёт на гостя, спавн не гасится");
@@ -514,6 +520,7 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
         B.Combat.Pos = home;
         Frames(40);
         Check(!(bool)B.Get("_away") && bm.EnemyCreateNum == 0 && bm.EnemyCreateNum_Max == 0, "вернулся к хосту — свой спавн снова погашен");
+        Check(!walls.activeSelf, "и стены DestroyArea снова выключены");
         Check(!mine.DestroyedSimple && mine.Unit_IsLive, "враг, пришедший издалека, остаётся — гость добивает его сам");
         var near = new FakeEnemy(B, 1); B.Combat.Enemies.Add(near); near.Fire();
         Frames(5);
@@ -523,6 +530,8 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     B.Ctx.Set["world"] = 0;
     Frames(10);
     Check(!B.Combat.Enemies.OfType<FakeEnemy>().Any(e => e.Puppet && e.Unit_IsLive), "общие враги выключены — копии убраны");
+    Check(walls.activeSelf, "и стены DestroyArea включены");
+    findAll.SetValue(null, null);
     Check(bm.EnemyCreateNum == 5 && bm.EnemyCreateNum_Max == 300, $"и свой спавн гостя вернулся — как у игры на последней волне: {bm.EnemyCreateNum}/{bm.EnemyCreateNum_Min}/{bm.EnemyCreateNum_Max}");
     A.Ctx.Set["world"] = 0; A.Combat.Enemies.Clear(); B.Combat.Enemies.Clear();
 }

@@ -161,7 +161,7 @@ namespace MagicSurvivalCoop
             _toForward.Clear(); _forwardKeys.Clear(); _spawnOut.Clear(); _sweptTypes.Clear();
             _held.Clear(); _heldKeys.Clear(); _heldNew.Clear(); _spawnSent = _spawnIn = _spawnInLogs = 0;
             _createMsMax = _createMsSum = _stepMsMax = 0; _createN = 0;
-            _poolLogged = false; _poolMoved = 0; _bossPoolEst = -1;
+            _poolLogged = false; _poolMoved = 0; _bossPoolEst = -1; _destroyArea = null; _destroyAreaOff = false; _destroyAreaFindAt = 0;
             ResetGather(); _gatherTimes = 0;
             _away = _ownSpawn = false; _localKeys.Clear(); _awayTimes = _localSpawned = _onlyBossCleared = _spawnRestarts = 0; _spawnStopped = false; _spawnRestartAt = 0;
             _spawnOrigin = OriginNormal; _ownSpecialSwept = _ownTransitionSent = _wUpgraded = _trLogs = _peaceRemoved = 0; _destroyTried.Clear(); _commonChecks = 0; _hostMarked.Clear(); _hostMarkedLast.Clear(); _forwardKill.Clear(); Array.Clear(_forwardKillHow, 0, _forwardKillHow.Length); _toUpgrade.Clear();
@@ -704,6 +704,7 @@ namespace MagicSurvivalCoop
                 _sweepAt = now + 0.5;
                 _ctx.Mark("общие враги: гашу свой спавн и скорость копий");
                 if (!_ownSpawn) SuppressSpawn(mgr);
+                DestroyAreas(!_ownSpawn, now);
                 bool noBoss = MyBossWave() == 0 && _hostBossWave == 0;
                 if (noBoss) ClearBossLeftovers(mgr);
                 if (_away && _ownSpawn) RestartOwnSpawn(mgr, now);
@@ -970,6 +971,7 @@ namespace MagicSurvivalCoop
                 _ctx.Log(own ? "общие враги: босс-волна кончилась — вдали от хоста свой спавн включён" : "общие враги: босс-волна — свой спавн погашен до её конца");
             if (own == _ownSpawn) return;
             _ownSpawn = own;
+            DestroyAreas(!own, Clock.Elapsed.TotalSeconds);
             if (own) RestoreSpawn();
             else _sweepAt = 0;                                              // Погасить спавн в этом же кадре
         }
@@ -1520,6 +1522,36 @@ namespace MagicSurvivalCoop
         private readonly HashSet<object> _destroyTried = new HashSet<object>();
         private int _peaceRemoved;
 
+        // Стены DestroyArea идут за героем (C_DestroyArea_A в 13,5 ед. по горизонтали и 14,65 по вертикали, _B в 35) и убирают
+        // любого врага, вошедшего в них. Копия стоит там, где враг у хоста, и у гостя в стороне от хоста гибла в стене, а через
+        // 2 с создавалась снова. Пока свой спавн гостя погашен, своих врагов, которых убирали бы стены, у него нет
+        private object _destroyArea;
+        private bool _destroyAreaOff;
+        private double _destroyAreaFindAt;
+
+        private void DestroyAreas(bool off, double now)
+        {
+            if (off)
+            {
+                // Ещё не искали или объект уничтожен с прошлым боем. В тестах объекты не из IL2CPP, адреса у них нет
+                if (_destroyArea == null || (PtrOf(_destroyArea) != IntPtr.Zero && LivePtr(_destroyArea) == IntPtr.Zero))
+                {
+                    if (now < _destroyAreaFindAt) return;
+                    _destroyAreaFindAt = now + 10;                      // Поиск идёт по всей сцене
+                    var wall = FindAllOfType("C_DestroyArea_A").FirstOrDefault();
+                    _destroyArea = GetMember(GetMember(GetMember(wall, "transform"), "parent"), "gameObject");
+                    _destroyAreaOff = false;
+                    if (_destroyArea == null) return;
+                }
+                if (_destroyAreaOff) return;
+            }
+            else if (!_destroyAreaOff || _destroyArea == null) return;
+            try { SetActive(_destroyArea, !off); _destroyAreaOff = off; }
+            catch (Exception e) { if (++_wFails <= 5) _ctx.Log("общие враги: стены DestroyArea: " + Inner(e).Message); }
+            if (off && !_destroyAreaLogged) { _destroyAreaLogged = true; _ctx.Log($"общие враги: стены «{NameOf(_destroyArea)}» у героя выключены, пока свой спавн погашен (копии в них гибли)"); }
+        }
+        private bool _destroyAreaLogged;
+
         private void StopWorld(string why, bool touchObjects = true)
         {
             _ctx.Mark("общие враги: выключение — уборка копий, возврат спавна");
@@ -1529,6 +1561,7 @@ namespace MagicSurvivalCoop
                 foreach (var pp in _puppets.Values.Concat(_dying)) if (pp.Obj != null && !pp.LocalDead) DestroySimple(pp.Obj, own: false);
                 ReleaseHeld();
             }
+            if (touchObjects) DestroyAreas(false, 0);
             RestoreSpawn();
             _ctx.Log($"общие враги: выключено ({why}); {WorldSummary()}");
             _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _toUpgrade.Clear(); _toForward.Clear(); _forwardKeys.Clear(); _goneIds.Clear();

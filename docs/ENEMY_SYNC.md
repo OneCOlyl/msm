@@ -126,6 +126,13 @@ within 0.15–0.5 s (about 0.33 s at 7 sends a second), so a far enemy sent ever
 shown moment. A copy keeps 6 points and moves past the last one for at most 0.1 s, then stands. With the ally's delay
 (about 0.12 s, by the host's state rate) the shown moment overtook the last point, the copy extrapolated up to 0.45 s,
 and the next point pulled it back.
+Copies dying at the guest «on their own»: the hero carries the `DestroyArea` object with 8 walls: `C_DestroyArea_A` at
+±13.5 horizontally and ±14.65 vertically, `C_DestroyArea_B` at ±35. A wall's `OnCollisionEnter` removes any object whose
+name is a number above 9999, that is, any enemy (`Unit_Destroy_Simple` and `Unit_Destroy_Simple_All`). A copy stands
+where the enemy is at the host, so at a guest standing apart from the host it died in a wall and was created again
+2 s later (the `lab.py mobs` check for type 16, spawned 12 units to the side, failed this way now and then). While the
+guest's own spawn is off, the mod turns `DestroyArea` off; when the guest goes away from the host and gets their own
+spawn back, and when shared enemies stop, the walls come back.
 An epic mob (type 6 in the test) is field-wise a normal mob of its type (`UnitCreateID 1`, no outline, varA/varB 0): it is
 special because it spawns in a batch on a circle; the copy at the guest is a normal copy of that type.
 1.6.67: the game also sets a transition mob's strength after `Start_Unit` (type 16: `UnitApply_HpMax_Bonus` 10000,
