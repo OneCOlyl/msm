@@ -399,6 +399,8 @@ namespace MagicSurvivalCoop
                                 }
                             foreach (var gone in _partners.Keys.Where(k => !seen.Contains(k)).ToList()) RemovePartner(gone);
                             _ctx.Log($"в комнате {_roomCode}: слот {_mySlot}, друзей {_partners.Count}");
+                            ResendAll();
+                            if (!_hosting) _client.SendEvent(Protocol.Build(w => w.WriteString("kind", "full")));
                             if (_hostNotice != null)
                             {
                                 _notice = _hostNotice; _hostNotice = null;
@@ -414,6 +416,7 @@ namespace MagicSurvivalCoop
                             p.Name = Protocol.Str(m, "name", p.Name);
                             p.Slot = (int)Protocol.Num(m, "slot", p.Slot);
                             _ctx.Toast($"{p.Name} присоединился", 3);
+                            ResendAll();
                             _nextSend = 0;
                         }
                         break;
@@ -481,9 +484,13 @@ namespace MagicSurvivalCoop
             try { DestroyOrbVisuals(p); } catch { }
         }
 
+        // Для тестов на ПК: потеря состояний по дороге.
+        internal static Func<object, JsonElement, bool> DropStateOverride;
+
         private void ApplyState(Partner p, JsonElement m)
         {
             var s = Protocol.Obj(m, "state");
+            if (DropStateOverride != null && DropStateOverride(this, s)) return;
             if (s.ValueKind != JsonValueKind.Object) return;
             if (m.TryGetProperty("slot", out _)) p.Slot = (int)Protocol.Num(m, "slot", p.Slot);
             if (s.TryGetProperty("name", out _)) p.Name = Protocol.CleanName(Protocol.Str(s, "name", p.Name));
@@ -494,8 +501,9 @@ namespace MagicSurvivalCoop
             p.Dead = Protocol.Bool(s, "dead");
             p.X = Protocol.Num(s, "x"); p.Y = Protocol.Num(s, "y");
             p.Sx = Protocol.Num(s, "sx", p.X); p.Sy = Protocol.Num(s, "sy", p.Y);
-            p.Hp = Protocol.Num(s, "hp"); p.HpMax = Math.Max(1, Protocol.Num(s, "hpMax", 1));
-            p.Kills = Protocol.Num(s, "kills");
+            p.Hp = Protocol.Num(s, "hp");
+            if (s.TryGetProperty("hpMax", out _)) p.HpMax = Math.Max(1, Protocol.Num(s, "hpMax", 1));
+            if (s.TryGetProperty("kills", out _)) p.Kills = Protocol.Num(s, "kills");
             p.Spell = (int)Protocol.Num(s, "spell");
             if (Protocol.Bool(s, "mirror")) p.Mirror = true;
             p.WorldGuest = Protocol.Bool(s, "wg");
@@ -580,6 +588,9 @@ namespace MagicSurvivalCoop
                     break;
                 case "chestOk":
                     OnChestGranted(e);
+                    break;
+                case "full":
+                    ResendAll();
                     break;
             }
         }
@@ -670,10 +681,18 @@ namespace MagicSurvivalCoop
             }
 
             if (_inRun) RefreshMyOrbits();
+            var lobby = LobbyNow();
+            var rare = (_myName, Math.Round(hpMax), lobby);
+            if (!rare.Equals(_rareSent)) { _rareSent = rare; _rareLeft = RareSends; }
+            bool writeRare = _rareLeft > 0 || nowS - _rareAt >= RareRefreshSec;
+            if (writeRare) { if (_rareLeft > 0) _rareLeft--; _rareAt = nowS; }
+            if (_kills != _killsSent) { _killsSent = _kills; _killsLeft = RareSends; }
+            bool writeKills = writeRare || _killsLeft > 0;
+            if (_killsLeft > 0) _killsLeft--;
             _send.Lap(1);
             _client.SendState(Protocol.Build(w =>
             {
-                w.WriteString("name", _myName);
+                if (writeRare) w.WriteString("name", _myName);
                 w.WriteNumber("run", _inRun ? 1 : 0);
                 w.WriteNumber("battle", battle ? 1 : 0);
                 w.WriteNumber("paused", _spells.Paused ? 1 : 0);
@@ -683,8 +702,8 @@ namespace MagicSurvivalCoop
                 w.WriteNumber("sx", Math.Round(_startX ?? _lastX, 3));
                 w.WriteNumber("sy", Math.Round(_startY ?? _lastY, 3));
                 w.WriteNumber("hp", Math.Round(hp));
-                w.WriteNumber("hpMax", Math.Round(hpMax));
-                w.WriteNumber("kills", _kills);
+                if (writeRare) w.WriteNumber("hpMax", Math.Round(hpMax));
+                if (writeKills) w.WriteNumber("kills", _kills);
                 w.WriteNumber("spell", spell);
                 if (_magicHooked) w.WriteNumber("mirror", 1);   // Наш союзник у друзей не стреляет сам, а повторяет нашу магию
                 if (_inRun) WriteMyOrbits(w);
@@ -697,11 +716,26 @@ namespace MagicSurvivalCoop
                 _send.Lap(3);
                 if (_inRun && OwnPause()) w.WriteNumber("op", 1);
                 if (_inRun && _hosting) WriteChests(w);
-                WriteLobby(w);
+                if (writeRare) WriteLobby(w, lobby);
                 w.WriteNumber("t", Math.Round(Clock.Elapsed.TotalSeconds, 4));   // Время снятия позиции для интерполяции у друзей
             }));
             _send.Lap(4);
             _send.Count++;
+        }
+
+        // Имя, здоровье максимум, убийства и лобби меняются редко: при изменении RareSends отправок подряд, иначе раз в RareRefreshSec.
+        private const int RareSends = 3;
+        private const double RareRefreshSec = 2;
+        private int _rareLeft = RareSends;
+        private double _rareAt = -100;
+        private (string, double, (int, int, int, int, bool, bool)) _rareSent;
+        private int _killsLeft, _killsSent = -1;
+
+        // Новый игрок или переподключение: получатель мог не знать ни редких полей, ни вида врагов.
+        private void ResendAll()
+        {
+            _rareLeft = RareSends;
+            if (_hosting) ResendLooks();
         }
 
         private void UpdateGhosts()

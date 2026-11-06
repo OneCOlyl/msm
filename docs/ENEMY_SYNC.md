@@ -111,6 +111,12 @@ the guest), to compare the look.
 these fields in the first three sends of an enemy, and the guest, if an enemy record became special later, repeats
 `Start_Unit` on the copy with the special kind. Previously most transition mobs were lost this way (log 1.6.17: of the
 host's 128 special mobs with varA 1, 15 were sent).
+Since the version after 1.7.8 a special enemy's look (varA, varB and 12 look fields) is not in every send: in the first
+three sends after it appears or changes, then once every 2 s, a few enemies per send. Without the look the enemy is
+`[id, type, x, y, 1]`; a normal enemy is still `[id, type, x, y]`. The guest waits up to 1 s for the look of a new copy,
+then creates it with the default look and updates it when the look arrives. After a new player joins or anyone
+reconnects (the guest sends the `full` event) the host sends the look of all enemies again. The name, max HP, kills and
+the lobby fields go the same way: three sends after a change, otherwise once every 2 s.
 An epic mob (type 6 in the test) is field-wise a normal mob of its type (`UnitCreateID 1`, no outline, varA/varB 0): it is
 special because it spawns in a batch on a circle; the copy at the guest is a normal copy of that type.
 1.6.67: the game also sets a transition mob's strength after `Start_Unit` (type 16: `UnitApply_HpMax_Bonus` 10000,

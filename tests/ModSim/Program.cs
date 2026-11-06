@@ -341,6 +341,52 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     Check(bc != null && bc.VarA == 1, $"копия усиленного моба создана с varA 1 (Start_Unit как у игры): {bc?.VarA}");
     Check(bc != null && bc.UnitCreateID == 3 && bc.ApplyCreateEffectID == 1 && Math.Abs(bc.LineColorR - 0.95f) < 0.01f,
           $"и как «переход» с красной обводкой: создание {bc?.UnitCreateID}, обводка {bc?.LineColorR}");
+    {
+        var dropField = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session").GetField("DropStateOverride", BindingFlags.NonPublic | BindingFlags.Static);
+        int states = 0;
+        // Пулы игры общие на весь ModSim и к этому месту почти пусты: свои на время проверки
+        var (savedBoss, savedCommon) = (FakeManager.List_BattleUnitEnemyBoss_Empty, FakeManager.List_BattleUnitEnemy_Empty);
+        FakeManager.List_BattleUnitEnemyBoss_Empty = Enumerable.Range(0, 3).Select(_ => new object()).ToList();
+        FakeManager.List_BattleUnitEnemy_Empty = Enumerable.Range(0, 60).Select(_ => new object()).ToList();
+        dropField.SetValue(null, (Func<object, System.Text.Json.JsonElement, bool>)((s, st) => s == B.Session && st.TryGetProperty("en", out _) && states++ % 2 == 1));
+        var marked = new List<FakeEnemy>();
+        for (int i = 0; i < 6; i++)
+        {
+            var m = new FakeEnemy(A, 21) { UnitCreateID = 3, ApplyCreateEffectID = 1, LineColorR = 0.9f };
+            m.Transform_ObjUnit.position = new Vector3((float)asx + 1 + i, (float)asy - 2, 0);
+            A.Combat.Enemies.Add(m); m.Fire(1, 0); marked.Add(m);
+        }
+        List<FakeEnemy> Copies() => B.Combat.Enemies.OfType<FakeEnemy>().Where(e => e.Puppet && e.Unit_IsLive && e.UnitID == 21).ToList();
+        bool AllLooked() { var c = Copies(); return c.Count == 6 && c.All(e => e.UnitCreateID == 3 && e.VarA == 1); }
+        string Seen() { var c = Copies(); return $"копий {c.Count}, с видом {c.Count(e => e.UnitCreateID == 3 && e.VarA == 1)}"; }
+        var lw = System.Diagnostics.Stopwatch.StartNew();
+        var bare = new Dictionary<FakeEnemy, double>();
+        double worstBare = 0;
+        while (lw.Elapsed.TotalSeconds < 6 && !AllLooked())
+        {
+            Frames(1);
+            foreach (var c in Copies().Where(e => e.UnitCreateID != 3 || e.VarA != 1))
+            {
+                if (!bare.ContainsKey(c)) bare[c] = lw.Elapsed.TotalSeconds;
+                worstBare = Math.Max(worstBare, lw.Elapsed.TotalSeconds - bare[c]);
+            }
+        }
+        Check(AllLooked() && worstBare < 2, $"5.1: каждое второе состояние с врагами теряется — все 6 копий особых мобов с видом, без вида копия была не дольше {worstBare:0.0} с (нужно < 2 с): {Seen()}, states {states}");
+        dropField.SetValue(null, null);
+        // Сразу после свежего вида: иначе вид пришёл бы обновлением раз в 2 с и без повторной рассылки
+        B.Call("Join");
+        bool AnyCopy() => B.Combat.Enemies.OfType<FakeEnemy>().Any(e => e.Puppet && e.Unit_IsLive && e.UnitID == 21);
+        lw.Restart();
+        while (lw.Elapsed.TotalSeconds < 6 && AnyCopy()) Frames(1);
+        Check(!AnyCopy(), $"5.1: гость переподключается — старые копии убраны ({lw.Elapsed.TotalSeconds:0.0} с)");
+        while (lw.Elapsed.TotalSeconds < 10 && !AnyCopy()) Frames(1);
+        var back = System.Diagnostics.Stopwatch.StartNew();
+        while (back.Elapsed.TotalSeconds < 4 && !AllLooked()) Frames(1);
+        Check(AllLooked() && back.Elapsed.TotalSeconds < 0.9, $"5.1: после переподключения вид всех копий пришёл за {back.Elapsed.TotalSeconds:0.0} с от первой копии, без ожидания 1 с и обновления раз в 2 с: {Seen()}");
+        foreach (var m in marked) A.Combat.Enemies.Remove(m);
+        Frames(30);
+        (FakeManager.List_BattleUnitEnemyBoss_Empty, FakeManager.List_BattleUnitEnemy_Empty) = (savedBoss, savedCommon);
+    }
     Check(FakeManager.List_BattleUnitEnemy_Empty.Count < 30, $"пул боссов кончился — пополнен из обычного пула (статического; там осталось {FakeManager.List_BattleUnitEnemy_Empty.Count})");
     am.Time_Min = 2; am.Time_Sec = 30; am.EnemyLevelNum = 150; am.EnemyWaveID = 5;
     bm.Time_Min = 2; bm.Time_Sec = 21; bm.EnemyLevelNum = 141; bm.EnemyWaveID = 4;   // у гостя была своя пауза — отстал

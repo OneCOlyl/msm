@@ -42,28 +42,37 @@ namespace MagicSurvivalCoop
         private Partner LobbyHost() => _hosting ? null
             : _partners.Values.FirstOrDefault(p => p.LobbyArea >= 0 && p.HasState && _clockMs - p.StateAt < 3000);
 
-        private void WriteLobby(System.Text.Json.Utf8JsonWriter w)
+        private (int area, int level, int loop, int button, bool chests, bool ready) LobbyNow()
         {
-            if (_hosting)
-            {
-                int area = DbInt("Game_AreaID");
-                if (area < 0) return;
-                w.WriteNumber("la", area);
-                w.WriteNumber("ll", DbInt("Game_AreaLevel"));
-                w.WriteNumber("lp", DbInt("Game_BattleLoopON"));
-                if (_startButton >= 0) w.WriteNumber("lb", _startButton);
-                if (ChestsOn) w.WriteNumber("chs", 1);
-            }
-            else if (!_inRun && _onAreaScreen && LobbyHost() != null) w.WriteNumber("rdy", 1);
+            if (!_hosting) return (-1, 0, -1, -1, false, !_inRun && _onAreaScreen && LobbyHost() != null);
+            int area = DbInt("Game_AreaID");
+            if (area < 0) return (-1, 0, -1, -1, false, false);
+            return (area, DbInt("Game_AreaLevel"), DbInt("Game_BattleLoopON"), _startButton, ChestsOn, false);
+        }
+
+        // Лобби уходит не в каждом состоянии, поэтому «la» есть всегда, когда пишет хост, а «rdy», когда гость.
+        private void WriteLobby(System.Text.Json.Utf8JsonWriter w, (int area, int level, int loop, int button, bool chests, bool ready) l)
+        {
+            if (!_hosting) { w.WriteNumber("rdy", l.ready ? 1 : 0); return; }
+            w.WriteNumber("la", l.area);
+            if (l.area < 0) return;
+            w.WriteNumber("ll", l.level);
+            w.WriteNumber("lp", l.loop);
+            if (l.button >= 0) w.WriteNumber("lb", l.button);
+            if (l.chests) w.WriteNumber("chs", 1);
         }
 
         private void ReadLobby(Partner p, System.Text.Json.JsonElement s)
         {
-            p.LobbyArea = (int)Net.Protocol.Num(s, "la", -1);
-            p.LobbyLevel = (int)Net.Protocol.Num(s, "ll", 0);
-            p.LobbyLoop = (int)Net.Protocol.Num(s, "lp", -1);
-            p.LobbyButton = (int)Net.Protocol.Num(s, "lb", -1);
-            p.LobbyChests = Net.Protocol.Bool(s, "chs");
+            if (s.TryGetProperty("la", out _))
+            {
+                p.LobbyArea = (int)Net.Protocol.Num(s, "la", -1);
+                p.LobbyLevel = (int)Net.Protocol.Num(s, "ll", 0);
+                p.LobbyLoop = (int)Net.Protocol.Num(s, "lp", -1);
+                p.LobbyButton = (int)Net.Protocol.Num(s, "lb", -1);
+                p.LobbyChests = Net.Protocol.Bool(s, "chs");
+            }
+            if (!s.TryGetProperty("rdy", out _)) return;
             bool was = p.Ready;
             p.Ready = Net.Protocol.Bool(s, "rdy");
             if (_hosting && p.Ready && !was) _ctx.Toast($"{p.Name} готов к бою", 2);

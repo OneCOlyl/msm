@@ -14,6 +14,10 @@ namespace MagicSurvivalCoop
     {
         private const int MaxSentEnemies = 250;          // ~20 байт на врага: строка состояния остаётся меньше 16 КБ
         private const double EnemySendInterval = 0.09;
+        // Вид особого врага: первые LookSends отправок, затем раз в LookRefreshSec по LookPerSend за отправку.
+        // Любое состояние может не дойти: SendState заменяет неотправленное новым.
+        private const int LookSends = 3, LookPerSend = 8;
+        private const double LookRefreshSec = 2, LookWaitSec = 1;
         // Создание копии ~1 мс работы игры. Нужно ~20 копий/с, 2 за кадр догоняют волну за пару секунд без рывков
         private const int MaxPuppetSpawnsPerFrame = 2;
         private const double PuppetSpawnBudgetMs = 2.5;
@@ -53,6 +57,8 @@ namespace MagicSurvivalCoop
             public Transform Tr;
             public bool LocalDead;
             public bool Placed;
+            public bool LookPending;
+            public double FirstSeen;
             public double DeadAt;                          // Через 2 с после гибели у гостя создаём заново, если враг жив у хоста
             public readonly List<(double t, double x, double y)> Track = new List<(double, double, double)>();
         }
@@ -178,7 +184,7 @@ namespace MagicSurvivalCoop
             double sx = _startX ?? 0, sy = _startY ?? 0;
             bool nearest = alive.Count > MaxSentEnemies && OrderByGuests(alive, sx, sy);
             int total = nearest ? _sendOrder.Count : alive.Count;
-            int n = 0;
+            int n = 0, lookBudget = LookPerSend;
             _enById.Clear();
             w.WriteStartArray("en");
             for (int i = 0; i < total; i++)
@@ -206,7 +212,17 @@ namespace MagicSurvivalCoop
                 w.WriteStartArray();
                 w.WriteNumberValue(v.id); w.WriteNumberValue(v.type);
                 w.WriteNumberValue((int)Math.Round((p.x - sx) * 100)); w.WriteNumberValue((int)Math.Round((p.y - sy) * 100));
-                if (_enVars.TryGetValue(key, out var vars)) { w.WriteNumberValue(vars.a); w.WriteNumberValue(vars.b); WriteLook(w, raw, vars.origin); _enVarsNext[key] = vars; }
+                if (_enVars.TryGetValue(key, out var vars))
+                {
+                    if (vars.Left > 0 || (now - vars.At >= LookRefreshSec && lookBudget-- > 0))
+                    {
+                        w.WriteNumberValue(vars.A); w.WriteNumberValue(vars.B); WriteLook(w, raw, vars.Origin);
+                        if (vars.Left > 0) vars.Left--;
+                        vars.At = now;
+                    }
+                    else w.WriteNumberValue(1);
+                    _enVarsNext[key] = vars;
+                }
                 w.WriteEndArray();
                 n++;
             }
@@ -248,9 +264,11 @@ namespace MagicSurvivalCoop
                 if (it.ValueKind != JsonValueKind.Array || it.GetArrayLength() < 4) continue;
                 if (!it[0].TryGetInt32(out int id) || !it[1].TryGetInt32(out int type) || !it[2].TryGetInt32(out int x) || !it[3].TryGetInt32(out int y)) continue;
                 bool fresh = !_puppets.TryGetValue(id, out var pp);
-                if (fresh) { _puppets[id] = pp = new Puppet { Id = id, Type = type }; }
+                if (fresh) { _puppets[id] = pp = new Puppet { Id = id, Type = type, FirstSeen = _enSnapAt }; }
+                if (it.GetArrayLength() == 5 && !pp.Special) pp.LookPending = true;
                 if (it.GetArrayLength() >= 6 && it[4].TryGetSingle(out float va) && it[5].TryGetSingle(out float vb))
                 {
+                    pp.LookPending = false;
                     // Вид особого хост узнаёт после Start_Unit, поэтому изменившийся вид дообновляет готовую копию
                     int cid = 0;
                     if (it.GetArrayLength() >= 11) it[6].TryGetInt32(out cid);
@@ -512,7 +530,25 @@ namespace MagicSurvivalCoop
         }
 
         // Аргументы Start_Unit особых врагов: копии создаются с ними же, иначе это обычные мобы того же типа
-        private Dictionary<object, (float a, float b, int origin)> _enVars = new Dictionary<object, (float, float, int)>(), _enVarsNext = new Dictionary<object, (float, float, int)>();
+        private sealed class LookVars
+        {
+            public float A, B;
+            public int Origin, Left = LookSends;
+            public double At = -100;
+        }
+        private Dictionary<object, LookVars> _enVars = new Dictionary<object, LookVars>(), _enVarsNext = new Dictionary<object, LookVars>();
+
+        // Новый игрок или переподключение: копии у получателя могли остаться без вида.
+        private void ResendLooks()
+        {
+            foreach (var v in _enVars.Values) v.Left = LookSends;
+        }
+
+        private void SetLookVars(object key, float va, float vb, int origin)
+        {
+            if (_enVars.TryGetValue(key, out var v) && v.A == va && v.B == vb && v.Origin == origin) return;
+            _enVars[key] = new LookVars { A = va, B = vb, Origin = origin };
+        }
         private void NoteHostVars(object self, object[] a, int origin)
         {
             float va = 0, vb = 0;
@@ -522,7 +558,7 @@ namespace MagicSurvivalCoop
             int cid = 1;
             try { cid = Convert.ToInt32(GetMember(self, "UnitCreateID") ?? 1); } catch { }
             // Пул переиспользует объекты, поэтому обычный враг стирает запись
-            if (va != 0 || vb != 0 || cid == 3 || origin != OriginNormal) _enVars[key] = (va, vb, origin); else _enVars.Remove(key);
+            if (va != 0 || vb != 0 || cid == 3 || origin != OriginNormal) SetLookVars(key, va, vb, origin); else _enVars.Remove(key);
         }
 
         // Переход игра создаёт Start_Unit(тип, 0, 0) и только потом ставит Unit_SpecialVarA и UnitCreateID 3.
@@ -533,10 +569,10 @@ namespace MagicSurvivalCoop
             catch { return; }
             if (va == 0 && vb == 0 && cid != 3) return;
             bool had = _enVars.TryGetValue(key, out var old);
-            if (had) { if (va == 0) va = old.a; if (vb == 0) vb = old.b; }       // Поля только дополняют то, что знал хук
-            int origin = had ? old.origin : OriginNormal;
+            if (had) { if (va == 0) va = old.A; if (vb == 0) vb = old.B; }       // Поля только дополняют то, что знал хук
+            int origin = had ? old.Origin : OriginNormal;
             if (origin == OriginNormal && cid == 3) origin = OriginTransition;
-            if (!had || old.a != va || old.b != vb || old.origin != origin) _enVars[key] = (va, vb, origin);
+            SetLookVars(key, va, vb, origin);
         }
 
         private static readonly string[] LookIntFields = { "UnitCreateID", "ApplyCreateEffectID" };
@@ -657,6 +693,7 @@ namespace MagicSurvivalCoop
                 {
                     if (pp.Obj == null)
                     {
+                        if (pp.LookPending && now - pp.FirstSeen < LookWaitSec) continue;
                         // Создаём после прохода, ближайших к герою первыми
                         double cd = 0;
                         if (hasHero && PuppetPos(pp, rt, out var cx, out var cy))
