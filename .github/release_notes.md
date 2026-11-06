@@ -1,5 +1,6 @@
 ## Не выпущено
 
+- A warning when players have different mod versions: «У <name> другая версия мода» on screen once, and both versions under that friend in the «Кооп» window. Versions before 1.8 are shown as «старая версия мода». The game isn't blocked.
 - Less work per frame: the friend's magic circle angle is set only when it changes, lookups of game arrays and object searches are cached, and the chest scan (a search through the whole scene) runs once a second instead of twice. For developers: the frame profile has a separate «сундуки» (chests) part.
 - Less traffic from the host with many enemies: enemies far from guests are sent every other time, a full list once a second, positions without repeated fields; dead enemies are listed explicitly. The clock and chests are sent on change and twice a second.
 - Less memory garbage from the network code: the state is written straight into a reused buffer and incoming messages are not copied. Fewer garbage collections during battle.
@@ -10,6 +11,7 @@
 
 **По-русски:**
 
+- Предупреждение, если у игроков разные версии мода: один раз на экране «У <имя> другая версия мода», а в окне «Кооп» под этим другом — обе версии. Версии до 1.8 показаны как «старая версия мода». Игра не блокируется.
 - Меньше работы в кадре: угол маг. круга друга ставится только при изменении, поиск методов у массивов игры и поиск объектов кэшируются, скан сундуков (поиск по всей сцене) — раз в секунду, а не два. Для разработчиков: в замере кадра отдельная часть «сундуки».
 - Меньше трафика от хоста при большом числе врагов: дальние от гостей враги уходят через раз, полный список — раз в секунду, позиции без повторяющихся полей; погибшие перечисляются явно. Часы и сундуки — при изменении и два раза в секунду.
 - Меньше мусора в памяти от сетевого кода: состояние пишется сразу в переиспользуемый буфер, входящие сообщения не копируются. Меньше сборок мусора в бою.

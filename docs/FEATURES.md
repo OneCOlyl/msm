@@ -178,6 +178,11 @@ The host's IP address and port are set in the «Кооп» window and saved betw
   | Shared pause | 1.6.0 |
 
   So install the same, latest version for every player.
+- **Version warning:** since 1.8 the mod also sends its own version. If a friend has a different one, a message appears
+  on screen once: «У <name> другая версия мода» (<name> has a different mod version). In the «Кооп» window, under that
+  friend, you see both versions and «нужна одна версия у всех» (everyone needs the same version). A friend on a version
+  older than 1.8 doesn't send it: the message says «старая версия мода» (old mod version). The game isn't blocked: you
+  can keep playing, but shared enemies and the look of special mobs may not work.
 
 ## Known limitations
 
