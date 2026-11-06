@@ -19,7 +19,7 @@ namespace MagicSurvivalLab
         {
             Id = "coop_lab",
             Name = "Кооператив: полигон",
-            Version = "0.1.8",
+            Version = "0.1.11",
             Description = "Для разработки: в бою кнопка «ПОЛИГОН» — спокойная арена, любые мобы, босс-волна, обелиск и другие механики. Игрокам не нужен.",
             Depends = { ["modkit_combat"] = ">=1.0 <2", ["modkit_hero"] = ">=1.0 <2" },
             OnEnable = ctx => Lab.Current = new Lab(ctx),
@@ -31,6 +31,7 @@ namespace MagicSurvivalLab
     {
         public static Lab Current;
 
+        private static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
         private const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
         private const int MaxType = 50;                     // Z_Database.Dictionary_UnitStat: 51 запись
         private const int ObeliskItem = 18;
@@ -75,7 +76,7 @@ namespace MagicSurvivalLab
             ctx.Events.On("battleStart", _ => ctx.Guard("полигон: начало боя", OnBattleStart));
             ctx.Events.On("battleEnd", _ => ctx.Guard("полигон: конец боя", OnBattleEnd));
             ctx.Every(100, () => ctx.Guard("полигон: шаг", Step));
-            ctx.Log("полигон 0.1.8 включён: в бою кнопка «ПОЛИГОН»");
+            ctx.Log("полигон 0.1.11 включён: в бою кнопка «ПОЛИГОН»");
         }
 
         public void Stop()
@@ -489,6 +490,106 @@ namespace MagicSurvivalLab
             return $"герой на старте +{dx:0.#}";
         }
 
+        /// <summary>Герой в точку (x, y) мира: так он подбирает предмет, на который встал.</summary>
+        public string GoTo(double x, double y)
+        {
+            var hero = typeof(BattleState).GetProperty("Hero", Any)?.GetValue(null);
+            if (!(GetMember(hero, "Transform_ObjUnit") is UnityEngine.Transform tr)) return "нет героя";
+            var p = new UnityEngine.Vector3((float)x, (float)y, tr.position.z);
+            tr.position = p;
+            try { SetMember(GetMember(hero, "Rigidbody_ObjUnit"), "position", p); } catch { }
+            return $"герой в {x:0.##}, {y:0.##}";
+        }
+
+        /// <summary>
+        /// Лежащие предметы для подбора, строка «вид|x|y»: box&lt;ObtainItemType&gt; (5–7 сундуки и продавец, 9 особый обелиск
+        /// Terra, 10, 11 после босса) и obelisk (предмет «18»). Подобранный предмет остаётся активным, игра уносит его в z 999.
+        /// </summary>
+        public string Pickups()
+        {
+            var sb = new StringBuilder();
+            void Add(string kind, object item)
+            {
+                if (!(GetMember(item, "transform") is UnityEngine.Transform tr)) return;
+                var p = tr.position;
+                if (p.z > 100) return;
+                sb.Append(kind).Append('|').Append(p.x.ToString("0.##", Inv)).Append('|').Append(p.y.ToString("0.##", Inv)).Append('\n');
+            }
+            foreach (var box in FindAll("C_Battle_Item_TreasureBox"))
+                if (ActiveSelf(GetMember(box, "gameObject")))
+                    Add("box" + GetMember(box, "ObtainItemType"), box);
+            foreach (var it in FindAll("C_Battle_Item"))
+                if (Convert.ToInt32(GetMember(it, "Type_ObjItem")) == 4 && NameOf(GetMember(it, "gameObject")) == "18" && ActiveSelf(GetMember(it, "gameObject")))
+                    Add("obelisk", it);
+            return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>
+        /// Активные кнопки интерфейса игры, строка «номер|путь|x|y|можно нажать|текст». Окна выбора видны по их кнопкам, x и y
+        /// это точка на холсте интерфейса.
+        /// </summary>
+        public string Buttons()
+        {
+            var buttons = ActiveButtons();
+            var texts = new Dictionary<object, string>();
+            foreach (var t in FindAll(UnityType("UI.Text")))
+            {
+                var owner = buttons.FirstOrDefault(b => IsInside(GetMember(t, "transform"), GetMember(b, "transform")));
+                var s = (GetMember(t, "text") as string ?? "").Replace('\n', ' ').Replace('|', '/').Trim();
+                if (owner != null && s.Length > 0) texts[owner] = texts.TryGetValue(owner, out var was) ? was + " / " + s : s;
+            }
+            var sb = new StringBuilder();
+            for (int i = 0; i < buttons.Count; i++)
+            {
+                var tr = (UnityEngine.Transform)GetMember(buttons[i], "transform");
+                sb.Append(i).Append('|').Append(PathOf(tr)).Append('|').Append(tr.position.x.ToString("0", Inv)).Append('|')
+                  .Append(tr.position.y.ToString("0", Inv)).Append('|').Append(GetMember(buttons[i], "interactable")).Append('|')
+                  .Append(texts.TryGetValue(buttons[i], out var text) ? text : "").Append('\n');
+            }
+            return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>Нажать кнопку номер i из Buttons, если у неё всё ещё этот путь: onClick.Invoke с аргументами из разметки окна, как касание.</summary>
+        public string Click(int i, string path)
+        {
+            var buttons = ActiveButtons();
+            if (i < 0 || i >= buttons.Count) return $"нет кнопки {i}";
+            var actual = PathOf((UnityEngine.Transform)GetMember(buttons[i], "transform"));
+            if (actual != path) return $"кнопка {i} уже другая: {actual}";
+            // Обработчики карт берут нажатую кнопку из EventSystem, при касании её выбирает сам тап
+            var events = UnityType("EventSystems.EventSystem");
+            var current = events?.GetProperty("current", Any)?.GetValue(null);
+            if (current != null) CallMethod(current, "SetSelectedGameObject", GetMember(buttons[i], "gameObject"));
+            try { CallMethod(GetMember(buttons[i], "onClick"), "Invoke"); }
+            catch (Exception e) { return "ошибка: " + Inner(e).Message.Split('\n')[0]; }
+            return "нажато " + actual;
+        }
+
+        private List<object> ActiveButtons() => FindAll(UnityType("UI.Button")).Where(b => GetMember(b, "isActiveAndEnabled") is bool on && on).ToList();
+
+        private static Type UnityType(string name) => AppDomain.CurrentDomain.GetAssemblies()
+            .Select(a => { try { return a.GetType("UnityEngine." + name); } catch { return null; } })
+            .FirstOrDefault(t => t != null);
+
+        // Обёртки Il2Cpp одного объекта бывают разными экземплярами C#, сравнивать надо указатели
+        private static bool IsInside(object tr, object root)
+        {
+            var target = GetMember(root, "Pointer");
+            for (var p = tr as UnityEngine.Transform; p != null; p = GetMember(p, "parent") as UnityEngine.Transform)
+                if (Equals(GetMember(p, "Pointer"), target)) return true;
+            return false;
+        }
+
+        private static string PathOf(UnityEngine.Transform tr)
+        {
+            var parts = new List<string>();
+            for (var p = tr; p != null; p = GetMember(p, "parent") as UnityEngine.Transform) parts.Add(NameOf(p) ?? "?");
+            parts.Reverse();
+            return string.Join("/", parts).Replace(' ', '_');
+        }
+
+        private static bool ActiveSelf(object go) => GetMember(go, "activeSelf") is bool b && b;
+
         /// <summary>Убрать всех врагов: Unit_Destroy_Simple не берёт боссов и мобов перехода, их добивает Unit_Death.</summary>
         public string NoEnemies()
         {
@@ -788,10 +889,11 @@ namespace MagicSurvivalLab
         }
 
         private static MethodInfo _findObjectsOfType, _il2cppTypeOf;
-        private List<object> FindAll(string typeName)
+        private List<object> FindAll(string typeName) => FindAll(Hooks.FindType(typeName));
+
+        private List<object> FindAll(Type t)
         {
             var res = new List<object>();
-            var t = Hooks.FindType(typeName);
             if (t == null) return res;
             var asms = AppDomain.CurrentDomain.GetAssemblies();
             _il2cppTypeOf ??= asms.Select(a => { try { return a.GetType("Il2CppInterop.Runtime.Il2CppType"); } catch { return null; } }).FirstOrDefault(x => x != null)

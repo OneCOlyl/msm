@@ -16,6 +16,7 @@ import time
 ADB = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Android", "Sdk", "platform-tools", "adb.exe")
 LAB = "T:coop_lab:MagicSurvivalLab.Lab/Current"
 HOST_PORT, GUEST_PORT = 8771, 8772
+HOST_SERIAL, GUEST_SERIAL = "07838C5001A00540", "985AY130RJ"
 SPELL_NAMES = {1: "Пуля", 2: "Огн. шар", 3: "Дух", 4: "Спутник", 5: "Лёд. иглы", 6: "Щит", 7: "Молния", 8: "Электрозона",
                9: "Цунами", 10: "Метеорит", 11: "Призрак", 12: "Вихрь", 13: "Электричество", 14: "Армагеддон",
                15: "Испепеление", 16: "Энергопуля", 17: "Метель", 18: "Луч", 19: "Маг. круг", 20: "Лав. поле", 21: "Вспышка"}
@@ -94,6 +95,9 @@ def mobs():
         host = lab(HOST_PORT, "Status")
         got = puppets(GUEST_PORT)
         n = sum(v for k, v in got.items() if k == key or (key.startswith("s") and k.endswith(key)))
+        if key.isdigit() and not re.search(rf"\b{key}×", host):
+            say(f"НЕТ  {name}: у хоста «{made}», но через 5 с их нет ({host.split('; ')[-1]})")
+            continue
         check(n > 0, f"{name}: у хоста «{made}», {host.split('; ')[-1]}; у друга копий {n} ({got})")
     lab(HOST_PORT, "ClearEnemies")
 
@@ -294,9 +298,11 @@ def phone_time(serial):
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", default="07838C5001A00540")
-    ap.add_argument("--guest", default="985AY130RJ")
+    ap.add_argument("--host", default=HOST_SERIAL)
+    ap.add_argument("--guest", default=GUEST_SERIAL)
     ap.add_argument("--out")
     ap.add_argument("--spells", default="", help="номера магий через запятую, по умолчанию все")
     ap.add_argument("--wait", type=float, default=6, help="секунд на магию (для magic — наибольшее ожидание)")

@@ -59,7 +59,8 @@ Notes:
 - the arena gives spells through `coop_cheat` (`Spell <id> <level>`); without the cheat this command does not work.
 
 The same actions from a PC through the `coop_debug` console: `call T:coop_lab:MagicSurvivalLab.Lab/Current.Spawn 6 10`,
-`.Status`, `.CoopStatus`. Scenarios on two phones are in `tools/lab.py` (see [DEVELOPMENT.md](DEVELOPMENT.md#test-arena)).
+`.Status`, `.CoopStatus`. For automation: `Buttons` (active UI buttons: path, position, enabled, text), `Click <index> <path>`
+(a press, like a tap), `Pickups` (lying chests, merchant, obelisks), `GoTo <x> <y>` (hero to a point). Scenarios on two phones are in `tools/lab.py` (see [DEVELOPMENT.md](DEVELOPMENT.md#test-arena)).
 
 ## Publishing
 
