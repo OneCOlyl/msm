@@ -1,5 +1,6 @@
 ## Не выпущено
 
+- Less work per frame: the friend's magic circle angle is set only when it changes, lookups of game arrays and object searches are cached, and the chest scan (a search through the whole scene) runs once a second instead of twice. For developers: the frame profile has a separate «сундуки» (chests) part.
 - Less traffic from the host with many enemies: enemies far from guests are sent every other time, a full list once a second, positions without repeated fields; dead enemies are listed explicitly. The clock and chests are sent on change and twice a second.
 - Less memory garbage from the network code: the state is written straight into a reused buffer and incoming messages are not copied. Fewer garbage collections during battle.
 - The host's game no longer talks to its own room server through a network socket, and the server relays states and events without rebuilding them: less work for the host's phone. Guests see no difference.
@@ -9,6 +10,7 @@
 
 **По-русски:**
 
+- Меньше работы в кадре: угол маг. круга друга ставится только при изменении, поиск методов у массивов игры и поиск объектов кэшируются, скан сундуков (поиск по всей сцене) — раз в секунду, а не два. Для разработчиков: в замере кадра отдельная часть «сундуки».
 - Меньше трафика от хоста при большом числе врагов: дальние от гостей враги уходят через раз, полный список — раз в секунду, позиции без повторяющихся полей; погибшие перечисляются явно. Часы и сундуки — при изменении и два раза в секунду.
 - Меньше мусора в памяти от сетевого кода: состояние пишется сразу в переиспользуемый буфер, входящие сообщения не копируются. Меньше сборок мусора в бою.
 - Игра хоста больше не общается со своим сервером комнаты через сетевой сокет, а сервер пересылает состояния и события, не собирая их заново: телефону хоста меньше работы. Для гостей ничего не меняется.

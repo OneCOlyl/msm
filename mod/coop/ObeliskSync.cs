@@ -18,11 +18,19 @@ namespace MagicSurvivalCoop
         // В тестах на ПК нет Unity.
         internal static Func<ModContext, string, List<object>> FindAllOverride;
 
+        // Поиск идёт несколько раз в секунду (сундуки, особый обелиск), а Hooks.FindType перебирает сборки игры.
+        private static readonly Dictionary<string, Type> FoundTypes = new Dictionary<string, Type>();
+        private static readonly Dictionary<Type, (PropertyInfo len, MethodInfo item)> ArrayAccess = new Dictionary<Type, (PropertyInfo, MethodInfo)>();
+        private static readonly Dictionary<(Type from, Type to), MethodInfo> Casts = new Dictionary<(Type, Type), MethodInfo>();
+
         private List<object> FindAllOfType(string typeName)
         {
             if (FindAllOverride != null) return FindAllOverride(_ctx, typeName);
-            Type t;
-            try { t = Hooks.FindType(typeName); } catch { t = null; }
+            if (!FoundTypes.TryGetValue(typeName, out var t))
+            {
+                try { t = Hooks.FindType(typeName); } catch { t = null; }
+                FoundTypes[typeName] = t;
+            }
             return t == null ? new List<object>() : FindAllOfType(t, typeName);
         }
 
@@ -42,16 +50,17 @@ namespace MagicSurvivalCoop
                     if (_il2cppTypeOf == null || _findObjectsOfType == null) { _findFailed = true; _ctx.Log("обелиск: поиск объектов по типу недоступен"); return res; }
                 }
                 var arr = _findObjectsOfType.Invoke(null, new[] { _il2cppTypeOf.MakeGenericMethod(t).Invoke(null, null) });
-                int n = Convert.ToInt32(arr.GetType().GetProperty("Length")?.GetValue(arr) ?? 0);
-                var item = arr.GetType().GetMethod("get_Item", new[] { typeof(int) });
+                var at = arr.GetType();
+                if (!ArrayAccess.TryGetValue(at, out var acc)) ArrayAccess[at] = acc = (at.GetProperty("Length"), at.GetMethod("get_Item", new[] { typeof(int) }));
+                int n = Convert.ToInt32(acc.len?.GetValue(arr) ?? 0);
                 var idx = new object[1];
-                Type castFor = null; MethodInfo cast = null;      // Предметов сотни, TryCast<t> ищем один раз
                 for (int i = 0; i < n; i++)
                 {
                     idx[0] = i;
-                    var o = item.Invoke(arr, idx);
+                    var o = acc.item.Invoke(arr, idx);
                     if (o == null) continue;
-                    if (o.GetType() != castFor) { castFor = o.GetType(); cast = castFor.GetMethod("TryCast")?.MakeGenericMethod(t); }
+                    var ot = o.GetType();
+                    if (!Casts.TryGetValue((ot, t), out var cast)) Casts[(ot, t)] = cast = ot.GetMethod("TryCast")?.MakeGenericMethod(t);
                     res.Add(cast?.Invoke(o, null) ?? o);
                 }
             }
@@ -286,7 +295,7 @@ namespace MagicSurvivalCoop
         private void TreasureStep(double now)
         {
             if (_hosting || !WorldOn || _partners.Count == 0 || now < _treasureScanAt || MyClock() > TreasureScanUntil) return;
-            _treasureScanAt = now + 1;
+            _treasureScanAt = now + 3;          // Тот же поиск по всей сцене, а обелиск лежит долго
             foreach (var x in FindAllOfType("C_Battle_Item_TreasureBox"))
             {
                 var key = KeyOf(x);

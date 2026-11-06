@@ -52,6 +52,7 @@ namespace MagicSurvivalCoop
             public OrbClone Shield, Zone, Mc;
             public readonly List<OrbClone> McKids = new List<OrbClone>();
             public bool McFailed, McLogged; public double McS = double.NaN;
+            public readonly double[] McRotSet = { double.NaN, double.NaN, double.NaN };
             public bool ZoneScaleFailed;
             public double ZoneSx = double.NaN, ZoneSy = double.NaN;
             public bool? ZoneEnSet; public double ZoneASet = double.NaN;
@@ -254,10 +255,15 @@ namespace MagicSurvivalCoop
             return mi is PropertyInfo pi ? pi.GetValue(o) : (mi as FieldInfo)?.GetValue(o);
         }
         private static int Count(object coll) => coll == null ? 0 : Convert.ToInt32(GetMember(coll, "Length") ?? GetMember(coll, "Count") ?? (coll is ICollection c ? c.Count : 0));
+        // get_Item ищется один раз на тип: ItemAt зовётся в каждой отправке и в циклах по массивам героя.
+        private static readonly Dictionary<Type, MethodInfo> ItemGetters = new Dictionary<Type, MethodInfo>();
         private static object ItemAt(object coll, int i)
         {
             if (coll == null || i >= Count(coll)) return null;
-            var m = coll.GetType().GetMethod("get_Item", new[] { typeof(int) });
+            var t = coll.GetType();
+            MethodInfo m;
+            lock (ItemGetters)
+                if (!ItemGetters.TryGetValue(t, out m)) ItemGetters[t] = m = t.GetMethod("get_Item", new[] { typeof(int) });
             if (m != null) return m.Invoke(coll, new object[] { i });
             return coll is IList l ? l[i] : null;
         }

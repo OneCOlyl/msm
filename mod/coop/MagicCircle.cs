@@ -96,7 +96,10 @@ namespace MagicSurvivalCoop
             {
                 var k = v.McKids[i];
                 if (!string.IsNullOrEmpty(st.McImg[i])) ApplyImage(k, st.McImg[i], now, "маг. круг");
-                try { SetMember(k.Tr, "localEulerAngles", new Vector3(0, 0, (float)st.McRot[i])); } catch { }
+                // Угол приходит не каждый кадр, а запись через обёртку — вызов в игру
+                if (st.McRot[i] == v.McRotSet[i] || k.Tr == null) continue;
+                v.McRotSet[i] = st.McRot[i];
+                try { k.Tr.localEulerAngles = new Vector3(0, 0, (float)st.McRot[i]); } catch { }
             }
             if (!v.McLogged) { v.McLogged = true; _ctx.Log($"маг. круг «{p.Name}»: копия {TreeOf(v.Mc.Go)}; кадры от друга {string.Join(", ", st.McImg)}"); }
         }
