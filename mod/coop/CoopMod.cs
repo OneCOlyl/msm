@@ -161,6 +161,8 @@ namespace MagicSurvivalCoop
             public int LobbyArea = -1, LobbyLevel, LobbyLoop = -1, LobbyButton = -1;
             public bool Ready;
             public bool LobbyChests;
+            public string Version, VersionWarned;
+            public bool VersionKnown;
         }
 
         public Session(ModContext ctx)
@@ -494,7 +496,7 @@ namespace MagicSurvivalCoop
             if (DropStateOverride != null && DropStateOverride(this, s)) return;
             if (s.ValueKind != JsonValueKind.Object) return;
             if (m.TryGetProperty("slot", out _)) p.Slot = (int)Protocol.Num(m, "slot", p.Slot);
-            if (s.TryGetProperty("name", out _)) p.Name = Protocol.CleanName(Protocol.Str(s, "name", p.Name));
+            if (s.TryGetProperty("name", out _)) { p.Name = Protocol.CleanName(Protocol.Str(s, "name", p.Name)); CheckVersion(p, s); }
             bool wasDead = p.Dead, wasBattle = p.Battle;
             p.Run = Protocol.Bool(s, "run");
             p.Battle = Protocol.Bool(s, "battle");
@@ -701,7 +703,7 @@ namespace MagicSurvivalCoop
             w.WriteString("type", Protocol.PlayerState);
             w.WriteStartObject("state");
             {
-                if (writeRare) w.WriteString("name", _myName);
+                if (writeRare) { w.WriteString("name", _myName); w.WriteString("ver", _version); }
                 w.WriteNumber("run", _inRun ? 1 : 0);
                 w.WriteNumber("battle", battle ? 1 : 0);
                 w.WriteNumber("paused", _spells.Paused ? 1 : 0);
@@ -739,6 +741,24 @@ namespace MagicSurvivalCoop
         // Сообщение PLAYER_STATE пишется сразу в байты и в один и тот же буфер: отправка состояния без выделений.
         private readonly ArrayBufferWriter<byte> _stateBuf = new ArrayBufferWriter<byte>(16 * 1024);
         private Utf8JsonWriter _stateW;
+
+        // Версия идёт с редкими полями. Без неё в состоянии с именем у друга версия до 1.8: тогда «ver» не было.
+        private string _version = CoopMod.ModVersion;
+
+        private void CheckVersion(Partner p, JsonElement s)
+        {
+            p.Version = Protocol.Str(s, "ver");
+            p.VersionKnown = true;
+            if (p.Version == _version || p.VersionWarned == (p.Version ?? "")) return;
+            p.VersionWarned = p.Version ?? "";
+            // Тост в одну строку: версии целиком только в окне «Кооп» и журнале
+            _ctx.Toast($"У {p.Name} {(p.Version != null ? "другая" : "старая")} версия мода", 6);
+            _ctx.Log($"версия мода у «{p.Name}»: {p.Version ?? "старее 1.8 (без поля ver)"}, у меня {_version} — нужна одна версия у всех");
+        }
+
+        private string VersionLine(Partner p) =>
+            !p.VersionKnown || p.Version == _version ? null
+            : $"   {(p.Version != null ? "версия " + p.Version : "старая версия")}, у вас {_version}\n   нужна одна версия у всех";
 
         // Имя, здоровье максимум, убийства и лобби меняются редко: при изменении RareSends отправок подряд, иначе раз в RareRefreshSec.
         private const int RareSends = 3;
@@ -1193,7 +1213,11 @@ namespace MagicSurvivalCoop
             if (_client.State != CoopClient.Status.Connected) return "—";
             var lines = new List<string> { $"{_mySlot}. {_myName} (вы)" + (_roomCode != null ? $" · комната {_roomCode}" : "") };
             foreach (var p in _partners.Values.OrderBy(x => x.Slot))
+            {
                 lines.Add($"{p.Slot}. {PartnerLine(p)}");
+                var ver = VersionLine(p);
+                if (ver != null) lines.Add(ver);
+            }
             if (_partners.Count == 0) lines.Add("Ждём друзей…");
             return string.Join("\n", lines);
         }

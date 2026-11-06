@@ -216,6 +216,7 @@ Messages from the status line of the «Кооп» window and on-screen labels:
 | «Хост ещё не создал игру» (The host hasn't created the game yet) | Nothing to do: the mod waits and joins the host's game by itself. |
 | «Комната заполнена (максимум 4 игрока)» (Room is full, 4 players max) | The game already has 4 players. |
 | «Версия «Кооператива» не совпадает с хостом» (Co-op version doesn't match the host) | Install the latest mod version for all players. |
+| «У … другая версия мода» (… has a different mod version) or «У … старая версия мода» (… has an old mod version) | You are connected, but some features (shared enemies, the look of special mobs) may not work. Both versions are shown under that friend in the «Кооп» window. Install the same, latest version for all players. |
 | «Слишком много подключений с вашего адреса» (Too many connections from your address), «Сервер переполнен» (Server is full) | Close extra copies of the game or wait: the mod retries by itself. |
 | «Слишком частые подключения, попробуйте через минуту» (Connecting too often, try again in a minute) | More than 60 connections per minute. Wait a minute. |
 | «Порт 8766 занят другой программой, игра создана на порту 8767» (Port 8766 is taken by another program, game created on port 8767) | Nothing to do: friends with port 8766 find the game by themselves. |
