@@ -750,6 +750,38 @@ Check(A.Partners().Count == 0, "друг вышел — хост это увид
 Check(A.Toasts.Any(t => t.Contains("вышел")), "хосту показано «Друг вышел»");
 A.Call("Disconnect");
 
+Console.WriteLine("5б. версии мода: разные — предупреждение у обоих, одинаковые — без предупреждения");
+{
+    var H = new Player("ХостВ"); var G = new Player("ГостьВ");
+    foreach (var p in new[] { H, G }) p.Ctx.Set["port"] = 28830;
+    void Both(int ms) { for (int t = 0; t < ms / 50; t++) { H.Tick(); G.Tick(); Thread.Sleep(50); } }
+    List<string> Warns(Player p) => p.Toasts.Where(t => t.EndsWith("версия мода")).ToList();
+    string Players(Player p) => (string)p.Session.GetType().GetMethod("PlayersText", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(p.Session, null);
+    string mine = MagicSurvivalCoop.CoopMod.ModVersion;
+    H.Call("Host"); Both(500); G.Call("Join"); Both(3000);
+    Check(H.Partners().Count == 1 && G.Partners().Count == 1, "хост и гость на связи");
+    Check(Warns(H).Count == 0 && Warns(G).Count == 0 && !Players(H).Contains("версия"), $"одинаковые версии ({mine}) — предупреждения нет");
+    G.Set("_version", "9.9.9");
+    Both(3000);
+    Check(Warns(H).SequenceEqual(new[] { "У ГостьВ другая версия мода" }) && Warns(G).SequenceEqual(new[] { "У ХостВ другая версия мода" }),
+          $"тост у обоих: «{string.Join(" | ", Warns(H).Concat(Warns(G)))}»");
+    Check(Players(H).Contains($"   версия 9.9.9, у вас {mine}\n   нужна одна версия у всех") && Players(G).Contains($"   версия {mine}, у вас 9.9.9\n"),
+          $"строка в окне «Кооп» у друга: «{Players(H).Replace("\n", " / ")}»");
+    Check(H.Ctx.Logs.Contains($"версия мода у «ГостьВ»: 9.9.9, у меня {mine} — нужна одна версия у всех"), "в журнале обе версии");
+    Both(4500);
+    Check(Warns(H).Count == 1 && Warns(G).Count == 1 && H.Ctx.Logs.Count(l => l.StartsWith("версия мода")) == 1 && G.Ctx.Logs.Count(l => l.StartsWith("версия мода")) == 1,
+          "тост и запись в журнал один раз, хотя версия приходит раз в 2 с");
+    object gp = null; foreach (System.Collections.DictionaryEntry kv in G.Partners()) gp = kv.Value;
+    using (var old = System.Text.Json.JsonDocument.Parse("{\"name\":\"ХостВ\",\"run\":0}"))
+        G.Session.GetType().GetMethod("CheckVersion", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(G.Session, new[] { gp, old.RootElement });
+    Check(Warns(G).LastOrDefault() == "У ХостВ старая версия мода" && Players(G).Contains("   старая версия, у вас 9.9.9"),
+          $"нет поля ver — «старая версия»: {Warns(G).LastOrDefault()}");
+    G.Set("_version", mine);
+    Both(3000);
+    Check(!Players(G).Contains("версия") && !Players(H).Contains("версия"), "версии снова одинаковые — строки в окне нет");
+    H.Disable(); G.Disable();
+}
+
 Console.WriteLine("6. выключение мода");
 A.Disable(); B.Disable();
 Check(true, "моды выключены без исключений");
