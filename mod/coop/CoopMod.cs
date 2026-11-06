@@ -823,8 +823,9 @@ namespace MagicSurvivalCoop
                 if (_inRun && !_spells.Paused) WorldStep(now);
                 Lap(3);
                 if (_inRun && !_spells.Paused) Safe("часы боя", _clockAction);
-                if (_inRun) Safe("сундуки", _chestAction);   // И на паузе: подбор сундука открывает окно артефакта
                 Lap(4);
+                if (_inRun) Safe("сундуки", _chestAction);   // И на паузе: подбор сундука открывает окно артефакта
+                Lap(5);
                 if (!_inRun || _partners.Count == 0 || _spells.Paused) { UpdateMarkers(now); return; }   // На паузе метки прячутся
                 if (!HeroPosition(out var hx, out var hy, out var hz)) return;
                 _frameSeenSec = now;
@@ -843,17 +844,17 @@ namespace MagicSurvivalCoop
             {
                 if (++_writeFails == 1 || _writeFails % 500 == 0) _ctx.Log("кадр: " + e.Message);
             }
-            Lap(5);
+            Lap(6);
             if (_inRun) { double ms = Clock.Elapsed.TotalMilliseconds - frameStart; EndFrame(ms); ProfileFrame(ms); }
         }
 
         private double _frameNow;
         private void ClockStepNow() => ClockStep(_frameNow);
 
-        private readonly Laps _frame = new Laps("сеть и пауза", "отправка", "Армагеддон", "общие враги", "часы", "союзники и магия");
+        private readonly Laps _frame = new Laps("сеть и пауза", "отправка", "Армагеддон", "общие враги", "часы", "сундуки", "союзники и магия");
         private readonly Laps _send = new Laps("здоровье и уровни", "свои орбиты", "враги", "часы", "сборка и очередь", "магия");
         private readonly Laps _world = new Laps("чистка и спавн", "уборка своих", "свой босс", "создание копий", "здоровье копий", "движение копий", "убийство копий", "урон хосту");
-        private readonly int[] _partSlow = new int[6];
+        private readonly int[] _partSlow = new int[7];
         private int _slowLogged;
         private double _profileSince;
 

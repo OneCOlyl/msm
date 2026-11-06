@@ -11,7 +11,8 @@ namespace MagicSurvivalCoop
     internal sealed partial class Session
     {
         private static readonly int[] ChestKinds = { 5, 6 };
-        private const double ChestScanSec = 0.5, ChestClaimRadius = 0.5, ChestClaimRetrySec = 2;
+        // Скан сундуков — FindObjectsOfType по всей сцене, в замере кадра это было главное в части «сундуки»
+        private const double ChestScanSec = 1, ChestClaimRadius = 0.5, ChestClaimRetrySec = 2;
         private static readonly Vector3 ChestLockedCenter = new Vector3(0, 1000, 0);
         private bool ChestsOn => _ctx.Setting("chests") > 0;
 
