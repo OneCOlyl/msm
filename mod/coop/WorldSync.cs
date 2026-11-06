@@ -15,8 +15,12 @@ namespace MagicSurvivalCoop
         private const int MaxSentEnemies = 250;          // ~20 байт на врага: строка состояния остаётся меньше 16 КБ
         // 7 раз в секунду: копии всё равно интерполируются, а при 11 трафик к гостю с 200 врагами почти вдвое больше.
         private const double EnemySendInterval = 0.14;
-        // Позиция врага с точностью 0,1: копии интерполируются, а на числах это четверть объёма en.
-        private const double PosScale = 10;
+        // Позиция врага с точностью 0,01: при 0,1 скорость копии между точками дрожала.
+        private const double PosScale = 100;
+        // Показ копий отстаёт на два средних интервала между снимками en: дальние приходят через раз, и показ не должен
+        // обгонять их последнюю точку. Дальше последней точки копия идёт не больше PuppetExtrapolateSec.
+        private const double EnemyDelayMin = 0.15, EnemyDelayMax = 0.5, PuppetExtrapolateSec = 0.1;
+        private const int PuppetTrackLen = 6, EnemySnapTimes = 10;
         // Вид особого врага: первые LookSends отправок, затем раз в LookRefreshSec по LookPerSend за отправку.
         // Любое состояние может не дойти: SendState заменяет неотправленное новым.
         private const int LookSends = 3, LookPerSend = 8;
@@ -87,6 +91,7 @@ namespace MagicSurvivalCoop
         private Partner _worldHost;
         private int _enSnap, _worldFrame;
         private double _enSnapAt = -100, _sweepAt;
+        private readonly List<double> _enSnapTimes = new List<double>();   // Часы хоста последних снимков en
         private bool _worldActive, _spawningPuppet;
         private object _justCreated;
         private int _wCreated, _wKilled, _wLocalDead, _wDestroyed, _wFails, _wMax, _wRespawned, _wSpecial, _wReused;
@@ -149,7 +154,7 @@ namespace MagicSurvivalCoop
         {
             _enIds.Clear(); _enIdsNext.Clear(); _enById.Clear(); _dmgIn = 0; _dmgInMiss = 0; _dmgOut.Clear(); _dmgSent = 0; _dmgFlushAt = 0; _enSentAt = -1; _enSentMax = 0; _enHostLogged = false;
             _puppets.Clear(); _puppetKeys.Clear(); _toDestroy.Clear(); _dying.Clear(); _ownerByKey.Clear(); _viewHalfX = 0; _savedSpawn = null;
-            _worldHost = null; _enSnap = 0; _enSnapAt = -100; _worldActive = false; _spawningPuppet = false; _justCreated = null;
+            _worldHost = null; _enSnap = 0; _enSnapAt = -100; _enSnapTimes.Clear(); _worldActive = false; _spawningPuppet = false; _justCreated = null;
             _wCreated = _wKilled = _wLocalDead = _wDestroyed = _wFails = _wMax = _wRespawned = _wSpecial = _wReused = 0;
             _enVars.Clear(); _enVarsNext.Clear();
             _goneIds.Clear(); _goneLeft.Clear(); _enFullAt = -100; _enSendIdx = 0; _enSends = 0; _enSentSum = 0;
@@ -315,6 +320,7 @@ namespace MagicSurvivalCoop
             _worldHost = p;
             double st = Protocol.Num(s, "t", -1);
             _enSnap++; _enSnapAt = Clock.Elapsed.TotalSeconds;
+            NoteSnapTime(_enSnapTimes, st);
             if (s.TryGetProperty("et", out var et) && et.ValueKind == JsonValueKind.Array)
                 for (int i = 0; i + 1 < et.GetArrayLength(); i += 2)
                     if (et[i].TryGetInt32(out int id) && et[i + 1].TryGetInt32(out int type) && !_puppets.ContainsKey(id))
@@ -330,11 +336,7 @@ namespace MagicSurvivalCoop
                 if (!en[i].TryGetInt32(out int id) || !en[i + 1].TryGetInt32(out int x) || !en[i + 2].TryGetInt32(out int y)) continue;
                 if (!_puppets.TryGetValue(id, out var pp)) continue;      // Тип придёт в «et»: первые отправки и полный снимок
                 pp.Seen = _enSnap;
-                if (pp.Track.Count == 0 || st > pp.Track[pp.Track.Count - 1].t)
-                {
-                    pp.Track.Add((st, x / PosScale, y / PosScale));
-                    if (pp.Track.Count > 4) pp.Track.RemoveAt(0);
-                }
+                AddPoint(pp, st, x / PosScale, y / PosScale);
             }
             if (s.TryGetProperty("eg", out var eg) && eg.ValueKind == JsonValueKind.Array)
                 foreach (var it in eg.EnumerateArray()) if (it.TryGetInt32(out int id)) _goneIds.Add(id);
@@ -741,7 +743,7 @@ namespace MagicSurvivalCoop
             }
 
             _world.Lap(1);
-            double rt = now - host.ClockOff - RenderDelay(host);
+            double rt = now - host.ClockOff - EnemyDelay(_enSnapTimes);
             double ox = _startX.Value, oy = _startY ?? 0;
             if (hasHero) HeldStep(hhx, hhy);
             _world.Lap(2);
@@ -1122,6 +1124,28 @@ namespace MagicSurvivalCoop
         // Урон этого друга идёт через здоровье копий, повтор его магии только для вида.
         private bool ReplayWithoutDamage(Partner p) => (_hosting && WorldOn && p.WorldGuest) || (_worldActive && p == _worldHost);
 
+        // Пауза хоста не в счёт среднего интервала.
+        private static void NoteSnapTime(List<double> times, double st)
+        {
+            if (st < 0 || (times.Count > 0 && st == times[times.Count - 1])) return;
+            if (times.Count > 0 && (st < times[times.Count - 1] || st - times[times.Count - 1] > 1)) times.Clear();
+            times.Add(st);
+            if (times.Count > EnemySnapTimes) times.RemoveAt(0);
+        }
+
+        private static double EnemyDelay(List<double> times)
+        {
+            double interval = times.Count >= 2 ? (times[times.Count - 1] - times[0]) / (times.Count - 1) : EnemySendInterval;
+            return Math.Clamp(interval * 2 + 0.05, EnemyDelayMin, EnemyDelayMax);
+        }
+
+        private static void AddPoint(Puppet pp, double t, double x, double y)
+        {
+            if (pp.Track.Count > 0 && t <= pp.Track[pp.Track.Count - 1].t) return;
+            pp.Track.Add((t, x, y));
+            if (pp.Track.Count > PuppetTrackLen) pp.Track.RemoveAt(0);
+        }
+
         private static bool PuppetPos(Puppet pp, double rt, out double x, out double y)
         {
             x = y = 0;
@@ -1132,7 +1156,7 @@ namespace MagicSurvivalCoop
             if (rt >= last.t)
             {
                 var prev = tr[tr.Count - 2];
-                double dtl = last.t - prev.t, ex = Math.Min(rt - last.t, 0.45);
+                double dtl = last.t - prev.t, ex = Math.Min(rt - last.t, PuppetExtrapolateSec);
                 if (dtl <= 1e-4) { x = last.x; y = last.y; return true; }
                 x = last.x + (last.x - prev.x) / dtl * ex; y = last.y + (last.y - prev.y) / dtl * ex;
                 return true;
