@@ -312,8 +312,13 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     var q = P6().Transform_ObjUnit.position;
     Check(Math.Abs(q.x - bsx - 2) < 0.05 && Math.Abs(q.y - bsy - 1) < 0.05, $"копия стоит относительно старта гостя там же, где враг хоста от старта хоста: ({q.x - bsx:0.00}; {q.y - bsy:0.00})");
     e6.Transform_ObjUnit.position = new Vector3((float)asx + 3, (float)asy - 1, 0);
-    Frames(40);
-    q = P6().Transform_ObjUnit.position;
+    // Копия догоняет с задержкой по реальным часам: на медленной машине CI 40 кадров не хватало.
+    for (int fr = 0; fr < 200; fr += 10)
+    {
+        Frames(10);
+        q = P6().Transform_ObjUnit.position;
+        if (fr >= 30 && Math.Abs(q.x - bsx - 3) < 0.05 && Math.Abs(q.y - bsy + 1) < 0.05) break;
+    }
     Check(Math.Abs(q.x - bsx - 3) < 0.05 && Math.Abs(q.y - bsy + 1) < 0.05, $"копия идёт за врагом хоста: ({q.x - bsx:0.00}; {q.y - bsy:0.00})");
     P6().Unit_Hp -= 7;                                                   // гость попал по копии (любым заклинанием)
     Frames(30);
