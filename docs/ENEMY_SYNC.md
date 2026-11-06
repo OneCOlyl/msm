@@ -116,11 +116,16 @@ three sends after it appears or changes, then once every 2 s, a few enemies per 
 then creates it with the default look and updates it when the look arrives. After a new player joins or anyone
 reconnects (the guest sends the `full` event) the host sends the look of all enemies again. The name, max HP, kills and
 the lobby fields go the same way: three sends after a change, otherwise once every 2 s.
-Enemy send format (about 7 times a second): `en` is a flat array `[id, x, y, …]` (x, y in tenths of a unit from the host's start); `et` is `[id, type, …]` in an enemy's
+Enemy send format (about 7 times a second): `en` is a flat array `[id, x, y, …]` (x, y in hundredths of a unit from the host's start); `et` is `[id, type, …]` in an enemy's
 first three sends and in a full snapshot; `el` is `[[id, varA, varB, 12 look fields], …]`; `es` lists special enemies sent
 without the look; `eg` lists dead enemies, each repeated in three sends; `ef: 1` marks a full snapshot. Enemies within
 15 units of a guest go in every send, the farther ones every other send, all of them in the full snapshot once a second.
 Only a full snapshot means "missing — dead". The clock and the chest list go on change and at least twice a second.
+The guest shows copies with their own delay: twice the average interval between the last ten `en` snapshots plus 0.05 s,
+within 0.15–0.5 s (about 0.33 s at 7 sends a second), so a far enemy sent every other time also has a point ahead of the
+shown moment. A copy keeps 6 points and moves past the last one for at most 0.1 s, then stands. With the ally's delay
+(about 0.12 s, by the host's state rate) the shown moment overtook the last point, the copy extrapolated up to 0.45 s,
+and the next point pulled it back.
 An epic mob (type 6 in the test) is field-wise a normal mob of its type (`UnitCreateID 1`, no outline, varA/varB 0): it is
 special because it spawns in a batch on a circle; the copy at the guest is a normal copy of that type.
 1.6.67: the game also sets a transition mob's strength after `Start_Unit` (type 16: `UnitApply_HpMax_Bonus` 10000,
