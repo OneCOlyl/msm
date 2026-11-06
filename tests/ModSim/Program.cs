@@ -322,6 +322,33 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     A.Combat.Enemies.Remove(e6);
     Frames(40);
     Check(B.Combat.Kills == 1 && !P6().DestroyedSimple && !P6().Unit_IsLive, "враг пропал у хоста — копия убита Unit_Death (гостю — убийство)");
+    {
+        var e7 = new FakeEnemy(A, 7); e7.Transform_ObjUnit.position = new Vector3((float)asx + 1, (float)asy - 2, 0);
+        A.Combat.Enemies.Add(e7);
+        FakeEnemy P7() => B.Combat.Enemies.OfType<FakeEnemy>().FirstOrDefault(e => e.Puppet && e.UnitID == 7);
+        var w7 = System.Diagnostics.Stopwatch.StartNew();
+        while (w7.Elapsed.TotalSeconds < 3 && P7() == null) Frames(1);
+        Frames(20);
+        var c7 = P7();
+        double worst = 0;
+        for (int hit = 0; hit < 5 && c7 != null; hit++)
+        {
+            c7.Unit_Hp -= 25;                                            // смертельно: у хоста 20
+            w7.Restart();
+            while (w7.Elapsed.TotalSeconds < 2 && c7.Unit_IsLive) Frames(1);
+            worst = Math.Max(worst, c7.Unit_IsLive ? 99 : w7.Elapsed.TotalSeconds);
+            e7 = new FakeEnemy(A, 7); e7.Transform_ObjUnit.position = new Vector3((float)asx + 1, (float)asy - 2, 0);
+            A.Combat.Enemies.Add(e7);
+            w7.Restart();
+            while (w7.Elapsed.TotalSeconds < 3 && (P7() == null || !P7().Unit_IsLive)) Frames(1);
+            Frames(7 + hit * 3);                                         // попадание в разные места циклов опроса и отправки
+            c7 = B.Combat.Enemies.OfType<FakeEnemy>().FirstOrDefault(e => e.Puppet && e.Unit_IsLive && e.UnitID == 7);
+        }
+        Check(worst < 0.25, $"9: смертельное попадание гостя — копия гибнет у него за {worst:0.000} с (худшее из 5, нужно < 0,25 с)");
+        A.Combat.Enemies.Remove(e7);
+        Frames(30);
+        B.Combat.Kills = 1;
+    }
     var p11 = pups.First(e => e.UnitID == 11);
     Check(p11.Unit_Hp >= 1e5, $"копии у гостя неуязвимы — умирают только вслед за хостом (здоровье {p11.Unit_Hp:0})");
     p11.Unit_IsLive = false; B.Combat.Enemies.Remove(p11);                // копия погибла у гостя в обход здоровья (Армагеддон)
