@@ -93,8 +93,12 @@ namespace MagicSurvivalCoop.Net
         public LineReader(Stream s) { _s = s; }
 
         // Хвост без '\n' перед закрытием считается оборванным.
-        public string ReadLine()
+        public string ReadLine() => ReadLineBytes(out var buf, out int len) ? Encoding.UTF8.GetString(buf, 0, len).TrimEnd('\r') : null;
+
+        // buf — внутренний буфер, годен до следующего чтения.
+        public bool ReadLineBytes(out byte[] buf, out int len)
         {
+            buf = null; len = 0;
             _line.SetLength(0);
             while (true)
             {
@@ -102,13 +106,13 @@ namespace MagicSurvivalCoop.Net
                 {
                     _len = _s.Read(_buf, 0, _buf.Length);
                     _pos = 0;
-                    if (_len <= 0) { _len = 0; _line.SetLength(0); return null; }
+                    if (_len <= 0) { _len = 0; _line.SetLength(0); return false; }
                 }
                 int start = _pos;
                 while (_pos < _len && _buf[_pos] != (byte)'\n') _pos++;
                 _line.Write(_buf, start, _pos - start);
                 if (_line.Length > Protocol.MaxLineBytes) throw new IOException("строка длиннее " + Protocol.MaxLineBytes + " байт");
-                if (_pos < _len) { _pos++; LastBytes = (int)_line.Length + 1; return Encoding.UTF8.GetString(_line.GetBuffer(), 0, (int)_line.Length).TrimEnd('\r'); }
+                if (_pos < _len) { _pos++; LastBytes = (int)_line.Length + 1; buf = _line.GetBuffer(); len = (int)_line.Length; return true; }
             }
         }
     }

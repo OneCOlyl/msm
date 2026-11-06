@@ -23,6 +23,7 @@ namespace MagicSurvivalCoop.Net
         private readonly object _ctl = new object();     // Start и Stop по очереди
         private readonly object _lock = new object();    // Смена текущего подключения и всё, что оно публикует
         private Worker _w;
+        private volatile CoopServer.LocalPeer _local;
         private string _host;
         private int _port, _portIdx;
 
@@ -62,10 +63,66 @@ namespace MagicSurvivalCoop.Net
             }
         }
 
+        // Хост в той же игре: к своему серверу без сокета. Переподключаться некуда: сервер живёт, пока живёт клиент.
+        public void StartLocal(CoopServer server, string name, string clientId = "")
+        {
+            lock (_ctl)
+            {
+                Stop();
+                lock (_lock)
+                {
+                    _host = "127.0.0.1"; _port = server.Port; _portIdx = 0;
+                    State = Status.Connecting;
+                    LastError = null;
+                    PingMs = 0;
+                }
+                CoopServer.LocalPeer peer = null;
+                peer = server.ConnectLocal(b => OnLocal(peer, b), () => { if (_local == peer) State = Status.Off; });
+                _local = peer;
+                SendLocal(Protocol.Build(w =>
+                {
+                    w.WriteString("type", Protocol.CreateRoom); w.WriteString("name", Protocol.CleanName(name));
+                    w.WriteString("clientId", clientId ?? ""); w.WriteNumber("protocol", Protocol.Version);
+                }));
+            }
+        }
+
+        // Зовётся из потоков сервера, иногда под его замком: только запись полей и очередь Incoming, без замков клиента.
+        private void OnLocal(CoopServer.LocalPeer peer, byte[] bytes)
+        {
+            if (peer != null && _local != peer) return;
+            Net.Received(bytes.Length);
+            JsonElement el;
+            try { using var doc = JsonDocument.Parse(new ReadOnlyMemory<byte>(bytes, 0, bytes.Length - 1)); el = doc.RootElement.Clone(); }
+            catch (JsonException) { return; }
+            var type = Protocol.TypeOf(el);
+            if (type == Protocol.RoomCreated || type == Protocol.RoomJoined) State = Status.Connected;
+            if (!Incoming.TryEnqueue(el, bytes.Length) && Interlocked.Exchange(ref _localDropLogged, 1) == 0)
+                Log("клиент: игра не успевает разбирать входящие сообщения, лишние выброшены");
+        }
+        private int _localDropLogged;
+
+        private void SendLocal(string line)
+        {
+            var peer = _local;
+            if (peer == null) return;
+            var b = Encoding.UTF8.GetBytes(line);
+            Net.Sent(b.Length + 1);
+            peer.Receive(b);
+        }
+
         public void Stop()
         {
             lock (_ctl)
             {
+                var local = _local;
+                if (local != null)
+                {
+                    _local = null;
+                    State = Status.Off;
+                    local.Close();
+                    return;
+                }
                 Worker w;
                 lock (_lock)
                 {
@@ -85,6 +142,11 @@ namespace MagicSurvivalCoop.Net
 
         public void SendState(string stateJson)
         {
+            if (_local != null)
+            {
+                if (Connected) SendLocal(Protocol.Build(b => { b.WriteString("type", Protocol.PlayerState); b.WritePropertyName("state"); b.WriteRawValue(stateJson, true); }));
+                return;
+            }
             var w = _w;
             if (w == null || !Connected) return;
             w.LatestState = Protocol.Build(b => { b.WriteString("type", Protocol.PlayerState); b.WritePropertyName("state"); b.WriteRawValue(stateJson, true); });
@@ -94,12 +156,22 @@ namespace MagicSurvivalCoop.Net
         // События не выбрасываются по одному: при переполнении связь рвётся, и клиент переподключается.
         public bool SendEvent(string eventJson)
         {
+            if (_local != null)
+            {
+                if (!Connected) return false;
+                SendLocal(Protocol.Build(b => { b.WriteString("type", Protocol.Event); b.WritePropertyName("event"); b.WriteRawValue(eventJson, true); }));
+                return true;
+            }
             var w = _w;
             if (w == null || !Connected) return false;
             return w.TryQueue(Protocol.Build(b => { b.WriteString("type", Protocol.Event); b.WritePropertyName("event"); b.WriteRawValue(eventJson, true); }));
         }
 
-        public bool SendRaw(string line) { var w = _w; return w != null && Connected && w.TryQueue(line); }
+        public bool SendRaw(string line)
+        {
+            if (_local != null) { if (!Connected) return false; SendLocal(line); return true; }
+            var w = _w; return w != null && Connected && w.TryQueue(line);
+        }
 
         public int PendingEvents => _w?.OutCount ?? 0;
 
