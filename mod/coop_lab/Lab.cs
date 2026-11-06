@@ -450,7 +450,16 @@ namespace MagicSurvivalLab
                 }
                 return "нет друга";
             });
+            try { parts.Add((string)CallMethod(s, "ProfileStatus")); } catch (Exception e) { parts.Add("profile=ошибка " + Inner(e).Message); }
             return string.Join("; ", parts);
+        }
+
+        public string CoopProfileReset()
+        {
+            var s = CoopSession();
+            if (s == null) return "coop=нет";
+            CallMethod(s, "ResetFrameProfile");
+            return "замер кадра и сети обнулён";
         }
 
         // Мир друга совмещён с нашим по точкам старта, так что хост и гость на своих стартах стоят рядом.
@@ -600,6 +609,16 @@ namespace MagicSurvivalLab
             }
             finally { TrySet(cheat, "_minus", false); }
             return $"заклинание {id}: {before} → {Level()}";
+        }
+
+        public string MaxMagic()
+        {
+            var cheat = ModTarget("coop_cheat", "_c");
+            if (cheat == null) return "нет coop_cheat";
+            CallMethod(cheat, "MaxAll");
+            var spells = GetMember(cheat, "_spells");
+            int max = Enumerable.Range(1, 21).Count(id => Convert.ToInt32(CallMethod(spells, "Level", id)) > 0);
+            return $"заклинаний с уровнем: {max} из 21";
         }
 
         private const string LearnList = "List_AllyAbilityLearn";

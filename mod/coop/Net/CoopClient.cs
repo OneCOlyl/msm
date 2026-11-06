@@ -32,6 +32,7 @@ namespace MagicSurvivalCoop.Net
         public volatile Status State = Status.Off;
         public volatile string LastError;
         public volatile int PingMs = -1;
+        public readonly NetStats Net = new NetStats();
         public string Host => _host;
         public int Port => _port + Volatile.Read(ref _portIdx);
         public double RetrySec = 3;
@@ -272,6 +273,7 @@ namespace MagicSurvivalCoop.Net
                             var line = lr.ReadLine();
                             if (line == null) break;
                             Volatile.Write(ref lastRx, Clock.Elapsed.TotalSeconds);
+                            _c.Net.Received(lr.LastBytes);
                             if (line.Length == 0) continue;
                             JsonElement el;
                             try { using var doc = JsonDocument.Parse(line); el = doc.RootElement.Clone(); }
@@ -292,7 +294,11 @@ namespace MagicSurvivalCoop.Net
                             if (type == Protocol.Pong)
                             {
                                 var sent = Protocol.Num(el, "t", -1);
-                                if (sent >= 0) _c.Publish(this, () => _c.PingMs = (int)Math.Max(0, Clock.Elapsed.TotalMilliseconds - sent));
+                                if (sent >= 0)
+                                {
+                                    int ms = (int)Math.Max(0, Clock.Elapsed.TotalMilliseconds - sent);
+                                    if (_c.Publish(this, () => _c.PingMs = ms)) _c.Net.Ping(ms);
+                                }
                                 continue;
                             }
                             if (type == Protocol.RoomJoined || type == Protocol.RoomCreated)
@@ -366,18 +372,19 @@ namespace MagicSurvivalCoop.Net
                 }
             }
 
+            private void Write(NetworkStream s, string line)
+            {
+                var b = Encoding.UTF8.GetBytes(line + "\n");
+                s.Write(b, 0, b.Length);
+                _c.Net.Sent(b.Length);
+            }
+
             private string EnterMessage() => Create
                 ? Protocol.Build(w => { w.WriteString("type", Protocol.CreateRoom); w.WriteString("name", Name); w.WriteString("clientId", ClientId); w.WriteNumber("protocol", Protocol.Version); })
                 : Protocol.Build(w => { w.WriteString("type", Protocol.JoinRoom); w.WriteString("roomCode", RoomCode); w.WriteString("name", Name); w.WriteString("clientId", ClientId); w.WriteNumber("protocol", Protocol.Version); });
         }
 
         private sealed class WrongServerException : Exception { public WrongServerException(string m) : base(m) { } }
-
-        private static void Write(NetworkStream s, string line)
-        {
-            var b = Encoding.UTF8.GetBytes(line + "\n");
-            s.Write(b, 0, b.Length);
-        }
 
         private static JsonElement Local(string type)
         {

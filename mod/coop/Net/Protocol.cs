@@ -88,6 +88,7 @@ namespace MagicSurvivalCoop.Net
         private readonly byte[] _buf = new byte[4096];
         private int _pos, _len;
         private readonly MemoryStream _line = new MemoryStream();
+        public int LastBytes;
 
         public LineReader(Stream s) { _s = s; }
 
@@ -107,7 +108,7 @@ namespace MagicSurvivalCoop.Net
                 while (_pos < _len && _buf[_pos] != (byte)'\n') _pos++;
                 _line.Write(_buf, start, _pos - start);
                 if (_line.Length > Protocol.MaxLineBytes) throw new IOException("строка длиннее " + Protocol.MaxLineBytes + " байт");
-                if (_pos < _len) { _pos++; return Encoding.UTF8.GetString(_line.GetBuffer(), 0, (int)_line.Length).TrimEnd('\r'); }
+                if (_pos < _len) { _pos++; LastBytes = (int)_line.Length + 1; return Encoding.UTF8.GetString(_line.GetBuffer(), 0, (int)_line.Length).TrimEnd('\r'); }
             }
         }
     }

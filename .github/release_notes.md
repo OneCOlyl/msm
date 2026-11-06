@@ -1,9 +1,11 @@
 ## Не выпущено
 
+- For developers: network numbers at the end of a battle in `modkit.log` (`сеть за … с`: bytes per second sent and received, the longest line, ping average, maximum and spread), the same in `Lab.CoopStatus`. `tools/lab.py`: the `perf` scenario (200 enemies, all spells maxed, 60 s), `--json`, exit code 1 on any failure, adb from `ADB` or `PATH`. The `device-test` skill for agents.
 - For developers: the version comes only from the git tag: `vX.Y.Z` for co-op, `tools-X.Y.Z` for the three developer mods (one version for all three). The repository keeps `0.0.0-dev` in `mod.json` and `.csproj`; `build.sh` takes the version from `VERSION`, else from `git describe`, and writes it only into `mod.json` inside the archive. A release is published by pushing the tag. A build with uncommitted changes gets `-dirty.<time>`, so `tools/phones.py` installs it without bumping the version.
 
 **По-русски:**
 
+- Для разработчиков: сетевые цифры в итоге боя в `modkit.log` (`сеть за … с`: байт в секунду на отправку и приём, самая длинная строка, пинг: среднее, максимум, разброс), то же в `Lab.CoopStatus`. `tools/lab.py`: сценарий `perf` (200 врагов, все магии на максимум, 60 с), `--json`, код выхода 1 при любом провале, adb из `ADB` или `PATH`. Скилл `device-test` для агентов.
 - Для разработчиков: версия берётся только из метки git: `vX.Y.Z` у «Кооператива», `tools-X.Y.Z` у трёх модов разработчика (одна версия на все три). В репозитории в `mod.json` и `.csproj` стоит `0.0.0-dev`; `build.sh` берёт версию из `VERSION`, иначе из `git describe`, и пишет её только в `mod.json` внутри архива. Релиз выходит по пушу метки. Сборка с незакоммиченными правками получает `-dirty.<время>`, поэтому `tools/phones.py` ставит её без повышения версии.
 
 ## Co-op 1.7.8

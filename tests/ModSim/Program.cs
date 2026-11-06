@@ -586,8 +586,14 @@ Check(A.Toasts.Any(t => t.Contains("погиб")), "хосту показано 
 Check(!g.Alive, "союзник погибшего друга убран");
 
 Console.WriteLine("5. конец боя и выход");
+var prof = (string)B.Session.GetType().GetMethod("ProfileStatus", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(B.Session, null);
+var profKv = prof.Split("; ").Select(x => x.Split('=')).Where(x => x.Length == 2).ToDictionary(x => x[0], x => double.Parse(x[1], System.Globalization.CultureInfo.InvariantCulture));
+Check(profKv.GetValueOrDefault("frames") > 0 && profKv.GetValueOrDefault("netTx") > 0 && profKv.GetValueOrDefault("netRx") > 0 && profKv.GetValueOrDefault("netRxMax") > 0,
+      $"замер для lab.py perf у гостя: кадры, отправка и приём: {prof}");
 A.Spells.InBattle = B.Spells.InBattle = false; A.Emit("battleEnd"); B.Emit("battleEnd");
 TickAll(300);
+string netLine; lock (A.Ctx.Logs) netLine = A.Ctx.Logs.LastOrDefault(l => l.StartsWith("сеть за "));
+Check(netLine != null && netLine.Contains("Б/с") && netLine.Contains("самая длинная строка"), $"итог сети за бой в журнале хоста: {netLine}");
 Check(A.Comp.Spawned.All(c => !c.Alive), "после боя союзников нет");
 Check(CloneGo.Made.All(c => c.DestroyedForTest), "после боя все копии Щита/Спутников/Духов удалены");
 B.Call("Disconnect");
@@ -909,7 +915,8 @@ class FakeCtx : ModContext
     public IReadOnlyDictionary<string, double> Settings => Set;
     public double Setting(string key) => Set.TryGetValue(key, out var v) ? v : 0;
     public void SetSetting(string key, double value) => Set[key] = value;
-    public void Log(string msg) { if (Environment.GetEnvironmentVariable("SIMLOG") != null) Console.WriteLine($"    [{Name}] {msg}"); }
+    public readonly List<string> Logs = new();
+    public void Log(string msg) { lock (Logs) Logs.Add(msg); if (Environment.GetEnvironmentVariable("SIMLOG") != null) Console.WriteLine($"    [{Name}] {msg}"); }
     public void Warn(string msg) => Console.WriteLine($"    [{Name}] WARN {msg}");
     public ModEvents Events => new Ev(this);
     public void Expose(object api) { }

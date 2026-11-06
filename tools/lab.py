@@ -2,18 +2,28 @@
 """Проверки кооператива на двух телефонах через полигон coop_lab и консоль coop_debug.
 
 Оба телефона подключены по USB, на обоих включены coop, coop_debug, coop_lab (и coop_cheat для магий), оба в бою.
-Запуск:  python tools/lab.py [--host SERIAL] [--guest SERIAL] [--out отчёт.txt] mobs spells drop
+Запуск:  python tools/lab.py [--host SERIAL] [--guest SERIAL] [--out отчёт.txt] [--json итог.json] mobs spells drop perf
+Код выхода 1 при любом провале, в том числе без телефонов.
 """
 import argparse
+import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
 import threading
 import time
 
-ADB = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Android", "Sdk", "platform-tools", "adb.exe")
+
+def find_adb():
+    if os.environ.get("ADB"):
+        return os.environ["ADB"]
+    return shutil.which("adb") or os.path.join(os.environ.get("LOCALAPPDATA", ""), "Android", "Sdk", "platform-tools", "adb.exe")
+
+
+ADB = find_adb()
 LAB = "T:coop_lab:MagicSurvivalLab.Lab/Current"
 HOST_PORT, GUEST_PORT = 8771, 8772
 HOST_SERIAL, GUEST_SERIAL = "07838C5001A00540", "985AY130RJ"
@@ -22,12 +32,30 @@ SPELL_NAMES = {1: "Пуля", 2: "Огн. шар", 3: "Дух", 4: "Спутни
                15: "Испепеление", 16: "Энергопуля", 17: "Метель", 18: "Луч", 19: "Маг. круг", 20: "Лав. поле", 21: "Вспышка"}
 ORB_SPELLS = {3: "sp", 4: "sa", 6: "sh", 8: "ez", 19: "mc"}
 
+PERF_KEYS = ("frames", "fps", "frameAvg", "frameMax", "slowFrames", "netSec", "netTx", "netRx", "netTxMax", "netRxMax",
+             "pingAvg", "pingMax", "pingSd", "pings")
 report = []
+results = []
+
+
+class Abort(Exception):
+    pass
 
 
 def say(line):
     print(line, flush=True)
     report.append(line)
+
+
+def begin(name):
+    results.append({"name": name, "passed": True, "checks": [], "numbers": {}})
+
+
+def note(kind, what):
+    """НЕТ и ИНФО: не провал мода, но в итоге видно."""
+    say(f"{kind} {what}")
+    if results:
+        results[-1]["checks"].append({"ok": None, "text": what})
 
 
 def console(port, cmd, timeout=60):
@@ -60,21 +88,41 @@ def puppets(port):
 
 def check(ok, what):
     say(("PASS " if ok else "FAIL ") + what)
+    if results:
+        results[-1]["checks"].append({"ok": bool(ok), "text": what})
+        results[-1]["passed"] &= bool(ok)
     return ok
 
 
+def connected_serials():
+    try:
+        out = subprocess.run([ADB, "devices"], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise Abort(f"adb не запускается ({ADB}): {e}. Укажите путь в переменной ADB или добавьте adb в PATH") from e
+    return {ln.split()[0] for ln in out.splitlines()[1:] if ln.strip().endswith("\tdevice")}
+
+
 def setup(host, guest):
+    have = connected_serials()
+    for role, serial in (("хост", host), ("гость", guest)):
+        if serial not in have:
+            raise Abort(f"{role}: телефон {serial} не подключён по adb (подключены: {', '.join(sorted(have)) or 'нет'})")
     for serial, port in ((host, HOST_PORT), (guest, GUEST_PORT)):
-        subprocess.run([ADB, "-s", serial, "forward", f"tcp:{port}", "tcp:8770"], check=True, capture_output=True)
-    h, g = coop(HOST_PORT), coop(GUEST_PORT)
+        r = subprocess.run([ADB, "-s", serial, "forward", f"tcp:{port}", "tcp:8770"], capture_output=True, text=True)
+        if r.returncode:
+            raise Abort(f"adb forward на {serial} не вышел: {r.stderr.strip()}")
+    try:
+        h, g = coop(HOST_PORT), coop(GUEST_PORT)
+    except OSError as e:
+        raise Abort(f"консоль coop_debug не отвечает ({e}): игра запущена, coop_debug включён?") from e
     if h.get("coop") != "1" or g.get("coop") != "1":
-        sys.exit("нет мода coop или coop_lab на одном из телефонов")
+        raise Abort("нет мода coop или coop_lab на одном из телефонов")
     if h.get("connected") != "True" or g.get("connected") != "True":
-        sys.exit("телефоны не на связи: в окне «Кооп» создайте игру у хоста и подключите друга")
+        raise Abort("телефоны не на связи: в окне «Кооп» создайте игру у хоста и подключите друга")
     if h.get("hosting") != "True":
-        sys.exit("первый телефон (--host) не хост")
+        raise Abort("первый телефон (--host) не хост")
     if h.get("inRun") != "True" or g.get("inRun") != "True":
-        sys.exit("оба должны быть в бою")
+        raise Abort("оба должны быть в бою")
     for port in (HOST_PORT, GUEST_PORT):
         lab(port, "SetImmortal true")
         lab(port, "SetMana false")
@@ -84,6 +132,7 @@ def setup(host, guest):
 
 
 def mobs():
+    begin("mobs")
     say("== мобы хоста у друга")
     cases = [(f"тип {t}", f"Spawn {t} 3", str(t)) for t in (1, 6, 11, 13, 16, 25, 41, 50)]
     cases += [("эпические", "SpawnEpic 6 5", "s2"), ("особые", "SpawnSpecial 5", "s1"), ("переход", "Transition", "s3")]
@@ -96,13 +145,14 @@ def mobs():
         got = puppets(GUEST_PORT)
         n = sum(v for k, v in got.items() if k == key or (key.startswith("s") and k.endswith(key)))
         if key.isdigit() and not re.search(rf"\b{key}×", host):
-            say(f"НЕТ  {name}: у хоста «{made}», но через 5 с их нет ({host.split('; ')[-1]})")
+            note("НЕТ ", f"{name}: у хоста «{made}», но через 5 с их нет ({host.split('; ')[-1]})")
             continue
         check(n > 0, f"{name}: у хоста «{made}», {host.split('; ')[-1]}; у друга копий {n} ({got})")
     lab(HOST_PORT, "ClearEnemies")
 
 
 def spells(ids, wait):
+    begin("spells")
     say("== магии хоста у друга")
     lab(HOST_PORT, "Spawn 6 20")
     for i in ids:
@@ -128,6 +178,7 @@ def spells(ids, wait):
 
 
 def drop():
+    begin("drop")
     say("== обрыв связи у друга")
     lab(GUEST_PORT, "CoopStopClient")
     time.sleep(6)
@@ -224,6 +275,7 @@ def magic(host, guest, casters, kinds, max_wait, shots):
     меряются по sent хоста и replayed гостя, снаряды гостя по sent гостя и replayed хоста, счётчики не пересекаются.
     Пункт закончен, как только все новые снаряды повторены или видна орбита; молчащий ждёт max_wait секунд.
     """
+    begin("magic")
     say("== магии, особенности и комбинации: " + ", ".join("кастует " + ("хост" if c == "host" else "гость") for c in casters))
     calm_arena()
     for port in (HOST_PORT, GUEST_PORT):
@@ -276,13 +328,13 @@ def magic(host, guest, casters, kinds, max_wait, shots):
                 if errors or fails:
                     check(False, f"{what}: ошибки повторов {fails}, исключений {len(errors)}: {'; '.join(sorted(set(errors))[:3])}")
                 elif not_given:
-                    say(f"НЕТ  {what}: не выдалось ({'; '.join(not_given)})")
+                    note("НЕТ ", f"{what}: не выдалось ({'; '.join(not_given)})")
                 elif missed:
                     check(False, f"{what}: {sees} не повторил снаряды {missed} ({shown})")
                 elif new or orbs or arma:
                     check(True, f"{what}: {shown}")
                 else:
-                    say(f"ИНФО {what}: без врагов ничего не пересылается")
+                    note("ИНФО", f"{what}: без врагов ничего не пересылается")
         batch(cp, ["ResetMagic"])
 
     threads = [threading.Thread(target=run, args=(c,)) for c in casters]
@@ -292,9 +344,73 @@ def magic(host, guest, casters, kinds, max_wait, shots):
         t.join()
 
 
+def enemy_count():
+    m = re.search(r"врагов (\d+)", lab(HOST_PORT, "Status"))
+    return int(m.group(1)) if m else 0
+
+
+def top_up(want, kind):
+    """Магии на максимуме выбивают врагов, поэтому их число держится добором до want."""
+    for _ in range(10):
+        n = enemy_count()
+        if n >= want:
+            return n
+        lab(HOST_PORT, f"Spawn {kind} {min(50, want - n)}")
+    return enemy_count()
+
+
+def perf(seconds, want, kind):
+    """Нагрузка: спокойная арена, want врагов, все магии на максимум у обоих; итог кадра и сети за seconds секунд."""
+    begin("perf")
+    say(f"== нагрузка: {want} врагов, все магии на максимум, {seconds:.0f} с")
+    calm_arena()
+    for port, role in ((HOST_PORT, "хост"), (GUEST_PORT, "гость")):
+        say(f"{role}: {lab(port, 'MaxMagic')}")
+    top_up(want, kind)
+    for port in (HOST_PORT, GUEST_PORT):
+        lab(port, "CoopProfileReset")
+    t0, seen = time.time(), []
+    while time.time() - t0 < seconds:
+        time.sleep(min(5, max(0.0, seconds - (time.time() - t0))))
+        seen.append(top_up(want, kind))
+    numbers = {}
+    for port, role in ((HOST_PORT, "host"), (GUEST_PORT, "guest")):
+        st = coop(port)
+        numbers[role] = {k: float(st[k]) for k in PERF_KEYS if k in st}
+        numbers[role]["puppets"] = sum(puppets(port).values()) if role == "guest" else None
+    numbers["enemiesAvg"] = round(sum(seen) / len(seen), 1) if seen else 0
+    results[-1]["numbers"] = numbers
+    say(f"врагов у хоста в среднем {numbers['enemiesAvg']}")
+    say("| | " + " | ".join(PERF_KEYS) + " |")
+    say("|---|" + "---|" * len(PERF_KEYS))
+    for role in ("host", "guest"):
+        say(f"| {role} | " + " | ".join(f"{numbers[role][k]:g}" if k in numbers[role] else "—" for k in PERF_KEYS) + " |")
+    for role, name in (("host", "хост"), ("guest", "гость")):
+        n = numbers[role]
+        check(n.get("frames", 0) > 0, f"{name}: кадров {n.get('frames', 0):g}, средний кадр мода {n.get('frameAvg', 0):g} мс")
+        check(n.get("netTx", 0) > 0 and n.get("netRx", 0) > 0, f"{name}: сеть {n.get('netTx', 0):g} Б/с отправка, {n.get('netRx', 0):g} Б/с приём")
+        check(max(n.get("netTxMax", 0), n.get("netRxMax", 0)) < 16384, f"{name}: самая длинная строка {max(n.get('netTxMax', 0), n.get('netRxMax', 0)):g} Б из 16384")
+    for port in (HOST_PORT, GUEST_PORT):
+        lab(port, "ResetMagic")
+    lab(HOST_PORT, "NoEnemies")
+
+
 def phone_time(serial):
     out = subprocess.run([ADB, "-s", serial, "shell", "date", "+%s"], capture_output=True, text=True).stdout.strip()
     return float(out) if out.isdigit() else time.time()
+
+
+def run_scenarios(a):
+    setup(a.host, a.guest)
+    for name in a.scenarios:
+        if name == "magic":
+            magic(a.host, a.guest, ["host", "guest"] if a.caster == "both" else [a.caster], a.kinds.split(","), a.wait, a.shots)
+        elif name == "spells":
+            spells([int(x) for x in a.spells.split(",")] if a.spells else list(SPELL_NAMES), a.wait)
+        elif name == "perf":
+            perf(a.perf_sec, a.perf_enemies, a.perf_type)
+        else:
+            {"mobs": mobs, "drop": drop}[name]()
 
 
 def main():
@@ -309,22 +425,32 @@ def main():
     ap.add_argument("--kinds", default="spells,traits,combos", help="для magic: spells, traits, combos")
     ap.add_argument("--shots", help="для magic: папка для скриншотов обоих")
     ap.add_argument("--caster", default="both", choices=["host", "guest", "both"], help="для magic: кто кастует")
-    ap.add_argument("scenarios", nargs="+", choices=["mobs", "spells", "drop", "magic"])
+    ap.add_argument("--json", help="итог по сценариям в файл JSON: имя, прошёл, проверки, цифры")
+    ap.add_argument("--perf-sec", type=float, default=60, help="для perf: длина замера, с")
+    ap.add_argument("--perf-enemies", type=int, default=200, help="для perf: число врагов")
+    ap.add_argument("--perf-type", type=int, default=6, help="для perf: тип врагов")
+    ap.add_argument("scenarios", nargs="+", choices=["mobs", "spells", "drop", "magic", "perf"])
     a = ap.parse_args()
-    setup(a.host, a.guest)
-    for name in a.scenarios:
-        if name == "magic":
-            magic(a.host, a.guest, ["host", "guest"] if a.caster == "both" else [a.caster], a.kinds.split(","), a.wait, a.shots)
-        elif name == "spells":
-            spells([int(x) for x in a.spells.split(",")] if a.spells else list(SPELL_NAMES), a.wait)
-        else:
-            {"mobs": mobs, "drop": drop}[name]()
+    error = None
+    try:
+        run_scenarios(a)
+    except Abort as e:
+        error = str(e)
+    except OSError as e:
+        error = f"консоль coop_debug оборвалась: {e}"
+    if error:
+        say(f"ОШИБКА {error}")
+        if results:
+            results[-1]["passed"] = False
     fails = sum(1 for r in report if r.startswith("FAIL"))
     say(f"ИТОГ: {sum(1 for r in report if r.startswith('PASS'))} PASS, {fails} FAIL")
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:
             f.write("\n".join(report) + "\n")
-    sys.exit(1 if fails else 0)
+    if a.json:
+        with open(a.json, "w", encoding="utf-8") as f:
+            json.dump({"passed": not error and not fails, "error": error, "scenarios": results}, f, ensure_ascii=False, indent=2)
+    sys.exit(1 if error or fails else 0)
 
 
 if __name__ == "__main__":
