@@ -77,7 +77,6 @@ namespace CoopCheat
         private readonly Dictionary<int, int> _max = new Dictionary<int, int>();
 
         private UiKit.HudButton _toggle, _mode, _close, _levelUp;
-        private Type _mgrType;
         private readonly Dictionary<int, UiKit.HudButton> _buttons = new Dictionary<int, UiKit.HudButton>();
         private readonly Dictionary<int, string> _shown = new Dictionary<int, string>();   // текст на кнопке: SetText только при изменении
         private readonly Dictionary<string, Dictionary<int, int>> _counts = new Dictionary<string, Dictionary<int, int>>();   // список игры → сколько раз в нём номер; чистится при каждом обновлении
@@ -100,7 +99,6 @@ namespace CoopCheat
             // менеджер способностей ловим в начале его пересчёта — игра вызывает его в начале каждого боя и при выборе заклинания
             TryHook("V_Ability_Manager.AbilityStatApply", () => ctx.Before("V_Ability_Manager", "AbilityStatApply", 1, (s, a) => _abilityMgr = s));
             TryHook("V_Ability_Manager.ManaGain", () => ctx.Before("V_Ability_Manager", "ManaGain", 1, (s, a) => _abilityMgr = s));
-            try { _mgrType = Hooks.FindType("V_Ability_Manager"); } catch { }
             // StartInformation_B запускает корутины заклинаний по уровням; перед ней возвращаем выданные уровни, если пересчёт их собрал заново
             TryHook("C_Battle_AllyUnit.StartInformation_B", () => ctx.Before("C_Battle_AllyUnit", "StartInformation_B", 0, (s, a) => ctx.Guard("уровни перед запуском", EnforceLevels)));
             ctx.Events.On("battleStart", _ => { _forced.Clear(); ctx.Guard("кнопка", ShowToggle); });
@@ -354,17 +352,25 @@ namespace CoopCheat
         // ------------------------------------------------------------ уровень героя: окно выбора магии
 
         // ManaGain прибавляет ману к Z_Database.AllyUnitGlobal_ManaStock и, когда набрано AllyUnitGlobal_ManaCost, сразу
-        // открывает окно выбора (V_Ability_Manager.Ability_SelectON). Если окно не открылось, следующие порции в 1,5 раза больше
+        // открывает окно выбора, если оно ещё не открыто. Если окно не открылось, следующие порции в 1,5 раза больше
         private const double FirstPortion = 10, MaxPortion = 200000;
         private double _portion = -1, _given;
         private int _levelQueue;
 
+        // Не Ability_SelectON: флаг бывает True и после закрытия окна, тогда очередь уровней не разбиралась.
+        private static readonly string[] SelectCanvases = { "Obj_CanvasAbility", "Obj_CanvasAbilityCh", "Obj_CanvasMagicCom", "Obj_CanvasUltimate" };
+
         private bool SelectOpen()
         {
-            if (_mgrType == null) return false;
-            var p = _mgrType.GetProperty("Ability_SelectON", Any);
-            object v = p != null ? p.GetValue(null) : _mgrType.GetField("Ability_SelectON", Any)?.GetValue(null);
-            return v is bool b && b;
+            var mgr = _abilityMgr;
+            if (mgr == null) return false;
+            foreach (var name in SelectCanvases)
+            {
+                var p = mgr.GetType().GetProperty(name, Any);
+                object go = p != null ? p.GetValue(mgr) : mgr.GetType().GetField(name, Any)?.GetValue(mgr);
+                if (go != null && Invoke(go, "get_activeSelf") is bool b && b) return true;
+            }
+            return false;
         }
 
         private void StartLevelUp()

@@ -88,18 +88,18 @@ Console.WriteLine("2в. уровень героя +1: недостающая м�
     t.GetField("_abilityMgr", fl).SetValue(cheat, new V_Ability_Manager());
     Z_Database.AllyUnitGlobal_ManaCost = 713; Z_Database.AllyUnitGlobal_ManaStock = 74;
     t.GetMethod("StartLevelUp", fl).Invoke(cheat, null);
-    Check(V_Ability_Manager.Ability_SelectON && V_Ability_Manager.ManaCalls == 1, $"окно выбора открылось сразу, вызовов ManaGain {V_Ability_Manager.ManaCalls}");
+    Check(V_Ability_Manager.Canvas.activeSelf && V_Ability_Manager.ManaCalls == 1, $"окно выбора открылось сразу, вызовов ManaGain {V_Ability_Manager.ManaCalls}");
     Check(Z_Database.AllyUnitGlobal_ManaStock < 1, $"лишней маны нет: осталось {Z_Database.AllyUnitGlobal_ManaStock}");
     t.GetMethod("LevelStep", fl).Invoke(cheat, null);
     int calls = V_Ability_Manager.ManaCalls;
     t.GetMethod("StartLevelUp", fl).Invoke(cheat, null);                 // окно ещё открыто — второй уровень в очередь
     t.GetMethod("LevelStep", fl).Invoke(cheat, null);
     Check(V_Ability_Manager.ManaCalls == calls, "пока окно открыто, мана не выдаётся");
-    V_Ability_Manager.Ability_SelectON = false;                          // игрок выбрал заклинание
-    for (int i = 0; i < 40 && !V_Ability_Manager.Ability_SelectON; i++) t.GetMethod("LevelStep", fl).Invoke(cheat, null);
-    Check(V_Ability_Manager.Ability_SelectON, "второй уровень из очереди — окно снова открылось");
+    V_Ability_Manager.Canvas.SetActive(false);                           // игрок выбрал заклинание, а Ability_SelectON остался True
+    for (int i = 0; i < 40 && !V_Ability_Manager.Canvas.activeSelf; i++) t.GetMethod("LevelStep", fl).Invoke(cheat, null);
+    Check(V_Ability_Manager.Canvas.activeSelf, "второй уровень из очереди — окно снова открылось");
     Check(ctx.Logs.Any(l => l.Contains("окно выбора открылось")), "в журнале: сколько маны понадобилось");
-    V_Ability_Manager.Ability_SelectON = false;
+    V_Ability_Manager.Canvas.SetActive(false); V_Ability_Manager.Ability_SelectON = false;
 }
 
 Console.WriteLine("3. вне боя");

@@ -34,13 +34,16 @@ namespace Il2Cpp
         public static Action BeforeStartInformationB;                 // как хук Harmony на StartInformation_B
         public static readonly HashSet<int> Started = new HashSet<int>();   // заклинания, чьи корутины запущены
         public void Update() { }
-        // уровень героя: мана копится, на пороге открывается окно выбора (как в игре: Ability_SelectON)
+        // Как в игре: окно открывается, только если оно ещё закрыто; Ability_SelectON после выбора может остаться True.
         public static bool Ability_SelectON { get; set; }
+        public static readonly GameObject Canvas = new GameObject();
+        public GameObject Obj_CanvasAbility => Canvas;
         public static int ManaCalls;
         public void ManaGain(float amount)
         {
             ManaCalls++; Z_Database.AllyUnitGlobal_ManaStock += amount;
-            if (Z_Database.AllyUnitGlobal_ManaStock >= Z_Database.AllyUnitGlobal_ManaCost) { Z_Database.AllyUnitGlobal_ManaStock -= Z_Database.AllyUnitGlobal_ManaCost; Ability_SelectON = true; }
+            if (Z_Database.AllyUnitGlobal_ManaStock >= Z_Database.AllyUnitGlobal_ManaCost && !Canvas.activeSelf)
+            { Z_Database.AllyUnitGlobal_ManaStock -= Z_Database.AllyUnitGlobal_ManaCost; Ability_SelectON = true; Canvas.SetActive(true); }
         }
         public void AbilityStatApply(int type)
         {
@@ -48,5 +51,13 @@ namespace Il2Cpp
             BeforeStartInformationB?.Invoke();
             for (int id = 1; id <= 21; id++) if (Z_Database.List_AllyMagicLevel[id] >= 1) Started.Add(id);   // StartInformation_B
         }
+    }
+}
+namespace Il2Cpp
+{
+    public class GameObject
+    {
+        public bool activeSelf { get; private set; }
+        public void SetActive(bool v) => activeSelf = v;
     }
 }
