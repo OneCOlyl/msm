@@ -189,9 +189,22 @@ namespace MagicSurvivalCoop
             catch (Exception e) { if (++_orbFails <= 3) _ctx.Log("орбиты: " + Inner(e).Message); }
         }
 
+        // Орбиты: при смене вида и не реже OrbSendSec, а не в каждом состоянии. Угол спутников получатель досчитывает
+        // по скорости, но за OrbSendSec он не должен уйти больше чем на радиан, иначе это читается как перестройка круга.
+        private const double OrbSendSec = 0.1, NoOrbSendSec = 1;
+        private int _orbSig = int.MinValue;
+        private double _orbSentAt = -100;
+
         private void WriteMyOrbits(Utf8JsonWriter w)
         {
-            if (_myOrbSatA + _myOrbSatB + _myOrbSpirits == 0 && !_myOrbShield && !_myZone && !_myMc) return;
+            bool none = _myOrbSatA + _myOrbSatB + _myOrbSpirits == 0 && !_myOrbShield && !_myZone && !_myMc;
+            int sig = none ? 0 : HashCode.Combine(
+                HashCode.Combine(_myOrbSatA, _myOrbSatB, _myOrbSpirits, _myOrbShield, _myImgShield, _myImgSatA, _myImgSatB, _myImgSpirit),
+                HashCode.Combine(_myZone, _myZoneOn, _myZoneImg, _myZoneEn, Math.Round(_myZoneA, 2)), CircleSig());
+            double now = Clock.Elapsed.TotalSeconds;
+            if (sig == _orbSig && now - _orbSentAt < (none ? NoOrbSendSec : OrbSendSec)) return;
+            _orbSig = sig; _orbSentAt = now;
+            if (none) { w.WriteNull("orb"); return; }
             w.WriteStartObject("orb");
             w.WriteNumber("sa", _myOrbSatA); w.WriteNumber("sb", _myOrbSatB); w.WriteNumber("sp", _myOrbSpirits); w.WriteNumber("sh", _myOrbShield ? 1 : 0);
             w.WriteNumber("aa", Math.Round(_myOrbAngA, 3)); w.WriteNumber("ab", Math.Round(_myOrbAngB, 3));
@@ -575,7 +588,7 @@ namespace MagicSurvivalCoop
         private static void ReadOrbits(Partner p, JsonElement s, double now)
         {
             double senderT = Protocol.Num(s, "t", -1);
-            var o = Protocol.Obj(s, "orb");
+            if (!s.TryGetProperty("orb", out var o)) return;
             var st = p.Orb ??= new OrbState();
             if (o.ValueKind != JsonValueKind.Object) { st.SatA = st.SatB = st.Spirits = 0; st.Shield = false; st.Zone = false; st.Mc = st.McOn = false; st.SpiritOff = null; return; }
             st.SatA = Clamp((int)Protocol.Num(o, "sa"), 0, 14);
@@ -863,6 +876,7 @@ namespace MagicSurvivalCoop
         private void ResetOrbits()
         {
             _sprites.Clear(); _spriteScanDone = false; _spriteHarvestAt = -1; _myOrbState = null; _myOrbLogs = 0; _orbStateLogs = 0; _mySpiritTr.Clear(); _mySpiritOff.Clear();
+            _orbSig = int.MinValue; _orbSentAt = -100;
         }
     }
 }

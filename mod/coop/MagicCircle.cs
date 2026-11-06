@@ -49,6 +49,8 @@ namespace MagicSurvivalCoop
             catch (Exception e) { if (++_orbFails <= 6) _ctx.Log("маг. круг: " + Inner(e).Message); }
         }
 
+        private int CircleSig() => !_myMc ? 0 : HashCode.Combine(_myMcOn, Math.Round(_myMcScale, 3), _myMcImg[0], _myMcImg[1], _myMcImg[2]);
+
         private void WriteMyCircle(Utf8JsonWriter w)
         {
             if (!_myMc) return;

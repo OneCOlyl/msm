@@ -752,7 +752,7 @@ namespace MagicSurvivalCoop
         private void ResendAll()
         {
             _rareLeft = RareSends;
-            _clockSentAt = _chestSentAt = -100;
+            _clockSentAt = _chestSentAt = _orbSentAt = -100;
             if (_hosting) ResendLooks();
         }
 

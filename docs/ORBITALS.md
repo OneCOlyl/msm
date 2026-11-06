@@ -34,7 +34,7 @@ Data: hero probe (`coop_probe` 0.4.0–0.5.0, 2026-10-22), a hero with all 21 sp
 1. The friend sends: number of satellites (A and B), ring rotation angle, number of spirits, whether the shield is on.
 2. The receiver makes copies of their own template objects (`Instantiate`) around the ally: satellites on a 2.25 circle at the same angle, spirits nearby, the shield on the ally.
 3. Copy experiment (`coop_probe` 0.5.1): copies are created and activated, the game doesn't move them. Confirmed.
-4. Done in Co-op 1.4.0 (`mod/coop/Orbitals.cs`): the `orb` field in the state (`sa`, `sb`, `sp`, `sh`, `aa`, `ab`), 4 times per second; the angle is extrapolated from the estimated rotation speed.
+4. Done in Co-op 1.4.0 (`mod/coop/Orbitals.cs`): the `orb` field in the state (`sa`, `sb`, `sp`, `sh`, `aa`, `ab`), 4 times per second; the angle is extrapolated from the estimated rotation speed. Since the version after 1.7.8 `orb` goes on a change of the look (counts, pictures, shield, zone flashing, magic circle) and at least 10 times a second, not in every state; no orbits — `"orb": null` once a second; without the field the receiver keeps the previous values.
 
 ## Findings from the 1.4.5 logs (2026-10-23)
 - The Shield sprite is drawn by `SpriteRenderer_Shield`, and it is **not** inside `Obj_Shield` ("1100" has no renderer: `GetComponentInChildren` is empty on both the hero and the copy). Shield on means `IsShield_P` plus a non-empty sprite (`Shield2_01…04` change with charges). Since 1.4.6 `SpriteRenderer_Shield.gameObject` is copied, with offset and scale taken from the friend.
