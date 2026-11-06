@@ -350,12 +350,12 @@ def enemy_count():
 
 
 def top_up(want, kind):
-    """Магии на максимуме выбивают врагов, поэтому их число держится добором до want."""
+    """Магии на максимуме выбивают врагов: добор до want и большое здоровье."""
     for _ in range(10):
         n = enemy_count()
         if n >= want:
-            return n
-        lab(HOST_PORT, f"Spawn {kind} {min(50, want - n)}")
+            break
+        lab(HOST_PORT, f"SpawnTough {kind} {min(50, want - n)} 1000000")
     return enemy_count()
 
 

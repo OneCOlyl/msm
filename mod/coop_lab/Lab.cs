@@ -263,6 +263,25 @@ namespace MagicSurvivalLab
             return $"убито врагов: {n}";
         }
 
+        // Для замера нагрузки: иначе магии на максимуме выбивают врагов быстрее, чем их добирают.
+        public string ToughEnemies(float hp)
+        {
+            int n = 0;
+            foreach (var e in _enemies.Alive.ToList())
+                try
+                {
+                    if (Convert.ToSingle(GetMember(e.Raw, "Unit_Hp")) >= hp) continue;
+                    TrySet(e.Raw, "UnitApply_HpMax", hp);
+                    SetMember(e.Raw, "Unit_Hp", hp);
+                    n++;
+                }
+                catch { }
+            return $"здоровье {hp} у врагов: {n}";
+        }
+
+        // В одном кадре с созданием: магии на максимуме убивают врагов до следующей команды консоли.
+        public string SpawnTough(int type, int count, float hp) => Spawn(type, count) + "; " + ToughEnemies(hp);
+
         // Мобы
 
         // Заготовки боссов нужны боссам, а у босса на обычной заготовке Start_Unit падает.
