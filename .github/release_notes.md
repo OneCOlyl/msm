@@ -1,6 +1,7 @@
 ## Не выпущено
 
 - Enemy copies at a guest who stands apart from the host no longer vanish at the screen edge and reappear 2 s later: the game's walls that remove far-away enemies are off while shared enemies are on and the guest is near the host.
+- An enemy killed by a guest disappears at the guest sooner: in about 0.15–0.25 s instead of 0.3–0.6 s.
 - Enemy copies at a guest move smoothly, without jerks back: the guest shows them with a delay matched to how often the host sends enemies, a copy runs ahead of the last known point for at most 0.1 s, and positions are sent with 0.01 precision instead of 0.1. All players need the same version.
 - Less work per frame: the friend's magic circle angle is set only when it changes, lookups of game arrays and object searches are cached, and the chest scan (a search through the whole scene) runs once a second instead of twice. For developers: the frame profile has a separate «сундуки» (chests) part.
 - Less traffic from the host with many enemies: enemies far from guests are sent every other time, a full list once a second, positions without repeated fields; dead enemies are listed explicitly. The clock and chests are sent on change and twice a second.
@@ -13,6 +14,7 @@
 **По-русски:**
 
 - Копии врагов у гостя, стоящего в стороне от хоста, больше не пропадают у края экрана, чтобы появиться снова через 2 с: стены игры, которые убирают далёких врагов, выключены, пока включены общие враги и гость рядом с хостом.
+- Враг, убитый гостем, пропадает у гостя быстрее: примерно через 0,15–0,25 с вместо 0,3–0,6 с.
 - Копии врагов у гостя движутся плавно, без рывков назад: гость показывает их с задержкой по частоте, с которой хост шлёт врагов, копия уходит за последнюю известную точку не дальше чем на 0,1 с, а позиции идут с точностью 0,01 вместо 0,1. Нужна одна версия у всех игроков.
 - Меньше работы в кадре: угол маг. круга друга ставится только при изменении, поиск методов у массивов игры и поиск объектов кэшируются, скан сундуков (поиск по всей сцене) — раз в секунду, а не два. Для разработчиков: в замере кадра отдельная часть «сундуки».
 - Меньше трафика от хоста при большом числе врагов: дальние от гостей враги уходят через раз, полный список — раз в секунду, позиции без повторяющихся полей; погибшие перечисляются явно. Часы и сундуки — при изменении и два раза в секунду.

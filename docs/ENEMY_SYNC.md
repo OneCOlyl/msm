@@ -133,6 +133,10 @@ where the enemy is at the host, so at a guest standing apart from the host it di
 2 s later (the `lab.py mobs` check for type 16, spawned 12 units to the side, failed this way now and then). While the
 guest's own spawn is off, the mod turns `DestroyArea` off; when the guest goes away from the host and gets their own
 spawn back, and when shared enemies stop, the walls come back.
+A guest's lethal hit: the guest reads a copy's health every 2 frames and sends the damage at most every 0.05 s. If the
+host's enemy dies from it, its id goes in `eg` of the host's next state, even one without `en`. A copy used to vanish
+0.3–0.6 s after the hit (health every 6 frames, damage every 0.1 s, the dead only in the next enemy send), now in about
+0.15–0.25 s.
 An epic mob (type 6 in the test) is field-wise a normal mob of its type (`UnitCreateID 1`, no outline, varA/varB 0): it is
 special because it spawns in a batch on a circle; the copy at the guest is a normal copy of that type.
 1.6.67: the game also sets a transition mob's strength after `Start_Unit` (type 16: `UnitApply_HpMax_Bonus` 10000,
