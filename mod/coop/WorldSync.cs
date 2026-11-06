@@ -13,7 +13,10 @@ namespace MagicSurvivalCoop
     internal sealed partial class Session
     {
         private const int MaxSentEnemies = 250;          // ~20 байт на врага: строка состояния остаётся меньше 16 КБ
-        private const double EnemySendInterval = 0.09;
+        // 7 раз в секунду: копии всё равно интерполируются, а при 11 трафик к гостю с 200 врагами почти вдвое больше.
+        private const double EnemySendInterval = 0.14;
+        // Позиция врага с точностью 0,1: копии интерполируются, а на числах это четверть объёма en.
+        private const double PosScale = 10;
         // Вид особого врага: первые LookSends отправок, затем раз в LookRefreshSec по LookPerSend за отправку.
         // Любое состояние может не дойти: SendState заменяет неотправленное новым.
         private const int LookSends = 3, LookPerSend = 8;
@@ -226,7 +229,7 @@ namespace MagicSurvivalCoop
                     if (lookNow) { if (look.Left > 0) look.Left--; look.At = now; }
                     _enVarsNext[key] = look;
                 }
-                _sel.Add((v.id, v.type, (int)Math.Round((pos.x - sx) * 100), (int)Math.Round((pos.y - sy) * 100), withType, raw, look, lookNow));
+                _sel.Add((v.id, v.type, (int)Math.Round((pos.x - sx) * PosScale), (int)Math.Round((pos.y - sy) * PosScale), withType, raw, look, lookNow));
                 n++;
             }
             foreach (var kv in _enIds) if (!_enIdsNext.ContainsKey(kv.Key)) _goneLeft[kv.Value.id] = GoneSends;
@@ -329,7 +332,7 @@ namespace MagicSurvivalCoop
                 pp.Seen = _enSnap;
                 if (pp.Track.Count == 0 || st > pp.Track[pp.Track.Count - 1].t)
                 {
-                    pp.Track.Add((st, x / 100.0, y / 100.0));
+                    pp.Track.Add((st, x / PosScale, y / PosScale));
                     if (pp.Track.Count > 4) pp.Track.RemoveAt(0);
                 }
             }
@@ -1129,7 +1132,7 @@ namespace MagicSurvivalCoop
             if (rt >= last.t)
             {
                 var prev = tr[tr.Count - 2];
-                double dtl = last.t - prev.t, ex = Math.Min(rt - last.t, 0.3);
+                double dtl = last.t - prev.t, ex = Math.Min(rt - last.t, 0.45);
                 if (dtl <= 1e-4) { x = last.x; y = last.y; return true; }
                 x = last.x + (last.x - prev.x) / dtl * ex; y = last.y + (last.y - prev.y) / dtl * ex;
                 return true;

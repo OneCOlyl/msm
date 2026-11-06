@@ -116,7 +116,7 @@ three sends after it appears or changes, then once every 2 s, a few enemies per 
 then creates it with the default look and updates it when the look arrives. After a new player joins or anyone
 reconnects (the guest sends the `full` event) the host sends the look of all enemies again. The name, max HP, kills and
 the lobby fields go the same way: three sends after a change, otherwise once every 2 s.
-Enemy send format (about 11 times a second): `en` is a flat array `[id, x, y, …]`; `et` is `[id, type, …]` in an enemy's
+Enemy send format (about 7 times a second): `en` is a flat array `[id, x, y, …]` (x, y in tenths of a unit from the host's start); `et` is `[id, type, …]` in an enemy's
 first three sends and in a full snapshot; `el` is `[[id, varA, varB, 12 look fields], …]`; `es` lists special enemies sent
 without the look; `eg` lists dead enemies, each repeated in three sends; `ef: 1` marks a full snapshot. Enemies within
 15 units of a guest go in every send, the farther ones every other send, all of them in the full snapshot once a second.
