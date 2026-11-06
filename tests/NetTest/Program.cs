@@ -662,7 +662,6 @@ static (TcpClient, LineReader, NetworkStream) Raw(string h, int p)
     return (t, new LineReader(s), s);
 }
 static void SendLine(NetworkStream s, string line) { var b = Encoding.UTF8.GetBytes(line + "\n"); try { s.Write(b, 0, b.Length); } catch { } }
-/// <summary>Следующее сообщение одного из типов (остальные пропускаются); null — соединение закрыто или тишина 4 с.</summary>
 static JsonElement? ReadType(LineReader r, params string[] types) => ReadWhere(r, el => types.Contains(Protocol.TypeOf(el)));
 static JsonElement? ReadWhere(LineReader r, Func<JsonElement, bool> want)
 {
@@ -680,7 +679,6 @@ static JsonElement? ReadWhere(LineReader r, Func<JsonElement, bool> want)
     catch { }
     return null;
 }
-/// <summary>Сервер закрыл соединение за ms (всё, что было до закрытия, пропускается).</summary>
 static bool ClosedBy(LineReader r, int ms)
 {
     var sw = Stopwatch.StartNew();
@@ -690,7 +688,7 @@ static bool ClosedBy(LineReader r, int ms)
     return false;
 }
 
-/// <summary>Поток, который отдаёт данные кусками не больше chunk байт — как TCP, дробящий сообщения.</summary>
+// Отдаёт данные кусками не больше chunk байт, как TCP, дробящий сообщения.
 sealed class Chunked : System.IO.Stream
 {
     private readonly System.IO.Stream _s; private readonly int _chunk;
@@ -702,7 +700,7 @@ sealed class Chunked : System.IO.Stream
     public override void SetLength(long v) => throw new NotSupportedException(); public override void Write(byte[] b, int o, int c) => throw new NotSupportedException();
 }
 
-/// <summary>TCP-посредник между клиентом и сервером: Cut() рвёт все текущие соединения, как обрыв мобильной сети.</summary>
+// Cut() рвёт все текущие соединения, как обрыв мобильной сети.
 sealed class Proxy : IDisposable
 {
     private readonly TcpListener _l = new TcpListener(System.Net.IPAddress.Loopback, 0);

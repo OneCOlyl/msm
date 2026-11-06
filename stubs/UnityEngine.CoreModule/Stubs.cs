@@ -14,7 +14,6 @@ namespace UnityEngine
         public bool DestroyedForTest;
         public static void Destroy(Object o) { if (o != null) o.DestroyedForTest = true; }
     }
-    /// <summary>Только для тестов: как копировать фальшивые объекты.</summary>
     public interface ICloneTarget { Object CloneForTest(); }
     public class Component : Object { public GameObject gameObject { get; set; } public Transform transform => gameObject?.transform; }
     public class Transform : Component { public Vector3 position { get; set; } public Vector3 localScale { get; set; } public Vector3 localEulerAngles { get; set; } public Vector3 localPosition { get; set; } public Transform GetChild(int i) => null; public void SetParent(Transform p, bool worldPositionStays) => parent = p; public int childCount { get; set; } public Transform parent { get; set; } public new Transform transform => this; }

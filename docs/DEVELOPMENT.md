@@ -25,6 +25,7 @@ document: [installation](INSTALL.md) and [connecting](CONNECT.md) are enough for
 | `mod/coop_debug/`, `tools/coop_dbg.py` | Debug console: port 8770 on the phone, read and change game fields during a battle. Players don't need it. |
 | `mod/coop_cheat/` | Cheat: an in-battle «ЧИТ» button that gives levels of spells, traits, combinations, synergies and the hero. Players don't need it. The three developer mods are described in [TOOLS.md](TOOLS.md). |
 | `tools/release_notes.py` | Release description: changes from `.github/release_notes.md` since the last published release (called by the `release` workflow). |
+| `tools/check_comments.py` | Fails if `mod/` has `///` XML documentation: comments explain only why, as plain `//` (run by CI). |
 | `server/coop_server.py` | Standalone room server (Python 3.8+), for when the server shouldn't run inside the game, e.g. in Termux or on a PC. |
 | `server/coop_client.py` | Connection check without the game. |
 | `tests/NetTest` | Network tests. The same checks run against the embedded server and `coop_server.py`: responses, error codes, slots, reconnection and limits must match in both. |

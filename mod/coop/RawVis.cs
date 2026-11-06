@@ -5,10 +5,7 @@ using UnityEngine;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Renderer.enabled и цвет напрямую через IL2CPP: обёртка на телефоне их не читает, icall Renderer::get_enabled не
-    /// разрешается. В тестах без Unity работают свойства заглушек.
-    /// </summary>
+    // Напрямую через IL2CPP: обёртка на телефоне их не читает, icall Renderer::get_enabled не разрешается.
     internal sealed partial class Session
     {
         private static IntPtr _rGetEnabled, _rSetEnabled, _srGetColor, _srSetColor, _bGetEnabled, _gGetColor;
@@ -34,7 +31,6 @@ namespace MagicSurvivalCoop
             return !_visFailed;
         }
 
-        /// <summary>enabled рендера или, при behaviour, компонента вроде Image. null, если не прочитать.</summary>
         private static bool? EnabledOf(object comp, bool behaviour = false)
         {
             if (comp == null) return null;
@@ -60,7 +56,6 @@ namespace MagicSurvivalCoop
             if (p != IntPtr.Zero) Raw.InvokeInt(_rSetEnabled, p, on ? 1 : 0);   // bool в первом байте int
         }
 
-        /// <summary>r, g, b, a у SpriteRenderer или, при graphic, у Graphic. null, если не прочитать.</summary>
         private static float[] ColorOf(object comp, bool graphic = false)
         {
             if (comp == null) return null;

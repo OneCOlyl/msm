@@ -4,10 +4,7 @@ using UnityEngine;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Сбор на босс-волну: гость вдали от хоста переносится к нему, а центр его арены босса ставится на арену хоста. За краем
-    /// арены игра бьёт героя. После волны мана притягивается, и через GatherBackSec гость возвращается туда, где стоял.
-    /// </summary>
+    // За краем арены босса игра бьёт героя, поэтому гостя вдали переносим к хосту.
     internal sealed partial class Session
     {
         private const double GatherBackSec = 2;
@@ -74,7 +71,6 @@ namespace MagicSurvivalCoop
             }
         }
 
-        /// <summary>Без арены хоста центр ставится у героя. Пока арены нет, не трогаем.</summary>
         private void MoveBossGround(double heroX, double heroY)
         {
             var mgr = _battleMgr;

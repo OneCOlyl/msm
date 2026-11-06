@@ -7,13 +7,7 @@ using UnityEngine;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Лобби: локацию, сложность и режим выбирает хост, персонажа каждый сам. У гостя на экране локации стоит выбор хоста,
-    /// стрелки и кнопки старта скрыты, а когда хост начал бой, гость входит сам.
-    ///
-    /// Поля Z_Database: Game_AreaID локация, Game_AreaLevel сложность, Game_BattleLoopON режим. Режим ставят сами кнопки
-    /// старта: Button_AreaStart 0, Button_AreaStart_Loop 1.
-    /// </summary>
+    // Режим ставят сами кнопки старта: Button_AreaStart 0, Button_AreaStart_Loop 1.
     internal sealed partial class Session
     {
         private static readonly string[] StartButtons = { "Button_AreaStart", "Button_AreaStart_Loop", "Button_AreaSpecialSheet_Start" };
@@ -24,7 +18,7 @@ namespace MagicSurvivalCoop
         private object _menu;                      // A_MainMenuInformation текущей сцены меню
         private double _menuLookAt, _lobbyAt, _levelFixAt;
         private bool _onAreaScreen, _lobbyWaited;
-        private int _startButton = -1;             // Индекс в StartButtons кнопки, которой хост начал бой
+        private int _startButton = -1;
         private int _shownArea = -1;
         private readonly List<GameObject> _hiddenArrows = new List<GameObject>(), _hiddenStarts = new List<GameObject>();
         private UiKit.HudButton _lobbyBtn, _chestBtn;
@@ -121,7 +115,7 @@ namespace MagicSurvivalCoop
             return $"Готовы к бою: {ready} из {_partners.Count}";
         }
 
-        /// <summary>Сложность могла не открыться у гостя, поэтому повтор не чаще раза в секунду.</summary>
+        // Сложность могла не открыться у гостя, поэтому повтор не чаще раза в секунду.
         private void ApplyHostArea(Partner host, double now)
         {
             int area = host.LobbyArea, level = Math.Max(0, host.LobbyLevel);
@@ -185,7 +179,6 @@ namespace MagicSurvivalCoop
             _lobbyBtn.SetVisible(true);
         }
 
-        /// <summary>null прячет кнопку. Нажать может только хост, у гостя на ней выбор хоста.</summary>
         private void UpdateChestButton(bool? on)
         {
             if (on == null) { if (_chestBtn != null) _chestBtn.SetVisible(false); return; }

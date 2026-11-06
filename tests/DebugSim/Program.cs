@@ -49,7 +49,7 @@ Console.WriteLine("== выключение консоли: порт и сесс�
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
 
-/// <summary>Контекст мода, который ничего не делает (консоли для запуска нужны только Log, Before, Every, OnCleanup).</summary>
+// Консоли для запуска нужны только Log, Before, Every, OnCleanup.
 public class NullCtx : DispatchProxy
 {
     protected override object Invoke(MethodInfo m, object[] args) => m.ReturnType.IsValueType && m.ReturnType != typeof(void) ? Activator.CreateInstance(m.ReturnType) : null;

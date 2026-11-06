@@ -8,11 +8,6 @@ using ModKit;
 
 namespace MagicSurvivalLab
 {
-    /// <summary>
-    /// Полигон для проверок (не для игроков): в бою кнопка «ПОЛИГОН» открывает панель. Спокойная арена (без спавна игры,
-    /// бессмертие, стоп часов), вызов любых мобов и механики боя. Те же действия доступны с ПК через coop_debug:
-    /// call T:coop_lab:MagicSurvivalLab.Lab/Current.Spawn 6 10. Магии выдаёт coop_cheat.
-    /// </summary>
     public class LabMod : IKitMod
     {
         public ModDef Define() => new ModDef
@@ -124,7 +119,7 @@ namespace MagicSurvivalLab
 
         // Арена
 
-        /// <summary>Спавн игры вкл/выкл. Выключенный держится до конца боя: каждая волна ставит число врагов заново.</summary>
+        // Выключенный спавн держится до конца боя: каждая волна ставит число врагов заново.
         public string SetSpawn(bool on)
         {
             if (on)
@@ -178,10 +173,7 @@ namespace MagicSurvivalLab
         private object _levelMgr;
         private double _levelMana;
 
-        /// <summary>
-        /// Без опыта не открываются окна выбора магии, которые ставят игру на паузу у всех игроков. Мана на целый уровень разом
-        /// (кнопка уровня героя в чите) проходит: в следующем шаге полигон отдаёт её игре без заглушки.
-        /// </summary>
+        // Без опыта не открываются окна выбора магии, которые ставят игру на паузу у всех игроков.
         public string SetMana(bool on)
         {
             if (on == !_noMana) return on ? "опыт уже включён" : "опыт уже выключен";
@@ -220,9 +212,7 @@ namespace MagicSurvivalLab
             finally { HookMana(); }
         }
 
-        /// <summary>
-        /// Пропуск Unit_Death не даёт герою умереть, но здоровье остаётся 0, и моды по Hp ≤ 0 считают его погибшим.
-        /// </summary>
+        // Пропуск Unit_Death не даёт герою умереть, но здоровье остаётся 0, и моды по Hp ≤ 0 считают его погибшим.
         private void KeepAlive()
         {
             try { if (_hero.Hp < _hero.HpMax * 0.5) _hero.Heal(_hero.HpMax); } catch { }
@@ -235,7 +225,7 @@ namespace MagicSurvivalLab
             return on ? $"часы стоят на {Clock(_heldClock)}" : "часы идут";
         }
 
-        /// <summary>Сдвиг часов боя на sec секунд. Порог босса (3:00, 6:00…) игра ловит только ровно на нём.</summary>
+        // Порог босса (3:00, 6:00…) игра ловит только ровно на нём.
         public string ShiftClock(int sec)
         {
             int c = MyClock();
@@ -246,7 +236,7 @@ namespace MagicSurvivalLab
             return $"часы {Clock(c)} → {Clock(to)}";
         }
 
-        /// <summary>Часы за 5 с до следующего порога босса: 2:30 на Terra, иначе каждые 3 минуты.</summary>
+        // 2:30 на Terra, иначе каждые 3 минуты.
         public string ToBoss()
         {
             int c = MyClock();
@@ -256,7 +246,6 @@ namespace MagicSurvivalLab
             return ShiftClock(next - 5 - c);
         }
 
-        /// <summary>Без награды: Unit_Destroy_Simple.</summary>
         public string ClearEnemies()
         {
             int n = 0;
@@ -265,7 +254,7 @@ namespace MagicSurvivalLab
             return $"убрано врагов: {n}";
         }
 
-        /// <summary>С наградой: при Unit_Hp 0 Unit_Death засчитывает убийство, как удар магией.</summary>
+        // При Unit_Hp 0 Unit_Death засчитывает убийство, как удар магией.
         public string KillEnemies()
         {
             int n = 0;
@@ -276,10 +265,7 @@ namespace MagicSurvivalLab
 
         // Мобы
 
-        /// <summary>
-        /// Create_UnitEnemyBoss берёт заготовку из пула боссов. Сначала кладём туда заготовку обычного моба: заготовки боссов
-        /// нужны боссам. Не создался (у босса на обычной заготовке Start_Unit падает) — повтор на заготовке босса.
-        /// </summary>
+        // Заготовки боссов нужны боссам, а у босса на обычной заготовке Start_Unit падает.
         public string Spawn(int type, int count)
         {
             if (_mgr == null) return "не в бою";
@@ -344,7 +330,6 @@ namespace MagicSurvivalLab
             CallMethod(boss, "Insert", 0, item);
         }
 
-        /// <summary>Эпические мобы типа type, как волна игры (корутина Create_UnitEnemyEpic).</summary>
         public string SpawnEpic(int type, int count)
         {
             if (_mgr == null) return "не в бою";
@@ -357,7 +342,7 @@ namespace MagicSurvivalLab
             return StartCoroutine("Create_UnitEnemyEpic") ? $"эпические: тип {type} ×{count}" : "эпические: корутина не запустилась";
         }
 
-        /// <summary>Особые «Super»: игра создаёт их сама, сколько разрешит волна.</summary>
+        // Особых игра создаёт сама, сколько разрешит волна.
         public string SpawnSpecial(int count)
         {
             if (_mgr == null) return "не в бою";
@@ -393,7 +378,6 @@ namespace MagicSurvivalLab
             catch (Exception e) { return "смена области: " + Inner(e).Message; }
         }
 
-        /// <summary>Как при подборе обелиска: каждый предмет на карте запускает Play_ItemAllObtain_Move.</summary>
         public string PullItems()
         {
             int n = 0;
@@ -408,7 +392,6 @@ namespace MagicSurvivalLab
             return $"притянуто предметов: {n}";
         }
 
-        /// <summary>Для сценариев с ПК: часы, враги по типам, состояние арены.</summary>
         public string Status()
         {
             var sb = new StringBuilder();
@@ -427,10 +410,7 @@ namespace MagicSurvivalLab
             return sb.ToString();
         }
 
-        /// <summary>
-        /// Состояние мода coop для сценариев с ПК, «ключ=значение» через «; ». Поля читаются по именам из Session, поэтому
-        /// при их переименовании в coop сценарии покажут «нет».
-        /// </summary>
+        // Поля читаются по именам из Session: после их переименования в coop сценарии покажут «нет».
         public string CoopStatus()
         {
             var s = CoopSession();
@@ -473,10 +453,7 @@ namespace MagicSurvivalLab
             return string.Join("; ", parts);
         }
 
-        /// <summary>
-        /// Герой на точку старта боя со сдвигом dx по горизонтали. Мир друга совмещён с нашим по точкам старта, так что хост
-        /// и гость на своих стартах стоят рядом.
-        /// </summary>
+        // Мир друга совмещён с нашим по точкам старта, так что хост и гость на своих стартах стоят рядом.
         public string ToStart(double dx)
         {
             var s = CoopSession();
@@ -490,7 +467,7 @@ namespace MagicSurvivalLab
             return $"герой на старте +{dx:0.#}";
         }
 
-        /// <summary>Герой в точку (x, y) мира: так он подбирает предмет, на который встал.</summary>
+        // Так герой подбирает предмет, на который встал.
         public string GoTo(double x, double y)
         {
             var hero = typeof(BattleState).GetProperty("Hero", Any)?.GetValue(null);
@@ -501,10 +478,7 @@ namespace MagicSurvivalLab
             return $"герой в {x:0.##}, {y:0.##}";
         }
 
-        /// <summary>
-        /// Лежащие предметы для подбора, строка «вид|x|y»: box&lt;ObtainItemType&gt; (5–7 сундуки и продавец, 9 особый обелиск
-        /// Terra, 10, 11 после босса) и obelisk (предмет «18»). Подобранный предмет остаётся активным, игра уносит его в z 999.
-        /// </summary>
+        // Подобранный предмет остаётся активным, игра уносит его в z 999.
         public string Pickups()
         {
             var sb = new StringBuilder();
@@ -524,10 +498,6 @@ namespace MagicSurvivalLab
             return sb.ToString().TrimEnd();
         }
 
-        /// <summary>
-        /// Активные кнопки интерфейса игры, строка «номер|путь|x|y|можно нажать|текст». Окна выбора видны по их кнопкам, x и y
-        /// это точка на холсте интерфейса.
-        /// </summary>
         public string Buttons()
         {
             var buttons = ActiveButtons();
@@ -549,7 +519,7 @@ namespace MagicSurvivalLab
             return sb.ToString().TrimEnd();
         }
 
-        /// <summary>Нажать кнопку номер i из Buttons, если у неё всё ещё этот путь: onClick.Invoke с аргументами из разметки окна, как касание.</summary>
+        // Путь проверяется заново: между Buttons и Click окно могло смениться.
         public string Click(int i, string path)
         {
             var buttons = ActiveButtons();
@@ -590,14 +560,13 @@ namespace MagicSurvivalLab
 
         private static bool ActiveSelf(object go) => GetMember(go, "activeSelf") is bool b && b;
 
-        /// <summary>Убрать всех врагов: Unit_Destroy_Simple не берёт боссов и мобов перехода, их добивает Unit_Death.</summary>
+        // Unit_Destroy_Simple не берёт боссов и мобов перехода, их добивает Unit_Death.
         public string NoEnemies()
         {
             string a = ClearEnemies(), b = KillEnemies();
             return $"{a}, {b}";
         }
 
-        /// <summary>Обрыв связи для проверки: клиент coop остановлен, как при пропавшей сети. Вернуть: CoopJoin.</summary>
         public string CoopStopClient()
         {
             var s = CoopSession();
@@ -614,7 +583,6 @@ namespace MagicSurvivalLab
             return "подключаюсь заново";
         }
 
-        /// <summary>Уровень заклинания id через coop_cheat: нажатия «+» или «−», пока уровень не станет want.</summary>
         public string Spell(int id, int want)
         {
             var cheat = ModTarget("coop_cheat", "_c");
@@ -636,9 +604,6 @@ namespace MagicSurvivalLab
 
         private const string LearnList = "List_AllyAbilityLearn";
 
-        /// <summary>
-        /// Особенности заклинаний и комбинации из таблиц игры (через coop_cheat): строки «вид|номер|имя|составляющие+…».
-        /// </summary>
         public string Catalog()
         {
             var cheat = ModTarget("coop_cheat", "_c");
@@ -658,7 +623,6 @@ namespace MagicSurvivalLab
             return string.Join("\n", lines);
         }
 
-        /// <summary>Сколько раз номер id стоит в списке выученного героя, с пересчётом героя, как после выбора в игре.</summary>
         public string Learn(int id, int count)
         {
             var cheat = ModTarget("coop_cheat", "_c");
@@ -668,7 +632,7 @@ namespace MagicSurvivalLab
             return $"способность {id}: {before} → {LearnedCount(cheat, id)}";
         }
 
-        /// <summary>Комбинация n: её составляющие (особенности) выучены по разу или сняты. Саму комбинацию игра даёт сама.</summary>
+        // Саму комбинацию игра даёт сама.
         public string Combo(int n, bool on)
         {
             var cheat = ModTarget("coop_cheat", "_c");
@@ -689,7 +653,6 @@ namespace MagicSurvivalLab
             return $"комбинации {n} нет";
         }
 
-        /// <summary>Все 21 заклинание на 0 и все особенности (номера 361+) сняты: следующая проверка начинается с чистого героя.</summary>
         public string ResetMagic()
         {
             var cheat = ModTarget("coop_cheat", "_c");
@@ -736,7 +699,6 @@ namespace MagicSurvivalLab
 
         private static object CoopSession() => ModTarget("coop", "_session");
 
-        /// <summary>Поле объекта, который включил мод id (Def.OnEnable.Target).</summary>
         private static object ModTarget(string id, string field)
         {
             var core = Hooks.FindType("ModKit:ModKit.Core");
@@ -856,7 +818,7 @@ namespace MagicSurvivalLab
         private static PropertyInfo _survivalTime;
         private static MethodInfo _survivalFromFloat;
 
-        /// <summary>Z_Database.Game_SurvivalTime это ObscuredFloat, из числа он получается неявным приведением.</summary>
+        // Z_Database.Game_SurvivalTime это ObscuredFloat, из числа он получается неявным приведением.
         private void SetClock(int sec)
         {
             try

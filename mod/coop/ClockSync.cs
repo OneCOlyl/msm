@@ -4,11 +4,7 @@ using MagicSurvivalCoop.Net;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Часы боя: C_Battle_Manager.Time_Min / Time_Sec. Игра выводит их из часов сцены Unity, своего счётчика нет, поэтому
-    /// подставленные значения она тут же пересчитывает. Часы игроков выравнивают общая пауза и догоняющее ускорение
-    /// (SharedPause.cs), а здесь гость следит за босс-волной и обелиском хоста.
-    /// </summary>
+    // Игра выводит Time_Min и Time_Sec из часов сцены Unity, своего счётчика нет, и подставленные значения тут же пересчитывает.
     internal sealed partial class Session
     {
         private int _hostClock = -1, _hostBossWave, _hostBwPrev;
@@ -27,7 +23,6 @@ namespace MagicSurvivalCoop
             _treasureScanAt = 0; _treasureGone.Clear(); _hostHadBoss = false; _treasureRewards = 0;
         }
 
-        /// <summary>Часы боя в секундах, -1 если не прочитать.</summary>
         private int MyClock()
         {
             var mgr = _battleMgr;
@@ -82,12 +77,12 @@ namespace MagicSurvivalCoop
             try { return Convert.ToInt32(GetAny(_battleMgr, "AreaChangeNum") ?? -1); } catch { return -1; }
         }
 
-        /// <summary>BossWave_VisionRatio: 15 пока виден череп босс-волны, 0 когда погас.</summary>
+        // 15 пока виден череп босс-волны, 0 когда погас.
         private double MyVision()
         {
             try { return Convert.ToDouble(GetAny(_battleMgr, "BossWave_VisionRatio") ?? 0.0); } catch { return 0; }
         }
-        /// <summary>Вступление босс-волны BossWave_EnforceVar растёт от 0 до 1. Не прочитать: считаем законченным.</summary>
+        // Не прочитать: считаем вступление законченным.
         private double MyEnforce()
         {
             try { return Convert.ToDouble(GetAny(_battleMgr, "BossWave_EnforceVar") ?? 1.0); } catch { return 1; }
@@ -98,10 +93,7 @@ namespace MagicSurvivalCoop
             try { return Convert.ToInt32(GetAny(_battleMgr, "ApplyObeliskON") ?? -1); } catch { return -1; }
         }
 
-        /// <summary>
-        /// Хост поднял обелиск, а гость позади: у него идёт своя босс-волна, лежит обелиск или смен области меньше. Тогда гость
-        /// сразу получает то же, что хост (ObeliskSync.cs). Своё окно выбора открыто: после него.
-        /// </summary>
+        // Своё окно выбора открыто: догоняем после него.
         private void GuestBossStep()
         {
             // Счётчик боссов держим 1 с начала боя: иначе конец вступления на 3:00 кладёт гостю обелиск, который не убрать с карты
@@ -124,7 +116,6 @@ namespace MagicSurvivalCoop
             try { CatchUpBoss(true); } catch (Exception e) { _ctx.Log("обелиск: " + Inner(e).Message); }
         }
 
-        /// <summary>Статический счётчик живых боссов ApplyBossNum, -1 если не прочитать.</summary>
         private int MyBossCount()
         {
             try { return Convert.ToInt32(GetAny(_battleMgr, "ApplyBossNum") ?? 0); } catch { return -1; }

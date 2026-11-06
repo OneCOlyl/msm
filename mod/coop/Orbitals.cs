@@ -11,10 +11,7 @@ using UnityEngine;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Щит, Спутники, Духи и Электрозона друга, заклинания без снарядов (docs/ORBITALS.md). У нас это копии своих шаблонов
-    /// героя вокруг союзника. Картинка шаблона пуста, пока у нас нет этого заклинания, поэтому картинку ставим по имени от друга.
-    /// </summary>
+    // Картинка шаблона пуста, пока у нас нет этого заклинания, поэтому картинку ставим по имени от друга.
     internal sealed partial class Session
     {
         private const BindingFlags AnyInst = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
@@ -33,7 +30,7 @@ namespace MagicSurvivalCoop
             public int ShownSatA, ShownSatB;
             public double[] SpiritOff;                                // Смещения духов от героя друга парами x, y
             public double[] SpiritDisp;
-            public bool Zone, ZoneOn;                                 // Электрозона есть и сейчас видна
+            public bool Zone, ZoneOn;
             public string ImgZone; public bool ZoneEn = true; public double ZoneA = double.NaN;
             public double ShieldDx, ShieldDy = 0.03, ShieldSx = 1, ShieldSy = 1;
             public double ZoneSx = 1, ZoneSy = 1;
@@ -91,10 +88,7 @@ namespace MagicSurvivalCoop
         private double _myZoneSx = 1, _myZoneSy = 1;
         private double _zoneLookAt;
 
-        /// <summary>
-        /// Угол спутников читается при каждой отправке, вместе со временем «t» того же сообщения. Остальное не чаще 4 раз в
-        /// секунду: это чтение массивов героя через рефлексию.
-        /// </summary>
+        // Угол спутников идёт с временем «t» того же сообщения. Остальное реже: чтение массивов героя через рефлексию.
         private void RefreshMyOrbits()
         {
             double now = Clock.Elapsed.TotalSeconds;
@@ -260,7 +254,6 @@ namespace MagicSurvivalCoop
             for (int i = from; i < n; i++) if (ItemAt(coll, i) is bool b && b) k++;
             return k;
         }
-        /// <summary>Угол первого объекта массива относительно героя в радианах, 0 если объекта нет.</summary>
         private static double FirstAngle(object coll, double hx, double hy)
         {
             if (!(ItemAt(coll, 0) is Transform tr)) return 0;
@@ -273,7 +266,6 @@ namespace MagicSurvivalCoop
         private bool _spriteScanDone;
         private double _spriteHarvestAt = -1;
 
-        /// <summary>Первый SpriteRenderer объекта или его детей, включая выключенных.</summary>
         private object RendererOf(object go)
         {
             if (go == null) return null;
@@ -311,7 +303,6 @@ namespace MagicSurvivalCoop
         private static Type _il2;
 
         private static readonly Dictionary<Type, PropertyInfo> PointerCache = new Dictionary<Type, PropertyInfo>();
-        /// <summary>Адрес объекта игры из свойства Pointer обёртки IL2CPP.</summary>
         private static IntPtr PtrOf(object wrapper)
         {
             if (wrapper == null) return IntPtr.Zero;
@@ -350,7 +341,7 @@ namespace MagicSurvivalCoop
             var p = LivePtr(sr);
             if (p != IntPtr.Zero) Raw.Invoke(_setSprite, p, (IntPtr)sprite);
         }
-        /// <summary>IntPtr.Zero для уничтоженного объекта: прямой вызов Raw на нём роняет игру целиком.</summary>
+        // Прямой вызов Raw на уничтоженном объекте роняет игру целиком.
         private static IntPtr LivePtr(object wrapper)
         {
             var p = PtrOf(wrapper);
@@ -369,7 +360,7 @@ namespace MagicSurvivalCoop
             else n = GetMember(o, "name") as string;
             return string.IsNullOrEmpty(n) ? null : n;
         }
-        /// <summary>Строка IL2CPP: заголовок объекта в 2 указателя, длина int32, символы UTF-16.</summary>
+        // Строка IL2CPP: заголовок объекта в 2 указателя, длина int32, символы UTF-16.
         private static string ReadString(IntPtr s)
         {
             if (s == IntPtr.Zero) return null;
@@ -434,7 +425,7 @@ namespace MagicSurvivalCoop
             return v;
         }
 
-        /// <summary>Картинки из полей типа t. obj равен IntPtr.Zero для статических полей.</summary>
+        // obj равен IntPtr.Zero для статических полей.
         private int SpriteFields(Type t, IntPtr obj, Type spriteType, List<object> res)
         {
             if (spriteType == null) return 0;
@@ -480,7 +471,7 @@ namespace MagicSurvivalCoop
         [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
         private delegate IntPtr FindAllFn(IntPtr type);
 
-        /// <summary>Resources.FindObjectsOfTypeAll(typeof(Sprite)) через метод, а если его вырезали, через icall Unity.</summary>
+        // Метод FindObjectsOfTypeAll могли вырезать из сборки, тогда icall Unity.
         private int FindAllSprites(List<object> res)
         {
             var t2 = (IntPtr)Il2("il2cpp_class_get_type").Invoke(null, new object[] { _spriteClass });
@@ -517,7 +508,6 @@ namespace MagicSurvivalCoop
             return k2;
         }
 
-        /// <summary>Картинка из своих объектов героя, иначе один раз за бой поиск среди всех картинок игры.</summary>
         private object FindSprite(string name, double now)
         {
             if (_sprites.TryGetValue(name, out var s)) return s;
@@ -671,7 +661,6 @@ namespace MagicSurvivalCoop
             m?.Invoke(go, new object[] { on });
         }
 
-        /// <summary>Для журнала: объект, включение, масштаб, картинка и до 8 детей.</summary>
         private string TreeOf(object go)
         {
             if (go == null) return "нет";
@@ -691,7 +680,7 @@ namespace MagicSurvivalCoop
             catch (Exception e) { return "ошибка: " + Inner(e).Message; }
         }
 
-        /// <summary>Копия только для вида, поэтому коллайдер зоны выключаем.</summary>
+        // Копия только для вида, поэтому коллайдер зоны выключаем.
         private void DisableChild(OrbClone c, string name)
         {
             try
@@ -832,7 +821,6 @@ namespace MagicSurvivalCoop
             }
         }
 
-        /// <summary>Духи стоят относительно союзника там же, где у друга относительно героя.</summary>
         private static void PlaceSpirits(List<OrbClone> list, OrbState st, Vector3 g, double dt)
         {
             var off = st.SpiritOff;
@@ -871,7 +859,7 @@ namespace MagicSurvivalCoop
             v.ForEach(c => Show(c, false));
         }
 
-        /// <summary>Картинки и объекты прошлого боя больше не годятся.</summary>
+        // Картинки и объекты прошлого боя больше не годятся.
         private void ResetOrbits()
         {
             _sprites.Clear(); _spriteScanDone = false; _spriteHarvestAt = -1; _myOrbState = null; _myOrbLogs = 0; _orbStateLogs = 0; _mySpiritTr.Clear(); _mySpiritOff.Clear();

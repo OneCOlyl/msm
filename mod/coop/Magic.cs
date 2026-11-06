@@ -8,14 +8,9 @@ using ModKit;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Магия друга: каждый снаряд героя (C_Battle_AllyUnit.Bullet_Create) пересылается друзьям и повторяется у них из точки
-    /// союзника-друга, с той же задержкой, что и его движение. Урон повтора игра считает по герою получателя, а вид снаряда
-    /// (размер, площадь, скорость, время, число) берёт из полей героя друга, подставленных на время вызова.
-    /// </summary>
+    // Урон повтора игра считает по герою получателя, а вид снаряда берёт из полей героя друга, подставленных на время вызова.
     internal sealed partial class Session
     {
-        /// <summary>Заклинание союзника, который сам не стреляет, а только повторяет касты друга.</summary>
         private const int NoOwnFire = 99;
         private const int MaxCastsPerSend = 40;
         private const int MaxCastsPerFrame = 3;    // Повтор снаряда делает сама игра, его надо дозировать
@@ -38,7 +33,6 @@ namespace MagicSurvivalCoop
             if (frameMs > 8) { _slowFrames++; if (_frameCastMs > frameMs * 0.5) _slowFramesCasts++; }
         }
 
-        /// <summary>Не чаще 4 раз в секунду и только когда есть что повторять.</summary>
         private void RefreshEnemyCache(double now)
         {
             if (now - _enemyCacheAt < 0.25) return;
@@ -99,7 +93,7 @@ namespace MagicSurvivalCoop
         private int[] _lookOff;
         private bool[] _lookInt;
 
-        /// <summary>Для тестов на ПК: два «телефона» в одном процессе.</summary>
+        // Для тестов на ПК: два «телефона» в одном процессе.
         internal static Func<ModContext, object> HeroOverride;
 
         private object RawHero() => HeroOverride != null ? HeroOverride(_ctx) : typeof(BattleState).GetProperty("Hero", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
@@ -202,7 +196,7 @@ namespace MagicSurvivalCoop
             w.WriteEndArray();
         }
 
-        /// <summary>Касты выполняются в кадре, когда до них дойдёт показ союзника.</summary>
+        // Касты выполняются в кадре, когда до них дойдёт показ союзника.
         private void OnRemoteCasts(Partner p, JsonElement e)
         {
             if (!e.TryGetProperty("c", out var arr) || arr.ValueKind != JsonValueKind.Array) return;
@@ -271,7 +265,7 @@ namespace MagicSurvivalCoop
             finally { _mirroring = false; RestoreLook(hero); }
         }
 
-        /// <summary>Раз в секунду, это чтение полей героя через рефлексию. Между чтениями «fx» в состояние не пишется.</summary>
+        // Раз в секунду: это чтение полей героя через рефлексию.
         private void WriteMyLook(Utf8JsonWriter w)
         {
             double now = Clock.Elapsed.TotalSeconds;
@@ -297,7 +291,7 @@ namespace MagicSurvivalCoop
             foreach (var v in a.EnumerateArray()) look[i++] = v.TryGetDouble(out var d) && d >= 0 ? d : double.NaN;
         }
 
-        /// <summary>Только поля, где друг отличается от нас: свои значения читаются заново, они могли смениться за секунду.</summary>
+        // Свои значения читаются заново, они могли смениться за секунду.
         private void PutLook(object hero, double[] look)
         {
             if (look == null) return;
@@ -327,7 +321,7 @@ namespace MagicSurvivalCoop
             }
         }
 
-        /// <summary>Смещения полей один раз на героя. Без IL2CPP (тесты на ПК) остаётся рефлексия.</summary>
+        // Без IL2CPP (тесты на ПК) остаётся рефлексия.
         private void PrepareLook(object hero)
         {
             if (ReferenceEquals(hero, _lookHero)) return;

@@ -8,25 +8,16 @@ using System.Threading;
 
 namespace MagicSurvivalCoop.Net
 {
-    /// <summary>
-    /// Клиент протокола. Сеть в фоновых потоках, игра забирает сообщения из <see cref="Incoming"/> на главном потоке. При обрыве
-    /// сам переподключается и снова входит в комнату. Из состояний игрока уходит только самое свежее. Каждый <see cref="Start"/>
-    /// создаёт отдельное подключение <see cref="Worker"/>, а <see cref="Stop"/> ждёт конца его потоков, чтобы старое не жило
-    /// рядом с новым.
-    /// </summary>
+    // Stop ждёт конца потоков Worker, чтобы старое подключение не жило рядом с новым.
     public sealed class CoopClient : IDisposable
     {
         public enum Status { Off, Connecting, Connected, Waiting }
 
         private static readonly Stopwatch Clock = Stopwatch.StartNew();
         private static int _liveThreads;
-        /// <summary>Для тестов: живые потоки всех клиентов процесса.</summary>
         public static int LiveThreads => Volatile.Read(ref _liveThreads);
         private const int JoinTimeoutMs = 3000;
-        /// <summary>
-        /// Очередь растёт, только когда запись в сокет стоит. События идут пачками, 20–30 в секунду, так что это около 10 с без
-        /// связи. Дальше связь считается зависшей, и клиент переподключается.
-        /// </summary>
+        // События идут 20–30 в секунду, так что это около 10 с без связи; дальше связь считается зависшей.
         public const int MaxPendingEvents = 256;
 
         private readonly object _ctl = new object();     // Start и Stop по очереди
@@ -42,16 +33,12 @@ namespace MagicSurvivalCoop.Net
         public volatile string LastError;
         public volatile int PingMs = -1;
         public string Host => _host;
-        /// <summary>С учётом перебора соседних портов.</summary>
         public int Port => _port + Volatile.Read(ref _portIdx);
         public double RetrySec = 3;
-        /// <summary>Загрузка боя у хоста или ретранслятор VPN могут молчать дольше 10 с.</summary>
+        // Загрузка боя у хоста или ретранслятор VPN могут молчать дольше 10 с.
         public double DeadSec = 20;
 
-        /// <summary>
-        /// Пустой roomCode значит любую комнату на сервере. create создаёт комнату (хост): после обрыва клиент вернётся в неё по
-        /// коду, а если её уже нет, создаст заново. portSpan перебирает порты до port + portSpan: хост мог занять соседний.
-        /// </summary>
+        // create: после обрыва клиент вернётся в комнату по коду, а если её нет, создаст заново. portSpan: хост мог занять соседний порт.
         public void Start(string host, int port, string name, string roomCode = "", bool create = false, int portSpan = 0, string clientId = "")
         {
             lock (_ctl)
@@ -95,7 +82,6 @@ namespace MagicSurvivalCoop.Net
 
         public bool Connected => State == Status.Connected;
 
-        /// <summary>Старое неотправленное состояние заменяется новым.</summary>
         public void SendState(string stateJson)
         {
             var w = _w;
@@ -104,10 +90,7 @@ namespace MagicSurvivalCoop.Net
             w.Wake.Set();
         }
 
-        /// <summary>
-        /// События не выбрасываются по одному: при <see cref="MaxPendingEvents"/> в очереди связь рвётся, очередь сбрасывается,
-        /// и клиент переподключается. false, если событие не принято.
-        /// </summary>
+        // События не выбрасываются по одному: при переполнении связь рвётся, и клиент переподключается.
         public bool SendEvent(string eventJson)
         {
             var w = _w;
@@ -121,7 +104,7 @@ namespace MagicSurvivalCoop.Net
 
         public void RememberRoom(string code) { var w = _w; if (w != null && !string.IsNullOrEmpty(code)) w.RoomCode = code; }
 
-        /// <summary>Подключение после Stop уже ничего не меняет.</summary>
+        // Подключение после Stop уже ничего не меняет.
         private bool Publish(Worker w, Action a)
         {
             lock (_lock)
@@ -146,7 +129,7 @@ namespace MagicSurvivalCoop.Net
             public string Name, ClientId;
             public int PortSpan;
             private volatile bool _running = true;
-            private volatile string _refuse;           // Причина отказа сервера в этой попытке
+            private volatile string _refuse;
             private int _portIdx, _refusedInRow;
             private readonly object _tcpLock = new object();
             private TcpClient _tcp;                     // Закрывает только само подключение или Abort
@@ -162,7 +145,7 @@ namespace MagicSurvivalCoop.Net
                 _thread.Start();
             }
 
-            /// <summary>Закрытие сокета будит и чтение, и подключение.</summary>
+            // Закрытие сокета будит и чтение, и подключение.
             public void Abort()
             {
                 _running = false;
@@ -174,7 +157,7 @@ namespace MagicSurvivalCoop.Net
 
             public int OutCount => Volatile.Read(ref _outCount);
 
-            /// <summary>При переполнении закрывает сокет: запись проснётся с ошибкой, и клиент переподключится.</summary>
+            // При переполнении закрывает сокет: запись проснётся с ошибкой, и клиент переподключится.
             public bool TryQueue(string line)
             {
                 if (_outOverflow) return false;

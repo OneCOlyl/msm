@@ -9,22 +9,17 @@ using System.Text.RegularExpressions;
 
 namespace MagicSurvivalCoop.Debug
 {
-    /// <summary>
-    /// Разбор и выполнение команд консоли: путь «корень.член.член[индекс]» по рефлексии (обычные и статические члены).
-    /// От игры не зависит (корни, имя картинки и проверка «уничтожен» приходят снаружи) — проверяется на ПК.
-    /// </summary>
+    // От игры не зависит (корни, имя картинки и проверка «уничтожен» приходят снаружи), поэтому проверяется на ПК.
     public sealed class Evaluator
     {
         private const BindingFlags Inst = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
         private const BindingFlags Stat = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
 
-        /// <summary>Корень по имени: объект или Type (тогда члены — статические). null — нет такого.</summary>
         public Func<string, object> Root = _ => null;
-        /// <summary>Имя картинки рендера — без обёртки Sprite (она роняет игру под Mono).</summary>
+        // Без обёртки Sprite: она роняет игру под Mono.
         public Func<object, string> SpriteName = _ => null;
-        /// <summary>Объект Unity уничтожен (прямое обращение к нему уронит игру).</summary>
+        // Прямое обращение к уничтоженному объекту Unity роняет игру.
         public Func<object, bool> IsDestroyed = _ => false;
-        /// <summary>Команды мода (hook, iters…): null — не его команда.</summary>
         public Func<string, string[], string> Extra = (c, a) => null;
 
         private object _last;
@@ -87,7 +82,7 @@ namespace MagicSurvivalCoop.Debug
             return cur;
         }
 
-        /// <summary>Разбить путь по точкам. Корень T:Тип с точками в имени (Il2Cpp.X) отделяется «/»: T:Il2Cpp.X/Член.Член.</summary>
+        // Корень T:Тип с точками в имени (Il2Cpp.X) отделяется «/»: T:Il2Cpp.X/Член.Член.
         private static List<string> SplitPath(string path)
         {
             if (path.StartsWith("T:") && path.Contains("/"))

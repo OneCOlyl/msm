@@ -4,10 +4,7 @@ using System.Linq;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Замер по частям: Lap(i) добавляет к части i время с прошлой отметки. Now сбрасывает NewFrame, Sum и Max копятся за бой.
-    /// Lap зовётся каждый кадр, поэтому без выделений памяти.
-    /// </summary>
+    // Lap зовётся каждый кадр, поэтому без выделений памяти.
     internal sealed class Laps
     {
         public readonly string[] Names;

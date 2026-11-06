@@ -6,10 +6,7 @@ using System.Text.Json;
 
 namespace MagicSurvivalCoop.Net
 {
-    /// <summary>
-    /// Протокол v2: TCP, UTF-8, один JSON-объект на строку. JSON пишется вручную через Utf8JsonWriter, без рефлексии, чтобы
-    /// работать в любом рантайме.
-    /// </summary>
+    // JSON пишется вручную через Utf8JsonWriter, без рефлексии, чтобы работать в любом рантайме.
     public static class Protocol
     {
         public const int Version = 2;
@@ -36,7 +33,6 @@ namespace MagicSurvivalCoop.Net
         public const string Pong = "PONG";
         public const string Error = "ERROR";
 
-        /// <summary>Одна строка JSON без перевода строки.</summary>
         public static string Build(Action<Utf8JsonWriter> body)
         {
             var buf = new ArrayBufferWriter<byte>(256);
@@ -71,7 +67,6 @@ namespace MagicSurvivalCoop.Net
         public static JsonElement Obj(JsonElement e, string key) =>
             e.ValueKind == JsonValueKind.Object && e.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Object ? v : default;
 
-        /// <summary>Без управляющих символов, до 20 знаков.</summary>
         public static string CleanName(string s)
         {
             var sb = new StringBuilder();
@@ -86,7 +81,7 @@ namespace MagicSurvivalCoop.Net
         }
     }
 
-    /// <summary>Строки с ограничением длины, против «бесконечной строки».</summary>
+    // Предел длины против «бесконечной строки».
     public sealed class LineReader
     {
         private readonly Stream _s;
@@ -96,10 +91,7 @@ namespace MagicSurvivalCoop.Net
 
         public LineReader(Stream s) { _s = s; }
 
-        /// <summary>
-        /// null, если соединение закрыто. Хвост без '\n' перед закрытием считается оборванным и тоже даёт null. Слишком длинная
-        /// строка даёт IOException.
-        /// </summary>
+        // Хвост без '\n' перед закрытием считается оборванным.
         public string ReadLine()
         {
             _line.SetLength(0);

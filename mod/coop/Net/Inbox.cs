@@ -5,22 +5,15 @@ using System.Threading;
 
 namespace MagicSurvivalCoop.Net
 {
-    /// <summary>
-    /// Входящие сообщения клиента: пишет сетевой поток, читает главный поток игры, всё по порядку. Главный поток не берёт
-    /// блокировок: очередь под lock подозревалась в падении среды Mono, когда поток не остановился для сборки мусора.
-    /// REMOTE_PLAYER_STATE не схлопываются до последнего: состояние не полный снимок (враги, часы, спутники идут не в каждом).
-    /// От каждого игрока ждёт не больше <see cref="MaxStatesPerPlayer"/> состояний, старые помечаются выброшенными. Остальное
-    /// не выбрасывается, но ограничено. При переполнении <see cref="TryEnqueue"/> возвращает false, и клиент переподключается.
-    /// </summary>
+    // Главный поток не берёт блокировок: очередь под lock подозревалась в падении среды Mono при сборке мусора.
     public sealed class Inbox
     {
-        /// <summary>Предел сообщений, кроме состояний: около минуты событий от трёх друзей.</summary>
+        // Около минуты событий от трёх друзей.
         public const int MaxMessages = 4096;
-        /// <summary>Суммарная длина исходных строк вместе с ждущими состояниями.</summary>
         public const int MaxBytes = 8 * 1024 * 1024;
-        /// <summary>1–2 с при 15–30 отправках в секунду, больше любого рывка сети.</summary>
+        // 1–2 с при 15–30 отправках в секунду, больше любого рывка сети.
         public const int MaxStatesPerPlayer = 32;
-        /// <summary>Вместе с пустыми записями выброшенных состояний, около 3 мин стоящей игры.</summary>
+        // Вместе с пустыми записями выброшенных состояний, около 3 мин стоящей игры.
         public const int MaxEntries = 16384;
 
         private const int Waiting = 0, Taken = 1, Dropped = 2;
@@ -42,15 +35,14 @@ namespace MagicSurvivalCoop.Net
 
         public int Count => Volatile.Read(ref _live);
 
-        /// <summary>Ждущие сообщения, кроме состояний.</summary>
         public int Pending => Volatile.Read(ref _other);
 
-        /// <summary>Без проверки предела, для служебных сообщений клиента вроде DISCONNECTED.</summary>
+        // Без проверки предела, для служебных сообщений клиента вроде DISCONNECTED.
         public void Enqueue(JsonElement m) { lock (_writeLock) Add(m, 0, force: true); }
 
         public bool TryEnqueue(JsonElement m, int bytes) { lock (_writeLock) return Add(m, bytes, force: false); }
 
-        /// <summary>Без блокировок: зовётся из главного потока игры каждый кадр.</summary>
+        // Без блокировок: зовётся из главного потока игры каждый кадр.
         public bool TryDequeue(out JsonElement m)
         {
             while (_q.TryDequeue(out var it))
@@ -115,7 +107,7 @@ namespace MagicSurvivalCoop.Net
             it.Msg = default;                   // Пустая запись остаётся до прохода главного потока
         }
 
-        /// <summary>Главный поток берёт по порядку, так что взятые состояния игрока всегда в голове его очереди.</summary>
+        // Главный поток берёт по порядку, так что взятые состояния игрока всегда в голове его очереди.
         private static void Trim(Queue<Item> mine)
         {
             while (mine.Count > 0 && Volatile.Read(ref mine.Peek().Status) != Waiting) mine.Dequeue();

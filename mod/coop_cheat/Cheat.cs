@@ -7,14 +7,6 @@ using ModKitData;
 
 namespace CoopCheat
 {
-    /// <summary>
-    /// Чит-меню для проверки кооператива: в бою кнопка «ЧИТ» открывает сетку заклинаний, нажатие даёт +1 уровень
-    /// (в режиме «−» — снимает уровень). Работает на любом телефоне, где установлен (хост и друг ставят каждый себе).
-    ///
-    /// Как выдаётся уровень: сначала тем же путём, что и выбор в игре, — запись ID в Z_Database.List_AllyAbilityLearn и пересчёт
-    /// героя (AbilityStatApply через modkit_effects.Recalc). Если уровень не вырос — запасной путь: прямая запись в
-    /// Z_Database.List_AllyMagicLevel и пересчёт. Какой путь сработал — пишется в журнал.
-    /// </summary>
     public class CheatMod : IKitMod
     {
         public ModDef Define() => new ModDef
@@ -75,7 +67,7 @@ namespace CoopCheat
             ["인챈트"] = "Зачаров.", ["`"] = "Прочее", ["마법"] = "Магия", ["조합"] = "Комбо",
         };
         private static readonly string[] TypeOrder = { "특성", "특수패시브", "패시브", "아티팩트", "`", "연구", "인챈트" };
-        /// <summary>Пустые записи таблиц игры: вместо имени «`» (170 штук в Ability) — в меню не показываем.</summary>
+        // Пустые записи таблиц игры: вместо имени «`» (170 штук в Ability).
         private static bool Blank(string name) => string.IsNullOrWhiteSpace(name) || name.Trim() == "`" || name == "Name";
         private const int PerPage = 21;
         private int _tab, _pageStart;
@@ -141,7 +133,6 @@ namespace CoopCheat
             ShowPage();
         }
 
-        /// <summary>Вкладки сверху (по 5 в ряд), сетка 3×7 записей текущей вкладки, листание, режим, закрыть, уровень героя.</summary>
         private void ShowPage()
         {
             ClearPage();
@@ -243,7 +234,6 @@ namespace CoopCheat
             AddReqTab("Synergy", "Синергии", "syn", new[] { "ID_01", "ID_02", "ID_03", "ID_04", "ID_05" });
         }
 
-        /// <summary>Артефакты — от самых редких к частым; неизвестная редкость (номера нет ни в одном пуле) — в конце.</summary>
         private void SortByGrade(TabDef td)
         {
             var grade = new Dictionary<int, int>();
@@ -330,18 +320,17 @@ namespace CoopCheat
                 case "ability": return $"{r.Name} {Count(ListFor(Kind), r.Id)}/{AbilityMax(r.Id)}";
                 case "artifact": return $"{(r.Grade >= 0 ? Grades[r.Grade] : "?")} {r.Name} {Count(ListFor(Kind), r.Id)}/{AbilityMax(r.Id)}";
                 case "combo":
-                case "syn": { int have = r.Req.Count(x => Count(ListFor(Kind), x) > 0); return $"{r.Name} {have}/{r.Req.Length}"; }   // есть составляющих
+                case "syn": { int have = r.Req.Count(x => Count(ListFor(Kind), x) > 0); return $"{r.Name} {have}/{r.Req.Length}"; }
                 default: { int lv = 0; try { lv = _spells.Level(r.Id); } catch { } return $"{r.Name} {lv}/{Max(r.Id)}"; }
             }
         }
 
-        /// <summary>Артефакты игра держит отдельно от способностей (Z_Database.List_ArtifactObtain), составляющие синергий — артефакты.</summary>
+        // Артефакты игра держит отдельно от способностей (Z_Database.List_ArtifactObtain), составляющие синергий — артефакты.
         private static string ListFor(string kind) => kind == "artifact" || kind == "syn" ? ArtifactList : LearnList;
 
         private int AbilityMax(int id) => _abilityMax.TryGetValue(id, out var m) && m > 0 ? m : 1;
 
-        /// <summary>Сколько раз номер в списке игры. Список читается один раз до сброса _counts: раньше каждая кнопка перебирала
-        /// его заново, и с ростом списка меню лагало.</summary>
+        // Список читается один раз до сброса _counts: перебор на каждую кнопку с ростом списка тормозил меню.
         private int Count(string list, int id)
         {
             if (!_counts.TryGetValue(list, out var counts))
@@ -405,7 +394,6 @@ namespace CoopCheat
             _given += _portion;
         }
 
-        /// <summary>4 раза в секунду: открылось окно — готово; нет — следующая порция в 1,5 раза больше.</summary>
         private void LevelStep()
         {
             if (_portion < 0)
@@ -423,7 +411,7 @@ namespace CoopCheat
 
         // ------------------------------------------------------------ выдача уровня
 
-        /// <summary>Пересчёт героя, как после выбора заклинания: V_Ability_Manager.AbilityStatApply(2) (в конце игра сама вызывает StartInformation_B).</summary>
+        // В конце AbilityStatApply игра сама вызывает StartInformation_B.
         private bool Recalc()
         {
             var mgr = _abilityMgr;
@@ -470,10 +458,6 @@ namespace CoopCheat
             return m.Invoke(o, args);
         }
 
-        /// <summary>
-        /// Все 21 заклинание — на максимальный уровень одним нажатием: недостающие уровни разом в список выученного и один пересчёт
-        /// героя (как при выборе в игре); что не дотянулось — прямой записью уровня.
-        /// </summary>
         private void MaxAll()
         {
             if (!_spells.InBattle) { _ctx.Toast("Только в бою", 2); return; }
@@ -517,8 +501,6 @@ namespace CoopCheat
             Refresh();
         }
 
-        /// <summary>Кнопка записи: заклинание — как раньше (Press); способность — её номер в список выученного, артефакт — в список
-        /// артефактов, не выше 최대레벨; комбо/синергия — недостающие составляющие (в режиме «−» — снять по одной записи каждой).</summary>
         private void PressRow(Row r)
         {
             if (Kind == "spell") { Press(r.Id, r.Name); return; }
@@ -546,7 +528,7 @@ namespace CoopCheat
             Refresh();
         }
 
-        /// <summary>Как при выборе в игре: ID в List_AllyAbilityLearn (каждая запись — один уровень) и пересчёт героя.</summary>
+        // Каждая запись в List_AllyAbilityLearn — один уровень.
         private bool TryLearnList(int id, int want)
         {
             var learn = Static("List_AllyAbilityLearn");
@@ -569,7 +551,6 @@ namespace CoopCheat
             catch (Exception e) { _ctx.Log("список выученного: " + ((e as TargetInvocationException)?.InnerException ?? e).Message); return false; }
         }
 
-        /// <summary>Запасной путь: прямая запись уровня в List_AllyMagicLevel и пересчёт.</summary>
         private bool TryDirect(int id, int want)
         {
             var levels = Static("List_AllyMagicLevel");
