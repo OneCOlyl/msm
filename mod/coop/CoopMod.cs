@@ -803,6 +803,7 @@ namespace MagicSurvivalCoop
         private readonly Laps _world = new Laps("чистка и спавн", "уборка своих", "свой босс", "создание копий", "здоровье копий", "движение копий", "убийство копий", "урон хосту");
         private readonly int[] _partSlow = new int[6];
         private int _slowLogged;
+        private double _profileSince;
 
         private void FrameLapStart() { _frame.NewFrame(); _send.NewFrame(); _world.NewFrame(); _frame.Start(); }
         private void Lap(int i) => _frame.Lap(i);
@@ -828,7 +829,18 @@ namespace MagicSurvivalCoop
         {
             _frame.Reset(); _send.Reset(); _world.Reset();
             Array.Clear(_partSlow, 0, _partSlow.Length);
-            _slowLogged = 0;
+            _slowLogged = 0; _slowFrames = 0; _slowFramesCasts = 0; _frameMaxMs = 0;
+            _profileSince = Clock.Elapsed.TotalSeconds;
+            _client.Net.Reset();
+        }
+
+        // Для сценария perf в tools/lab.py: те же цифры, что в итоге боя, без конца боя.
+        internal string ProfileStatus()
+        {
+            double sec = Math.Max(1e-3, Clock.Elapsed.TotalSeconds - _profileSince);
+            string F(double v) => Math.Round(v, 2).ToString(CultureInfo.InvariantCulture);
+            return $"frames={_frame.Count}; fps={F(_frame.Count / sec)}; frameAvg={F(_frame.Count > 0 ? _frame.Sum.Sum() / _frame.Count : 0)}; " +
+                   $"frameMax={F(_frameMaxMs)}; slowFrames={_slowFrames}; " + _client.Net.Take().Pairs();
         }
 
         private void LogFrameProfile()
@@ -838,6 +850,7 @@ namespace MagicSurvivalCoop
                      (_partSlow.Sum() > 0 ? "; медленных кадров по частям: " + string.Join(", ", _frame.Names.Select((n, i) => (n, c: _partSlow[i])).Where(x => x.c > 0).Select(x => $"{x.n} {x.c}")) : ""));
             if (_send.Count > 0) _ctx.Log($"отправка за бой ({_send.Count} раз), на одну отправку {_send.Summary()}");
             if (_world.Count > 0) _ctx.Log($"общие враги за бой по частям ({_world.Count} шагов), на шаг {_world.Summary()}");
+            if (_client.Connected || _partners.Count > 0) _ctx.Log(_client.Net.Take().Line());
         }
 
         // Transform героя ищется раз за бой, дальше одно чтение position без выделений.

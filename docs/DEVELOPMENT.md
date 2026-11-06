@@ -149,12 +149,23 @@ Scenarios on two phones (both in battle, connected, with `coop`, `coop_debug`, `
 ```bash
 python tools/lab.py mobs drop spells                 # everything; --spells 13,17 --wait 20 for selected spells
 python tools/lab.py --shots shots magic              # every spell, trait and combo (~35 min)
+python tools/lab.py --json r.json perf               # load: 200 enemies, all spells maxed, 60 s
 ```
 
 `mobs` checks that the host's mobs of every kind appear at the guest, `spells` that the host's spells are visible at the
 guest, `drop` reconnection after a dropped link and matching clocks, `magic` that every projectile of every host spell, trait
 and combo (MagicCom) is replayed at the guest with no exceptions in the game log. Before the checks the scenario makes both heroes
-immortal, turns experience off and removes spells.
+immortal, turns experience off and removes spells. `perf` gives both of them all spells at max, keeps 200 enemies at the
+host for 60 s and prints a table of frame and network numbers for the host and the guest (`--perf-sec`, `--perf-enemies`).
+
+`lab.py` exits with code 1 on any failure, including no phones or no adb. adb is taken from the `ADB` variable, then from
+`PATH`, then from `%LOCALAPPDATA%\Android\Sdk\platform-tools`. `--json <file>` writes the result of every scenario:
+name, passed, checks, numbers. The agent's checklist for phones is the `device-test` skill
+(`.claude/skills/device-test/SKILL.md`).
+
+At the end of a battle `modkit.log` has the line `сеть за … с` (network over … s): bytes per second sent and received,
+the longest line sent and received, ping average, maximum and spread (standard deviation). `.CoopStatus` returns the
+same numbers since the start of the battle, together with the mod's frame time.
 
 Standalone server and a connection check without the game:
 
