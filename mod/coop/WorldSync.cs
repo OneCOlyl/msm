@@ -9,12 +9,7 @@ using UnityEngine;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Общие враги (docs/ENEMY_SYNC.md). Хост шлёт живых врагов: номер, тип, x и y от своей точки старта. У гостя свой спавн
-    /// погашен, вместо него копии врагов хоста на том же месте относительно старта гостя. Копии неуязвимы: на сколько упало
-    /// здоровье, столько урона нанёс гость, и раз в 0,1 с этот урон уходит хосту событием «dmg». Враг пропал у хоста: копия
-    /// убивается, и гость получает убийство и выпадения. Повторы магии друг друга в этом режиме без урона, иначе он двойной.
-    /// </summary>
+    // Общие враги: docs/ENEMY_SYNC.md. Повторы магии друг друга здесь без урона, иначе он двойной.
     internal sealed partial class Session
     {
         private const int MaxSentEnemies = 250;          // ~20 байт на врага: строка состояния остаётся меньше 16 КБ
@@ -154,10 +149,7 @@ namespace MagicSurvivalCoop
 
         private static object KeyOf(object o) { var p = PtrOf(o); return p != IntPtr.Zero ? (object)p : o; }
 
-        /// <summary>
-        /// Один снимок живых врагов на кадр: библиотека на каждое обращение к Alive строит новый список и зовёт игру для
-        /// каждого врага.
-        /// </summary>
+        // Один снимок на кадр: библиотека на каждое обращение к Alive строит новый список и зовёт игру для каждого врага.
         private IReadOnlyList<IEnemy> AliveNow()
         {
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -221,11 +213,10 @@ namespace MagicSurvivalCoop
             w.WriteEndArray();
             (_enIds, _enIdsNext) = (_enIdsNext, _enIds);
             _enIdsNext.Clear();
-            if (n < MaxSentEnemies) { (_enVars, _enVarsNext) = (_enVarsNext, _enVars); _enVarsNext.Clear(); }   // Мёртвых забыть
+            if (n < MaxSentEnemies) { (_enVars, _enVarsNext) = (_enVarsNext, _enVars); _enVarsNext.Clear(); }
             if (n > _enSentMax) _enSentMax = n;
         }
 
-        /// <summary>Порядок отправки по близости к друзьям. Ложь, если друзей с позицией нет.</summary>
         private readonly List<(int i, double d, Vector3 pos)> _sendOrder = new List<(int, double, Vector3)>();
         private readonly List<(double x, double y)> _guestPts = new List<(double, double)>();
         private bool OrderByGuests(IReadOnlyList<IEnemy> alive, double sx, double sy)
@@ -363,7 +354,7 @@ namespace MagicSurvivalCoop
             if (t == 2 && _forwardKillHow[2] <= 3) _ctx.Log($"общие враги: свой переход «{NameOf(enemy)}» не убрали ни Unit_Destroy_Simple, ни Unit_Disappear_Peace — выключил объект");
         }
 
-        /// <summary>Далеко за экран, чтобы моб не мелькал до уборки.</summary>
+        // Далеко за экран, чтобы моб не мелькал до уборки.
         private void HideAway(object enemy)
         {
             try
@@ -381,9 +372,7 @@ namespace MagicSurvivalCoop
             catch { return false; }
         }
 
-        /// <summary>
-        /// Поля, которыми моб перехода отличается от обычного того же типа. Порядок входит в протокол: массив «sf» события «dmg».
-        /// </summary>
+        // Порядок входит в протокол: массив «sf» события «dmg».
         private static readonly string[] TransitionStats =
         {
             "UnitCreateID", "ApplyCreateEffectID", "Unit_SpecialVarA", "Unit_SpecialVarB", "LineColorR", "LineColorG", "LineColorB",
@@ -402,10 +391,7 @@ namespace MagicSurvivalCoop
             return v;
         }
 
-        /// <summary>
-        /// Метка особого моба и обводка: у копии их нет, игра включает их только своему переходу. Обводка рисует текущий кадр
-        /// моба розовым, поэтому возвращаем отрисовщики моба и обводки для SpecialMarksFrame.
-        /// </summary>
+        // У копии нет метки особого моба и обводки: игра включает их только своему переходу.
         private static readonly float[] SpecialBackColor = { 1f, 0.05f, 0.5f, 1f };
         private (object main, object back, float[] color) ShowSpecialMarks(object enemy, float iconSize, bool back, float[] backColor)
         {
@@ -450,10 +436,7 @@ namespace MagicSurvivalCoop
             catch { return (null, null, null); }
         }
 
-        /// <summary>
-        /// Обводке нужен «GUI/Text Shader», заливающий силуэт цветом. С Sprites/Default у копии розовый умножается на чёрную
-        /// картинку, и обводки не видно.
-        /// </summary>
+        // Обводке нужен «GUI/Text Shader»: с Sprites/Default розовый умножается на чёрную картинку, и обводки не видно.
         private static object _fillShader;
         private static void SetFillShader(object sr)
         {
@@ -469,7 +452,6 @@ namespace MagicSurvivalCoop
             catch (Exception e) { if (!_backColorLogged) { _backColorLogged = true; _backColorLog = "обводка: шейдер не ставится: " + Inner(e).Message; } }
         }
 
-        /// <summary>Ребёнок до двух уровней вглубь, в имени которого есть part.</summary>
         private static object ChildByName(object go, string part)
         {
             if (go == null || !(GetMember(go, "transform") is Transform tr)) return null;
@@ -483,10 +465,7 @@ namespace MagicSurvivalCoop
             return null;
         }
 
-        /// <summary>
-        /// Текущий кадр моба и цвет обводки. Игра через секунду перекрашивает обводку копии в белый, поэтому цвет ставим со
-        /// сменой кадра.
-        /// </summary>
+        // Игра через секунду перекрашивает обводку копии в белый, поэтому цвет ставится со сменой кадра.
         private static void SpecialMarksFrame(object main, object back, ref object last, float[] color)
         {
             if (main == null || back == null) return;
@@ -497,9 +476,7 @@ namespace MagicSurvivalCoop
             last = sp;
         }
 
-        /// <summary>
-        /// Только через свойство обёртки: прямой вызов SetColor на этом отрисовщике цвет не ставит, а моб у гостя синеет.
-        /// </summary>
+        // Цвет только через свойство обёртки: прямой SetColor на этом отрисовщике не работает, и моб у гостя синеет.
         private static bool _backColorLogged;
         private static string _backColorLog;
         private static void SetBackColor(object sr, float[] c)
@@ -548,10 +525,7 @@ namespace MagicSurvivalCoop
             if (va != 0 || vb != 0 || cid == 3 || origin != OriginNormal) _enVars[key] = (va, vb, origin); else _enVars.Remove(key);
         }
 
-        /// <summary>
-        /// Особый ли враг по его полям: переход игра создаёт Start_Unit(тип, 0, 0) и только потом ставит Unit_SpecialVarA и
-        /// UnitCreateID 3.
-        /// </summary>
+        // Переход игра создаёт Start_Unit(тип, 0, 0) и только потом ставит Unit_SpecialVarA и UnitCreateID 3.
         private void NoteVarsFromFields(object raw, object key)
         {
             float va, vb; int cid;
@@ -833,7 +807,6 @@ namespace MagicSurvivalCoop
             pp.Placed = true;
         }
 
-        /// <summary>Полуразмеры экрана в единицах мира с запасом 30%.</summary>
         private double _viewHalfX, _viewHalfY;
         private bool _viewLogged;
         private void UpdateViewHalf(double now, double hx, double hy)
@@ -853,7 +826,7 @@ namespace MagicSurvivalCoop
             catch { _viewHalfX = 0; }
         }
 
-        /// <summary>Расстояние до хоста считается от точек старта обоих.</summary>
+        // Расстояние до хоста считается от точек старта обоих.
         private void UpdateAway(Partner host, bool hasHero, double hx, double hy)
         {
             double r = _ctx.Setting("worldZone");
@@ -889,11 +862,7 @@ namespace MagicSurvivalCoop
             else _sweepAt = 0;                                              // Погасить спавн в этом же кадре
         }
 
-        /// <summary>
-        /// Босс гостя не умирает, мод убирает его по обелиску хоста, и после волны остаются счётчик убийств волны и ярость
-        /// босса. С ними игра ставит «только босс» и останавливает свой спавн, так что вдали от хоста врагов нет. Ставим
-        /// значения, как у хоста после смерти босса. ApplyBossNum держит ObeliskSync.
-        /// </summary>
+        // Босс гостя не умирает, и после волны счётчик убийств и ярость босса оставляют игру в «только босс» без спавна.
         private static readonly (string name, double value)[] BossLeftovers =
         {
             ("ApplyMonsterClearKillNum", 0), ("ApplyMonsterClearKillNumPlus", 0), ("BossWave_SpeedRatio", 0), ("BossWave_SizeRatio", 0),
@@ -968,7 +937,6 @@ namespace MagicSurvivalCoop
             _dmgOut.Clear(); _spawnOut.Clear();
         }
 
-        /// <summary>Хост создаёт врагов от действий гостя там же относительно старта.</summary>
         private void OnRemoteSpawns(JsonElement e)
         {
             if (!_hosting || !WorldOn || !_inRun || _battleMgr == null || !e.TryGetProperty("s", out var s) || s.ValueKind != JsonValueKind.Array) return;
@@ -990,7 +958,7 @@ namespace MagicSurvivalCoop
                 {
                     try { bossNum = bossProp?.GetValue(null); } catch { }
                     RefillBossPool(_battleMgr);
-                    commonItem = PutPrefabFirst(_battleMgr, origin);          // Заготовка из пула особых с меткой и обводкой
+                    commonItem = PutPrefabFirst(_battleMgr, origin);
                     CallMethod(_battleMgr, "Create_UnitEnemyBoss", type, 1);
                 }
                 catch (Exception ex) { if (++_wFails <= 5) _ctx.Log($"общие враги: враг гостя тип {type}: {Inner(ex).Message}"); }
@@ -1041,10 +1009,9 @@ namespace MagicSurvivalCoop
             }
         }
 
-        /// <summary>Урон этого друга идёт через здоровье копий, повтор его магии только для вида.</summary>
+        // Урон этого друга идёт через здоровье копий, повтор его магии только для вида.
         private bool ReplayWithoutDamage(Partner p) => (_hosting && WorldOn && p.WorldGuest) || (_worldActive && p == _worldHost);
 
-        /// <summary>Позиция врага от старта хоста на момент rt по часам хоста. После последней точки не дальше 0,2 с.</summary>
         private static bool PuppetPos(Puppet pp, double rt, out double x, out double y)
         {
             x = y = 0;
@@ -1122,9 +1089,7 @@ namespace MagicSurvivalCoop
             return true;
         }
 
-        /// <summary>
-        /// UnitCreateID ставим до Start_Unit, от него игра выставляет вид. Эффект, обводку и размер после.
-        /// </summary>
+        // UnitCreateID до Start_Unit: от него игра выставляет вид.
         private void ApplySpecialLook(Puppet pp, object obj)
         {
             _spawningPuppet = true;
@@ -1145,7 +1110,7 @@ namespace MagicSurvivalCoop
             finally { _spawningPuppet = false; _justCreated = null; }
         }
 
-        /// <summary>Нужно и после повторного Start_Unit.</summary>
+        // Нужно и после повторного Start_Unit.
         private void SetupPuppet(object obj, object key)
         {
             // ИИ копии работает ради анимации и атак, а двигает её только мод: скорость нулевая. Без ИИ встают и кадры ходьбы
@@ -1189,7 +1154,7 @@ namespace MagicSurvivalCoop
             return m.Prop != null ? m.Prop.GetValue(target) : m.Field.GetValue(target);
         }
 
-        /// <summary>У копии из пула боссов масштаб картинки 1, а у обычного врага он равен размеру.</summary>
+        // У копии из пула боссов масштаб картинки 1, а у обычного врага он равен размеру.
         private static void FixSpriteScale(object enemy, object key)
         {
             try
@@ -1215,10 +1180,7 @@ namespace MagicSurvivalCoop
             foreach (var f in SpeedFields) try { SetUnitFloat(enemy, key, f, 0f); } catch { }
         }
 
-        /// <summary>
-        /// Create_UnitEnemyBoss берёт заготовку из пула боссов. Кладём туда заготовку нужного пула: у особых мобов игры свой пул
-        /// с меткой и обводкой. Сначала в начало списка, а если игра её не взяла, дальше в конец.
-        /// </summary>
+        // Create_UnitEnemyBoss берёт заготовку из пула боссов, а у особых мобов свой пул с меткой и обводкой.
         private object PutPrefabFirst(object mgr, int origin)
         {
             var boss = GetAny(mgr, "List_BattleUnitEnemyBoss_Empty");
@@ -1235,7 +1197,7 @@ namespace MagicSurvivalCoop
         private static string PoolOf(int origin) => origin == OriginEpic ? "List_BattleUnitEnemyEpic_Empty" : origin == OriginNormal ? "List_BattleUnitEnemy_Empty" : "List_BattleUnitEnemySpecial_Empty";
         private readonly HashSet<int> _bossTypes = new HashSet<int>();
 
-        /// <summary>Заготовку, на которой Start_Unit упал, игра уже включила и вынула из пула.</summary>
+        // Заготовку, на которой Start_Unit упал, игра уже включила и вынула из пула.
         private void DropBrokenPrefab(object mgr, object item)
         {
             try { CallMethod(item, "SetActive", false); CallMethod(GetAny(mgr, "List_BattleUnitEnemy_Empty"), "Add", item); }
@@ -1253,7 +1215,7 @@ namespace MagicSurvivalCoop
             if (!used && !_commonAtEnd) _commonAtEnd = true;
         }
 
-        /// <summary>Погибшие копии возвращаются в обычный пул, и пул боссов пустеет: перекладываем из обычного.</summary>
+        // Погибшие копии возвращаются в обычный пул, и пул боссов пустеет.
         private void RefillBossPool(object mgr)
         {
             if (_bossPoolEst >= 4) { _bossPoolEst--; return; }
@@ -1301,7 +1263,7 @@ namespace MagicSurvivalCoop
             catch (Exception e) { if (++_wFails <= 5) _ctx.Log($"общие враги: убить копию {pp.Id}: {Inner(e).Message}"); }
         }
 
-        /// <summary>Новая волна возвращает число врагов в пачке, поэтому зовётся раз в 0,5 с.</summary>
+        // Новая волна возвращает число врагов в пачке, поэтому зовётся раз в 0,5 с.
         private static readonly string[] SpawnFields = { "EnemyCreateNum", "EnemyCreateNum_Min", "EnemyCreateNum_Max" };
         private object[] _savedSpawn;
         private void SuppressSpawn(object mgr)
@@ -1329,7 +1291,6 @@ namespace MagicSurvivalCoop
         private readonly HashSet<object> _localAlive = new HashSet<object>();
         private double _worldStepAt;
 
-        /// <summary>Чистка: убрать без награды живых врагов гостя, кроме копий и его собственных.</summary>
         private void Sweep()
         {
             _localAlive.Clear();
@@ -1368,7 +1329,6 @@ namespace MagicSurvivalCoop
         private readonly HashSet<object> _heldKeys = new HashSet<object>();
         private readonly Queue<object> _heldNew = new Queue<object>();
 
-        /// <summary>Свой босс гостя: без ИИ, неуязвим и далеко от героя, пока хост не поднимет обелиск.</summary>
         private void HeldStep(double hx, double hy)
         {
             while (_heldNew.Count > 0)
@@ -1386,7 +1346,7 @@ namespace MagicSurvivalCoop
                 try { if (GetMember(e, "Transform_ObjUnit") is Transform tr) { var z = tr.position.z; tr.position = new Vector3((float)hx + 400f, (float)hy + 400f, z); } } catch { }
         }
 
-        /// <summary>Спрятанный босс неуязвим и без ИИ: без общих врагов бой с ним не кончился бы никогда.</summary>
+        // Спрятанный босс неуязвим и без ИИ: без общих врагов бой с ним не кончился бы никогда.
         private void ReleaseHeld()
         {
             _heldNew.Clear();
@@ -1474,7 +1434,7 @@ namespace MagicSurvivalCoop
             return m.Invoke(o, args);
         }
 
-        /// <summary>У StartCoroutine и StopCoroutine есть перегрузка и с IEnumerator, CallMethod взял бы любую.</summary>
+        // У StartCoroutine и StopCoroutine есть перегрузка и с IEnumerator, CallMethod взял бы любую.
         private static object CallByString(object o, string name, string arg)
         {
             var m = o.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { typeof(string) }, null)

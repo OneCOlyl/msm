@@ -13,11 +13,6 @@ using ModKit;
 
 namespace MagicSurvivalCoop.Debug
 {
-    /// <summary>
-    /// Отладочная консоль для разработки (не для игроков): на телефоне — порт 127.0.0.1:8770, с ПК через USB:
-    /// adb forward tcp:8771 tcp:8770, затем python tools/coop_dbg.py 8771 "get mgr.Time_Sec".
-    /// Запросы выполняются в главном потоке игры (по нескольку за шаг таймера), ответ — текст, в конце строка «&lt;&lt;END&gt;&gt;».
-    /// </summary>
     public class DebugMod : IKitMod
     {
         public ModDef Define() => new ModDef
@@ -43,15 +38,13 @@ namespace MagicSurvivalCoop.Debug
         private object _mgr, _abil;
         private readonly Dictionary<string, object> _iters = new Dictionary<string, object>();
         private readonly List<Action> _unhooks = new List<Action>();
-        private readonly List<TcpClient> _clients = new List<TcpClient>();   // Закрыть при выключении
+        private readonly List<TcpClient> _clients = new List<TcpClient>();
         private readonly List<object> _found = new List<object>();
         private MethodInfo _findAll; private object _goType; private bool _findFailed;
 
-        /// <summary>Класс Unity по короткому имени (GameObject, Transform, Time…): UnityEngine.&lt;имя&gt; из загруженных сборок.</summary>
         private static Type UnityType(string n) =>
             AppDomain.CurrentDomain.GetAssemblies().Select(a => { try { return a.GetType("UnityEngine." + n); } catch { return null; } }).FirstOrDefault(t => t != null);
 
-        /// <summary>find &lt;regex&gt;: объекты сцены (активные) с подходящим именем — в found[i].</summary>
         private string Find(string pattern)
         {
             if (_findFailed) return "поиск по сцене недоступен";
@@ -106,7 +99,7 @@ namespace MagicSurvivalCoop.Debug
             catch (Exception e) { ctx.Log("отладка: порт не открыт: " + e.Message); }
         }
 
-        /// <summary>Выключение (OnDisable и OnCleanup — может прийти дважды): порт закрыт, сессии оборваны, ждущие запросы отпущены, хуки сняты.</summary>
+        // OnDisable и OnCleanup: может прийти дважды.
         public void Stop()
         {
             _stop = true;
@@ -134,7 +127,7 @@ namespace MagicSurvivalCoop.Debug
             }
         }
 
-        /// <summary>Сессия консоли. Всё внутри try: Stop может закрыть сокет в любой момент, а исключение фонового потока уронило бы игру.</summary>
+        // Всё внутри try: Stop может закрыть сокет в любой момент, а исключение фонового потока уронило бы игру.
         private void Serve(TcpClient c)
         {
             try
@@ -190,7 +183,6 @@ namespace MagicSurvivalCoop.Debug
             return null;
         }
 
-        /// <summary>hook &lt;Тип&gt; &lt;regex&gt; — поймать объекты корутин (вложенных типов) по MoveNext; iters — что поймано.</summary>
         private string Extra(string cmd, string[] a)
         {
             if (cmd == "iters")
@@ -227,7 +219,7 @@ namespace MagicSurvivalCoop.Debug
         private readonly List<string> _calls = new List<string>();
         private static readonly Regex PerFrame = new Regex("^(Update|LateUpdate|FixedUpdate|OnGUI|OnCollision|OnTrigger|OnBecame|MoveNext|get_|set_|Equals|GetHashCode|ToString)");
 
-        /// <summary>hookm &lt;Тип&gt; &lt;regex&gt; — записывать вызовы объявленных в типе методов (без покадровых); calls — список (до 400).</summary>
+        // Без покадровых методов.
         private string HookMethods(string typeName, string pattern)
         {
             var t = Hooks.FindType(typeName);

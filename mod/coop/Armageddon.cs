@@ -4,11 +4,7 @@ using MagicSurvivalCoop.Net;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Армагеддон друга (docs/ARMAGEDDON.md). Снарядов у него нет: взрыв рисует менеджер боя корутинами, пока
-    /// IsArmageddonContinue = True. Начало взрыва ловим по этому флагу и шлём событие «arma». Получатель запускает у себя
-    /// корутины картинки взрыва, а если не вышло, включает объекты по таблице ArmaSteps.
-    /// </summary>
+    // Снарядов у Армагеддона нет: взрыв рисует менеджер боя корутинами, пока IsArmageddonContinue = True (docs/ARMAGEDDON.md).
     internal sealed partial class Session
     {
         // Время от начала взрыва, поле менеджера, включить
@@ -112,7 +108,6 @@ namespace MagicSurvivalCoop
             }
         }
 
-        /// <summary>Выключает включённое повтором по таблице, если свой взрыв не идёт.</summary>
         private void StopArmaReplay()
         {
             _armaPlayAt = -1;

@@ -15,7 +15,7 @@ namespace Il2Cpp
         public static List<int> List_ArtifactPossibleGrade_P { get; set; } = new List<int>();
         public static List<int> List_ArtifactPossibleGrade_S { get; set; } = new List<int> { 43 };
         public static bool RecalcFromLearn = true;
-        /// <summary>Как игра (по разбору MS_KIT): уровни собираются заново из списка выученного + стартовое заклинание класса.</summary>
+        // Как игра (по разбору MS_KIT): уровни собираются заново из списка выученного + стартовое заклинание класса.
         public static void Recalc()
         {
             if (!RecalcFromLearn) return;
@@ -29,7 +29,6 @@ namespace Il2Cpp
 {
     using System;
     using System.Collections.Generic;
-    /// <summary>Менеджер способностей: пересчёт (уровни заново из списка выученного) и в конце — StartInformation_B героя.</summary>
     public class V_Ability_Manager
     {
         public static Action BeforeStartInformationB;                 // как хук Harmony на StartInformation_B

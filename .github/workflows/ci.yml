@@ -1,4 +1,4 @@
-# Проверка на каждый push и pull request: статический анализ, сборка, совпадение версий, все тесты (build.sh).
+# Проверка на каждый push и pull request: статический анализ, сборка, все тесты (build.sh).
 name: ci
 
 on:
@@ -17,6 +17,7 @@ jobs:
       - name: Статический анализ
         run: |
           pipx run ruff==0.17.3 check --output-format github .
+          python3 tools/check_comments.py
           shellcheck build.sh
       - name: Сборка и тесты
         run: |

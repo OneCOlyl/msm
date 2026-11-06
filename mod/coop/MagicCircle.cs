@@ -5,10 +5,7 @@ using UnityEngine;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Маг. круг друга (заклинание 19). Снарядов у круга нет, и повтор магии его не видит. Друг шлёт включение, масштаб, кадры
-    /// и поворот трёх кругов, а у получателя копия его Obj_MagicCircleMid на союзнике, только для вида.
-    /// </summary>
+    // Снарядов у маг. круга нет, и повтор магии его не видит.
     internal sealed partial class Session
     {
         private static readonly string[] CircleKeys = { "A", "B", "C" };

@@ -15,17 +15,10 @@ using UnityEngine;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Кооператив на 2–4 игрока через виртуальную сеть. У каждого игрока свой мир игры, друзья в нём союзники-двойники.
-    /// С общими врагами гость видит копии врагов хоста и шлёт хосту свой урон. Сервер комнаты встроен в мод.
-    /// </summary>
     public class CoopMod : IKitMod
     {
         public static readonly string ModVersion = typeof(CoopMod).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
-        /// <summary>
-        /// Мод написан под интерфейсы библиотек 1.x: с несовместимой 2.x ModKit его не запустит. ModKit берёт depends из
-        /// mod.json, совпадение с ним проверяет ModSim.
-        /// </summary>
+        // С несовместимой 2.x ModKit мод не запустит. ModKit берёт depends из mod.json, совпадение с ним проверяет ModSim.
         public const string LibRange = ">=1.0 <2";
 
         public ModDef Define() => new ModDef
@@ -123,7 +116,7 @@ namespace MagicSurvivalCoop
         private double _heroTrRetryAt;
         private Action _sendAction, _flushAction;
         private int _bestSpell;
-        private readonly Dictionary<int, int> _levels = new Dictionary<int, int>();   // Уровни заклинаний для итога боя в журнале
+        private readonly Dictionary<int, int> _levels = new Dictionary<int, int>();
         private double _bestSpellAt = -1;
         private const int PortSpan = 4;            // Занятый порт хост заменяет следующим, клиенты перебирают тот же диапазон
 
@@ -147,26 +140,26 @@ namespace MagicSurvivalCoop
             public double ClockOff;
             public bool HasClock;
             public Transform GhostTr;
-            public bool OwnPause;              // Своя пауза друга: окно выбора умения, меню
+            public bool OwnPause;
             public int BattleClock = -1;       // Часы боя друга, с
             public bool BossWave;              // Часы друга стоят до подбора его обелиска
-            public int AreaChange = -1;        // Число смен области у друга (после каждого босса)
+            public int AreaChange = -1;
             public double StateReal;           // Clock последнего состояния: таймер мода на паузе стоит
             public bool WorldGuest;            // Друг сам шлёт урон по общим врагам, его магия у нас без урона
             public bool Mirror;                // Союзник не стреляет сам, а повторяет касты друга
             public readonly Queue<Cast> Casts = new Queue<Cast>();
             public double[] Look;              // Поля героя друга для вида его снарядов (Session.LookFields)
             public OrbState Orb;
-            public OrbVisuals OrbVis;          // Наши копии Щита, Спутников и Духов вокруг его союзника
+            public OrbVisuals OrbVis;
             public ICompanion Ghost;
             public int GhostSpell = -1;
             public double NextSpawn;
             public Marker Mk;
-            public double WorldX, WorldY, WorldZ;   // Последняя точка PlaceGhost в нашем мире
+            public double WorldX, WorldY, WorldZ;
             public bool HasWorldPos;
-            public int LobbyArea = -1, LobbyLevel, LobbyLoop = -1, LobbyButton = -1;   // Выбор хоста на экране локации
-            public bool Ready;                 // Гость ждёт старта хоста на экране локации
-            public bool LobbyChests;           // Хост включил общие сундуки
+            public int LobbyArea = -1, LobbyLevel, LobbyLoop = -1, LobbyButton = -1;
+            public bool Ready;
+            public bool LobbyChests;
         }
 
         public Session(ModContext ctx)
@@ -219,11 +212,7 @@ namespace MagicSurvivalCoop
         private readonly Dictionary<string, int> _hookErrors = new Dictionary<string, int>();
         private const int ReportedErrorsPerHook = 3;
 
-        /// <summary>
-        /// Обработчик хука с подписью what. ModKit выключает мод после 5 ошибок хуков за 10 с, а хук на каждого врага или кадр
-        /// набрал бы их за секунду. Поэтому через ctx.Guard идут только первые ReportedErrorsPerHook ошибок за бой, остальные
-        /// считаются для итога боя.
-        /// </summary>
+        // ModKit выключает мод после 5 ошибок хуков за 10 с, а хук на каждого врага или кадр набрал бы их за секунду.
         private Action<object, object[]> Hook(string what, Action<object, object[]> fn) => (self, args) =>
         {
             if (_shutdown) return;
@@ -231,7 +220,7 @@ namespace MagicSurvivalCoop
             catch (Exception e) { Report(what, e); }
         };
 
-        /// <summary>То же для таймера и кадра. fn должен быть заранее созданным делегатом, чтобы не выделять замыкание на вызов.</summary>
+        // fn должен быть заранее созданным делегатом, чтобы не выделять замыкание на вызов.
         private void Safe(string what, Action fn)
         {
             if (_shutdown) return;
@@ -254,7 +243,7 @@ namespace MagicSurvivalCoop
             _hookErrors.Clear();
         }
 
-        /// <summary>Может прийти дважды.</summary>
+        // Может прийти дважды.
         public void Shutdown()
         {
             _shutdown = true;
@@ -272,11 +261,7 @@ namespace MagicSurvivalCoop
             _windowOpen = false;
         }
 
-        /// <summary>
-        /// Возвращает игре скорость, свой спавн, спрятанного босса и объекты Армагеддона. Повторный вызов ничего не делает.
-        /// При battleOver копии врагов и босса не трогаем, они уйдут со сценой. Выключение посреди боя убирает их, чтобы бой
-        /// продолжился как обычный.
-        /// </summary>
+        // При battleOver копии врагов и босса уйдут со сценой; посреди боя их убираем, чтобы бой продолжился как обычный.
         private void RestoreGame(string why, bool battleOver)
         {
             _ctx.Mark("возврат игры: " + why);
@@ -372,7 +357,7 @@ namespace MagicSurvivalCoop
             if (_windowOpen && _clockMs >= _nextWin) { _nextWin = _clockMs + 500; UpdateWindow(); }
         }
 
-        /// <summary>Зовётся и из таймера, и из каждого кадра боя, чтобы частота не упиралась в шаг таймера 50 мс.</summary>
+        // Зовётся и из таймера, и из каждого кадра боя, чтобы частота не упиралась в шаг таймера 50 мс.
         private void MaybeSend()
         {
             double now = Clock.Elapsed.TotalSeconds;
@@ -770,7 +755,7 @@ namespace MagicSurvivalCoop
                 _frameNow = now;
                 double dt = _lastFrameSec < 0 ? 0.016 : Math.Min(0.1, Math.Max(0, now - _lastFrameSec));
                 _lastFrameSec = now;
-                if (_inRun && !_fpsLogged)                        // Одна строка в журнал: работает ли покадровый хук
+                if (_inRun && !_fpsLogged)
                 {
                     if (_fpsSince < 0) _fpsSince = now;
                     _fpsFrames++;
@@ -822,9 +807,7 @@ namespace MagicSurvivalCoop
         private void FrameLapStart() { _frame.NewFrame(); _send.NewFrame(); _world.NewFrame(); _frame.Start(); }
         private void Lap(int i) => _frame.Lap(i);
 
-        /// <summary>
-        /// Медленный кадр длиннее 8 мс, порога медленного хука ModKit. Первые 5 за бой пишутся в журнал с раскладкой по частям.
-        /// </summary>
+        // 8 мс — порог медленного хука ModKit.
         private void ProfileFrame(double totalMs)
         {
             _frame.Count++;
@@ -857,7 +840,7 @@ namespace MagicSurvivalCoop
             if (_world.Count > 0) _ctx.Log($"общие враги за бой по частям ({_world.Count} шагов), на шаг {_world.Summary()}");
         }
 
-        /// <summary>Transform героя ищется раз за бой, дальше одно чтение position без выделений.</summary>
+        // Transform героя ищется раз за бой, дальше одно чтение position без выделений.
         private bool HeroPosition(out double x, out double y, out double z)
         {
             x = y = z = 0;
@@ -884,9 +867,7 @@ namespace MagicSurvivalCoop
             return true;
         }
 
-        /// <summary>
-        /// Мир друга совмещён с нашим по точкам старта: где друг относительно своего старта, там союзник относительно нашего.
-        /// </summary>
+        // Мир друга совмещён с нашим по точкам старта.
         private void PlaceGhost(Partner p, double dt, double heroX, double heroY, double heroZ, bool writeTransform)
         {
             double now = Clock.Elapsed.TotalSeconds;
@@ -921,10 +902,6 @@ namespace MagicSurvivalCoop
             if (writeTransform) WriteGhostTransform(p, heroX + ox, heroY + oy, heroZ);
         }
 
-        /// <summary>
-        /// Положение друга на момент «сейчас минус задержка» по его часам. После последней точки продолжает с последней скоростью
-        /// не дольше 0,2 с.
-        /// </summary>
         private static bool Interpolate(Partner p, double now, out double x, out double y)
         {
             x = y = 0;
@@ -957,7 +934,6 @@ namespace MagicSurvivalCoop
             return true;
         }
 
-        /// <summary>Полтора средних интервала между точками друга. Общая для его движения и магии.</summary>
         private static double RenderDelay(Partner p)
         {
             var tr = p.Track;
@@ -979,7 +955,7 @@ namespace MagicSurvivalCoop
             catch { p.GhostTr = null; }
         }
 
-        /// <summary>Библиотека сама двигает союзника только 20 раз в секунду.</summary>
+        // Библиотека сама двигает союзника только 20 раз в секунду.
         private void WriteGhostTransform(Partner p, double x, double y, double z)
         {
             try
@@ -1110,7 +1086,6 @@ namespace MagicSurvivalCoop
                               "пока хост начнёт бой, и входит следом. Кнопка «Лечить» в бою появляется, когда другу плохо.", 30, y, 660, 110, 20, 0);
         }
 
-        /// <summary>Ошибку показывает в окне и пишет в журнал, окно перерисовывает всегда.</summary>
         private void SafeAction(string what, Action fn)
         {
             try { fn(); }
@@ -1157,7 +1132,6 @@ namespace MagicSurvivalCoop
             return string.Join("\n", lines);
         }
 
-        /// <summary>IPv4-адреса телефона, адреса виртуальных сетей первыми.</summary>
         private static string LocalAddresses()
         {
             try

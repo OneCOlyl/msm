@@ -5,10 +5,7 @@ using ModKit;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Общая пауза: пока кто-то из друзей выбирает умение или в меню паузы, игра стоит у всех. Часы боя игра берёт из часов
-    /// сцены Unity, и без общей паузы часы игроков расходятся на длину чужих пауз.
-    /// </summary>
+    // Часы боя игра берёт из часов сцены Unity, и без общей паузы часы игроков расходятся на длину чужих пауз.
     internal sealed partial class Session
     {
         private bool _pauseForced;
@@ -20,14 +17,9 @@ namespace MagicSurvivalCoop
         private string _pauseWhy;
 
         private bool SharedPauseOn => _ctx.Setting("sharedPause") > 0;
-        /// <summary>Для тестов на ПК: два «телефона» в одном процессе.</summary>
         internal static Func<ModContext, bool> OwnPauseOverride;
 
-        /// <summary>
-        /// Игра сама остановилась: окно выбора умения, сундук, меню паузы. Флаги игры не годятся: Ability_SelectON остаётся True
-        /// и после закрытия окна, а сундук флагов не ставит. Пока мод паузу не держит, своя пауза это скорость игры 0. Держит:
-        /// своя пауза тянется с начала нашей и кончается, когда игра попробует продолжить.
-        /// </summary>
+        // Флаги игры не годятся: Ability_SelectON остаётся True и после закрытия окна, а сундук флагов не ставит.
         private bool OwnPause() => OwnPauseOverride != null ? OwnPauseOverride(_ctx) : _ownNow;
         private bool _ownNow;
 
@@ -66,9 +58,7 @@ namespace MagicSurvivalCoop
             set { _timeScale?.SetValue(null, value); }
         }
 
-        /// <summary>
-        /// Своя пауза друга или его вход в бой держат паузу и у нас. Разошедшиеся часы выравнивает не пауза, а ускорение отстающего.
-        /// </summary>
+        // Разошедшиеся часы выравнивает не пауза, а ускорение отстающего.
         private void SharedPauseStep()
         {
             UpdateOwnPause(TimeScale);
@@ -122,10 +112,7 @@ namespace MagicSurvivalCoop
             _pauseWhy = null;
         }
 
-        /// <summary>
-        /// Отставшие часы догоняем ускорением: от 2 с отставания ×1,25, от 4 с ×1,5, от 8 с ×2. За NearBoss секунд до босс-волны
-        /// уже с 1 с и ступенью выше, чтобы волна началась у всех почти вместе. Паузу не трогаем.
-        /// </summary>
+        // Перед босс-волной ускоряем раньше и сильнее, чтобы волна началась у всех почти вместе.
         private void CatchUpStep(float ts)
         {
             bool want = false;
@@ -179,7 +166,6 @@ namespace MagicSurvivalCoop
         private const float MaxBonus = 4;
         private object _bonusMgr;
         private float _bonusBase, _bonusSet, _kAvg;
-        /// <summary>Ложь, если бонуса нет (тесты): тогда ускорять прямо скоростью.</summary>
         private bool SetSpeedBonus(float factor)
         {
             var mgr = _battleMgr;
@@ -193,7 +179,7 @@ namespace MagicSurvivalCoop
             if (Math.Abs(cur - _bonusSet) > 0.001f) SetMember(mgr, "TimeScaleBonus", _bonusSet);
             return true;
         }
-        /// <summary>Возвращает бонус, если игра его не меняла. Повторный вызов ничего не делает.</summary>
+        // Возвращает бонус, только если игра его не меняла.
         private void RestoreSpeedBonus()
         {
             if (_bonusMgr == null) return;
@@ -202,10 +188,7 @@ namespace MagicSurvivalCoop
         }
         private float _gameScale = 1, _catchSet;
         private int _catchBehind;
-        /// <summary>
-        /// Пока кто-то из комнаты ещё не в бою, вошедший стоит на паузе, чтобы бой у всех начался вместе. Когда все вошли или прошло
-        /// EntryWaitMax секунд, до конца боя больше не ждём.
-        /// </summary>
+        // Вошедший ждёт остальных, чтобы бой у всех начался вместе.
         private Partner EntryWait(double nowR, ref string why)
         {
             if (_entryWaitDone) return null;
@@ -232,7 +215,7 @@ namespace MagicSurvivalCoop
             try { return _hero.Hp <= 0; } catch { return false; }
         }
 
-        /// <summary>Снимает паузу из-за друга и ускорение. Повторный вызов ничего не делает.</summary>
+        // Повторный вызов ничего не делает.
         private void ReleaseSharedPause()
         {
             RestoreSpeedBonus();

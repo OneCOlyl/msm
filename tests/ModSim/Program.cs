@@ -865,7 +865,7 @@ class Player
     public List<string> Toasts => Ctx.Toasts; public List<string> Errors => Ctx.Errors;
     private readonly ModDef _def; private object _session;
     public readonly double WorldOnEnable;
-    /// <summary>savedWorld и worldMigrated — что лежало в config.json и хранилище мода до включения (обновление с 1.6).</summary>
+    // savedWorld и worldMigrated — что лежало в config.json и хранилище мода до включения (обновление с 1.6).
     public Player(string name, double savedWorld = 0, bool worldMigrated = false)
     {
         Ctx = new FakeCtx(name, this);
@@ -991,7 +991,6 @@ class FakeCombat : IEnemies, ICombat
     public bool Freeze(IEnemy e, double seconds) => false; public bool Stun(IEnemy e, double seconds) => false;
     public bool Pull(IEnemy e, double x, double y, double dist) => false; public bool Shoot(int bulletId, double x, double y, double z = 0, double ratio = 1) => false;
 }
-/// <summary>Враг игры (вместо C_Battle_EnemyUnit): поля и методы, которыми пользуются общие враги.</summary>
 class FakeEnemy : MonoBehaviour, IEnemy
 {
     private readonly Player _p;
@@ -1018,7 +1017,6 @@ class FakeComp : ICompanion
     public void Remove() => Alive = false;
     public Transform Tr = new Transform();                               // как в библиотеке: объект союзника в поле Tr
 }
-/// <summary>Герой игры (вместо C_Battle_AllyUnit): Bullet_Create записывает вызов и, как хук Harmony, вызывает хуки мода.</summary>
 class GameHero
 {
     public readonly List<(object src, int id, float x, float y, float dr)> Calls = new();
@@ -1051,27 +1049,22 @@ class GameHero
 }
 static class WinTimer { [System.Runtime.InteropServices.DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint ms); }
 class FakePlayTime { public int Counter { get; set; } public int Other { get; set; } public int __1__state { get; set; } }
-/// <summary>Менеджер боя (вместо C_Battle_Manager): флаг взрыва Армагеддона и его объекты.</summary>
 class FakeText { public Color color { get; set; } }
-/// <summary>Особый обелиск Terra (C_Battle_Item_TreasureBox, вид 9).</summary>
 class FakeTreasure { public int ObtainItemType = 9; public GameObject gameObject = new GameObject { activeSelf = true }; public bool Destroyed; public int DestroyCalls; public void DestroyItem() { Destroyed = true; DestroyCalls++; } }   // как в игре: сам объект остаётся активным
-/// <summary>Мана на поле (C_Battle_Item): притягивание — корутина Play_ItemAllObtain_Move.</summary>
 class FakeItem { public int Type_ObjItem = 1; public GameObject gameObject = new GameObject { activeSelf = true }; public int Pulled; public void StartCoroutine(string name) { if (name == "Play_ItemAllObtain_Move") Pulled++; } }
 class FakeArtifactManager
 {
     public int Created; public FakeManager Battle;
     public void Create_Artifact() { Created++; if (Z_Database.ArtifactType is 9 or 10 or 11) Battle?.Start_AreaChange(); }   // как в игре
 }
-/// <summary>Статические поля Z_Database, которые трогает мод.</summary>
 class Z_Database { public static int ArtifactType; }
-/// <summary>Менеджер боя с бонусом скорости игры (статическое поле, как у C_Battle_Manager).</summary>
 class BonusManager : FakeManager
 {
     public static float TimeScaleBonus = 1;
     public float K;                                                       // замедление игры от FPS; 0 — поля ApplyTimeScale будто нет
     public float ApplyTimeScale => K * TimeScaleBonus;                    // игра пересчитывает каждый кадр
 }
-/// <summary>Сундук C_Battle_Item_TreasureBox (консоль на телефоне 03.11): DestroyItem прячет метку Obj_ItemPos, сам объект остаётся активным.</summary>
+// Как сундук на телефоне (консоль 03.11): DestroyItem прячет метку Obj_ItemPos, сам объект остаётся активным.
 class FakeChest
 {
     public int ObtainItemType; public GameObject gameObject = new GameObject { activeSelf = true };

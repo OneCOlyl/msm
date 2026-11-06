@@ -7,22 +7,7 @@ using UnityEngine;
 
 namespace MagicSurvivalCoop
 {
-    /// <summary>
-    /// Общие сундуки, их включает хост в лобби. Сундуки кладёт игра хоста, у гостя на том же месте от точки старта лежит копия,
-    /// а свои сундуки гостя убираются. Хост шлёт список лежащих сундуков в состоянии, подобранный уходит из списка, и гости
-    /// убирают копию. Сундук достаётся одному: хост берёт свой сразу, а копию гостя игра не подберёт, пока хост её не отдал.
-    /// Гость у копии шлёт заявку chest, хост отдаёт сундук первой заявке и убирает его у себя без награды.
-    ///
-    /// Сундук это C_Battle_Item_TreasureBox из пула с ObtainItemType 5 или 6. Подбор открывает выбор артефакта вида
-    /// ObtainItemType и зовёт DestroyItem: тот прячет метку Obj_ItemPos и выключает коллайдер, сам объект остаётся активным.
-    /// CreateItem_Position включает метку сразу. Коллайдер не годится: Collider.get_enabled в сборке игры нет. Анимация
-    /// появления ставит центр коллайдера сразу при создании и больше его не трогает, поэтому копию запирает сдвиг центра.
-    ///
-    /// Сундуки, которые игра кладёт после выбора артефакта или умения (артефакт 75 кладёт три рядом с героем), остаются у того,
-    /// кто выбирал: хост их не шлёт, гость не убирает. Их кладёт кнопка окна выбора, пока своя игра на паузе, поэтому личные это
-    /// сундуки, появившиеся за свою паузу. Хук на сами кнопки не годится: любой хук на V_Artifact_Manager.Button_Artifact_Select
-    /// роняет игру при нажатии.
-    /// </summary>
+    // Хук на V_Artifact_Manager.Button_Artifact_Select роняет игру при нажатии, поэтому личные сундуки — появившиеся за свою паузу.
     internal sealed partial class Session
     {
         private static readonly int[] ChestKinds = { 5, 6 };
@@ -58,7 +43,7 @@ namespace MagicSurvivalCoop
 
         private bool ChestsShared => _hosting ? ChestsOn && _partners.Count > 0 : _chestHost != null;
 
-        /// <summary>Перед каждым сканом паузы и на её конце: скан гостя убрал бы новый сундук как свой.</summary>
+        // Перед каждым сканом паузы и на её конце: скан гостя убрал бы новый сундук как свой.
         private void PersonalChestStep(double now)
         {
             bool paused = ChestsShared && OwnPause();
@@ -101,7 +86,7 @@ namespace MagicSurvivalCoop
             try { CallMethod(box, "DestroyItem"); } catch (Exception e) { _ctx.Log($"сундук: {what}: DestroyItem: {Inner(e).Message}"); }
         }
 
-        /// <summary>Убрать устаревшие ключи: объект пула потом станет другим сундуком.</summary>
+        // Объект пула потом станет другим сундуком.
         private void PrunePersonal(List<object> lying)
         {
             if (_personalChests.Count == 0) return;
@@ -123,7 +108,7 @@ namespace MagicSurvivalCoop
             w.WriteEndArray();
         }
 
-        /// <summary>Список шлёт только хост с общими сундуками, по нему гость и узнаёт, чьи сундуки повторять.</summary>
+        // По списку хоста гость и узнаёт, чьи сундуки повторять.
         private void ReadChests(Partner p, JsonElement s)
         {
             if (_hosting) return;
@@ -143,7 +128,7 @@ namespace MagicSurvivalCoop
             }
         }
 
-        /// <summary>Каждый кадр и на паузе: заявка гостя должна уйти сразу, как он дошёл до сундука.</summary>
+        // Каждый кадр и на паузе: заявка гостя должна уйти сразу, как он дошёл до сундука.
         private void ChestStep(double now)
         {
             if (!_startX.HasValue) return;
@@ -179,7 +164,7 @@ namespace MagicSurvivalCoop
             }
         }
 
-        /// <summary>Хост отдаёт сундук первой заявке. Взят раньше или уже отдан: ответа нет, копия у гостя уйдёт со списком.</summary>
+        // Взят раньше или уже отдан: ответа нет, копия у гостя уйдёт со списком.
         private void OnRemoteChest(string from, string who, JsonElement e)
         {
             if (!_hosting || !_inRun || from == null) return;
@@ -278,7 +263,7 @@ namespace MagicSurvivalCoop
                     PlaceChestCopy(kv.Key, kv.Value.kind, _startX.Value + kv.Value.x, (_startY ?? 0) + kv.Value.y);
         }
 
-        /// <summary>CreateItem_Position ничего не возвращает: копия это сундук, который лёг при вызове.</summary>
+        // CreateItem_Position ничего не возвращает: копия это сундук, который лёг при вызове.
         private void PlaceChestCopy(int id, int kind, double x, double y)
         {
             var before = LyingChests().Select(KeyOf).ToHashSet();
