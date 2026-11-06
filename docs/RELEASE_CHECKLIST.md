@@ -10,8 +10,8 @@ behavior when the network changes.
 `docs/device-tests/<version>.md` in English (template below) and the same in Russian, `docs/device-tests/<version>.ru.md`.
 Without the English file the `release` workflow stops; both files go into the release description.
 
-Before testing, make sure every phone runs exactly this build: `modkit.log` must have the line
-`кооператив <версия> включён` (co-op <version> enabled).
+Build the candidate with the release version: `VERSION=<version> bash build.sh`. Before testing, make sure every phone
+runs exactly this build: `modkit.log` must have the line `кооператив <версия> включён` (co-op <version> enabled).
 
 ## Required scenarios
 

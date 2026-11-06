@@ -46,9 +46,15 @@ Requires .NET SDK 8, Python 3 and bash (Git Bash on Windows).
 bash build.sh
 ```
 
-The script builds the Unity stubs, checks that versions match, builds `coop`, `coop_debug`, `coop_cheat` and
-`coop_lab`, packs them into `dist/<mod>.zip` and runs all tests. If tests fail or versions don't
-match, the script exits with an error. `SKIP_TESTS=1 bash build.sh` only builds and packs.
+The script builds the Unity stubs, builds `coop`, `coop_debug`, `coop_cheat` and `coop_lab`, packs them into
+`dist/<mod>.zip` and runs all tests. If tests fail, the script exits with an error. `SKIP_TESTS=1 bash build.sh` only
+builds and packs.
+
+The version is not stored in the repository: `mod.json` and `.csproj` have `0.0.0-dev`. `build.sh` takes it from
+`VERSION` (for all four mods), else from the nearest git tag (`git describe`: `vX.Y.Z` for `coop`, `tools-X.Y.Z` for
+the developer mods), else `0.0.0-dev.<number of commits>`. A build with uncommitted changes gets `-dirty.<time>`:
+ModKit doesn't reread an archive with the same version. The version goes into the dll and into `mod.json` inside the
+archive; the file in the repository doesn't change.
 Tests run in parallel, about 80 s: ModSim takes longest (section 7 runs as a separate process, `ModSim.dll 7`, the rest
 as `ModSim.dll main`). A new networked test needs its own port.
 
@@ -181,19 +187,25 @@ room after connecting, disconnect after 40 s without data.
 
 ## Publishing a new version
 
-1. Bump the version in three places: `version` in `mod/coop/mod.json`, `ModVersion` in `mod/coop/CoopMod.cs` and
-   `<Version>` in `mod/coop/coop.csproj` (`build.sh` checks that they match).
-2. Add the changes to the top of `.github/release_notes.md` as a `## Co-op <version>` section: English first, then the
-   same in Russian after a `**По-русски:**` line. The release description
-   gets only the sections that weren't in the last published release (`tools/release_notes.py`). The rest of the history
-   stays in the file.
-3. Test the build on two or more phones following the [checklist](RELEASE_CHECKLIST.md) and record the results in
-   `docs/device-tests/<version>.md` (English) and `docs/device-tests/<version>.ru.md` (Russian).
-4. On GitHub open Actions → release → Run workflow. GitHub builds the mod, runs the tests and publishes the
-   `v<version>` release with `coop.zip`; the test results go into the release description. Without the results file
-   the release isn't published; the Russian file is appended if present.
+Changes between releases go into the `## Не выпущено` (unreleased) section at the top of `.github/release_notes.md`:
+English first, then the same in Russian after a `**По-русски:**` line.
 
-Developer tools (`coop_debug`, `coop_cheat`, `coop_lab`) are released separately with a `tools-<number>` tag: see
+1. Rename `## Не выпущено` to `## Co-op <version>`. The release description gets only the sections that weren't in
+   the last published release (`tools/release_notes.py`). The rest of the history stays in the file.
+2. Build the candidate with `VERSION=<version> bash build.sh`, test it on two or more phones following the
+   [checklist](RELEASE_CHECKLIST.md) and record the results in `docs/device-tests/<version>.md` (English) and
+   `docs/device-tests/<version>.ru.md` (Russian).
+3. Commit this to `main`, tag the commit and push the tag:
+
+   ```bash
+   git tag v1.7.9 && git push origin v1.7.9
+   ```
+
+   GitHub builds the mod with the version from the tag, runs the tests and publishes the `v<version>` release with
+   `coop.zip`; the test results go into the release description. Without the results file the release isn't
+   published; the Russian file is appended if present.
+
+Developer tools (`coop_debug`, `coop_cheat`, `coop_lab`) are released separately with a `tools-<version>` tag: see
 [TOOLS.md](TOOLS.md#publishing).
 
 ## Game research

@@ -10,38 +10,44 @@ echo "== заглушки Unity"
 dotnet build stubs/UnityEngine.UI/UnityEngine.UI.csproj -c Release -o stubs/out -nologo -v q
 
 echo "== версии"
-V_JSON=$(python3 -c "import json;print(json.load(open('mod/coop/mod.json',encoding='utf-8'))['version'])")
-V_CS=$(grep -oP 'ModVersion = "\K[^"]+' mod/coop/CoopMod.cs)
-V_PROJ=$(grep -oP '<Version>\K[^<]+' mod/coop/coop.csproj)
-if [ "$V_JSON" != "$V_CS" ] || [ "$V_JSON" != "$V_PROJ" ]; then echo "версии не совпадают: mod.json $V_JSON, CoopMod.cs $V_CS, coop.csproj $V_PROJ"; exit 1; fi
-echo "Кооператив $V_JSON"
-for m in coop_debug coop_cheat coop_lab; do
-  v_json=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1],encoding='utf-8'))['version'])" "mod/$m/mod.json")
-  v_proj=$(grep -oP '<Version>\K[^<]+' "mod/$m/$m.csproj")
-  v_cs=$(grep -ohP '^\s*Version = "\K[^"]+' mod/"$m"/*.cs)
-  if [ "$v_json" != "$v_proj" ] || [ "$v_json" != "$v_cs" ]; then echo "$m: версии не совпадают: mod.json $v_json, csproj $v_proj, код $v_cs"; exit 1; fi
-  echo "$m $v_json"
-done
+# VERSION задаёт версию всем модам. Без неё — от метки git: vX.Y.Z у coop, tools-X.Y.Z у трёх модов разработчика
+version() {
+  if [ -n "${VERSION:-}" ]; then echo "$VERSION"; return; fi
+  local v
+  if v=$(git describe --tags --match "$1[0-9]*.[0-9]*.[0-9]*" 2>/dev/null); then v=${v#"$1"}
+  elif v=$(git rev-list --count HEAD 2>/dev/null); then v="0.0.0-dev.$v"
+  else echo "0.0.0-dev"; return; fi
+  # ModKit сравнивает версии по числам и архив той же версии не перечитывает: сборке с правками — метка времени
+  git diff --quiet HEAD 2>/dev/null || v="$v-dirty.$(date +%s)"
+  echo "$v"
+}
+V_COOP=$(version v)
+V_TOOLS=$(version tools-)
+echo "Кооператив $V_COOP, инструменты $V_TOOLS"
+mod_version() { if [ "$1" = coop ]; then echo "$V_COOP"; else echo "$V_TOOLS"; fi; }
 
 echo "== мод"
 EXTRA=()
 [ -n "${REF:-}" ] && EXTRA=(-p:Ref="$REF")
-dotnet build mod/coop/coop.csproj -c Release -nologo -v q "${EXTRA[@]}"
-for m in coop_debug coop_cheat coop_lab; do dotnet build "mod/$m/$m.csproj" -c Release -nologo -v q; done
+dotnet build mod/coop/coop.csproj -c Release -nologo -v q -p:Version="$V_COOP" "${EXTRA[@]}"
+for m in coop_debug coop_cheat coop_lab; do dotnet build "mod/$m/$m.csproj" -c Release -nologo -v q -p:Version="$V_TOOLS"; done
 
 echo "== упаковка"
 OUT="$ROOT/dist"; mkdir -p "$OUT"
-# Архив мода ModKit: mod.json, dll и значок в корне
+# Архив мода ModKit: mod.json, dll и значок в корне. Версия подставляется только в mod.json внутри архива
 pack() {
   rm -f "$OUT/$1.zip"
-  ( cd "mod/$1" && python3 - "$OUT/$1.zip" "$1" <<'EOF'
-import sys, zipfile
-out, name = sys.argv[1], sys.argv[2]
+  ( cd "mod/$1" && python3 - "$OUT/$1.zip" "$1" "$(mod_version "$1")" <<'EOF'
+import json, sys, zipfile
+out, name, version = sys.argv[1], sys.argv[2], sys.argv[3]
+with open("mod.json", encoding="utf-8") as f:
+    manifest = json.load(f)
+manifest["version"] = version
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-    z.write("mod.json", "mod.json")
+    z.writestr("mod.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     z.write(f"bin/Release/net8.0/{name}.dll", f"{name}.dll")
     z.write("icon.png", "icon.png")
-print(f"dist/{name}.zip готов")
+print(f"dist/{name}.zip готов, версия {version}")
 EOF
   )
 }

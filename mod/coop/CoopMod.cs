@@ -21,7 +21,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.7.8";
+        public static readonly string ModVersion = typeof(CoopMod).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
         /// <summary>
         /// Мод написан под интерфейсы библиотек 1.x: с несовместимой 2.x ModKit его не запустит. ModKit берёт depends из
         /// mod.json, совпадение с ним проверяет ModSim.

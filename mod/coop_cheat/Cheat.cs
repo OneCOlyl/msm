@@ -21,7 +21,7 @@ namespace CoopCheat
         {
             Id = "coop_cheat",
             Name = "Чит: заклинания",
-            Version = "0.4.7",
+            Version = typeof(CheatMod).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion,
             Description = "Для проверки: в бою кнопка «ЧИТ» — выдать или снять уровень любого заклинания, способности, комбинации и синергии игры, или поднять уровень героя (окно выбора магии).",
             Depends = { ["modkit_spells"] = ">=1.0", ["modkit_spells_data"] = ">=1.0", ["modkit_effects"] = ">=1.0", ["modkit_data"] = ">=1.0" },
             OnEnable = ctx => _c = new Cheat(ctx),
