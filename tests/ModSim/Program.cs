@@ -527,6 +527,54 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     A.Ctx.Set["world"] = 0; A.Combat.Enemies.Clear(); B.Combat.Enemies.Clear();
 }
 
+Console.WriteLine("2к. копии врагов: точки раз в 0,14 с (дальние раз в 0,28 с), доставка ±40 мс, кадры 60 в секунду");
+{
+    var sess = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session");
+    const BindingFlags st = BindingFlags.NonPublic | BindingFlags.Static;
+    var puppetT = sess.GetNestedType("Puppet", BindingFlags.NonPublic);
+    var addPoint = sess.GetMethod("AddPoint", st); var puppetPos = sess.GetMethod("PuppetPos", st);
+    var noteSnap = sess.GetMethod("NoteSnapTime", st); var enemyDelay = sess.GetMethod("EnemyDelay", st);
+    double scale = Convert.ToDouble(sess.GetField("PosScale", st).GetRawConstantValue());
+    var rnd = new Random(11);
+    var times = new List<double>();
+    var near = Activator.CreateInstance(puppetT, true); var far = Activator.CreateInstance(puppetT, true);
+    const double speed = 2.3, latency = 0.08;
+    var inbox = new List<(double at, double t)>();
+    double lastAt = 0;
+    for (int i = 0; i * 0.14 < 12; i++)
+    {
+        double t = i * 0.14, at = Math.Max(lastAt, t + latency + (rnd.NextDouble() * 2 - 1) * 0.04);   // TCP: порядок сохраняется
+        inbox.Add((at, t)); lastAt = at;
+    }
+    double clockOff = double.MaxValue, delay = 0;
+    int got = 0, nearBack = 0, farBack = 0, shown = 0;
+    double nearPrev = double.NaN, farPrev = double.NaN, worstBack = 0;
+    for (double now = 0; now < 12; now += 1.0 / 60)
+    {
+        for (; got < inbox.Count && inbox[got].at <= now; got++)
+        {
+            var (at, t) = inbox[got];
+            clockOff = Math.Min(clockOff, at - t);
+            noteSnap.Invoke(null, new object[] { times, t });
+            double x = Math.Round((speed * t + 0.4 * Math.Sin(3 * t)) * scale) / scale;    // скорость от 1,1 до 3,5 ед/с
+            addPoint.Invoke(null, new object[] { near, t, x, 0.0 });
+            if (got % 2 == 0) addPoint.Invoke(null, new object[] { far, t, x, 0.0 });
+        }
+        if (got < 6) continue;
+        delay = (double)enemyDelay.Invoke(null, new object[] { times });
+        double rt = now - clockOff - delay;
+        var a = new object[] { near, rt, 0.0, 0.0 }; puppetPos.Invoke(null, a);
+        var b = new object[] { far, rt, 0.0, 0.0 }; puppetPos.Invoke(null, b);
+        double nx = (double)a[2], fx = (double)b[2];
+        if (!double.IsNaN(nearPrev) && nx < nearPrev - 1e-9) { nearBack++; worstBack = Math.Max(worstBack, nearPrev - nx); }
+        if (!double.IsNaN(farPrev) && fx < farPrev - 1e-9) { farBack++; worstBack = Math.Max(worstBack, farPrev - fx); }
+        nearPrev = nx; farPrev = fx; shown++;
+    }
+    Console.WriteLine($"    задержка показа {delay:0.000} с, кадров {shown}, откатов: ближняя {nearBack}, дальняя {farBack}, худший {worstBack:0.000}");
+    Check(delay > 0.3 && delay < 0.36, $"задержка показа — два интервала между снимками и 0,05 с: {delay:0.000}");
+    Check(nearBack == 0 && farBack == 0, $"копия между кадрами не идёт назад: ближняя {nearBack}, дальняя {farBack}");
+}
+
 Console.WriteLine("2и. общая пауза: друг выбирает умение — пауза и у хоста");
 {
     A.Set("_battleStartSec", -1000.0); B.Set("_battleStartSec", -1000.0);   // старт боя давно — ожидание на старте не мешает
