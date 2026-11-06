@@ -14,6 +14,10 @@ if (OperatingSystem.IsWindows()) WinTimer.timeBeginPeriod(1);
 int passes = 0, fails = 0;
 void Check(bool ok, string what) { if (ok) { passes++; Console.WriteLine("  PASS " + what); } else { fails++; Console.WriteLine("  FAIL " + what); } }
 
+// Аргумент main — всё, кроме раздела 7, а 7 — только он: build.sh запускает их параллельно
+string part = args.Length > 0 ? args[0] : "all";
+if (part == "7") goto Part7;
+
 var A = new Player("Хост"); var B = new Player("Друг");
 
 Console.WriteLine("0. общие враги по умолчанию: при обновлении с 1.6 включаются один раз");
@@ -596,6 +600,10 @@ Console.WriteLine("6. выключение мода");
 A.Disable(); B.Disable();
 Check(true, "моды выключены без исключений");
 
+Console.WriteLine($"\nОшибки, пойманные Guard (кроме интерфейса Unity): {string.Join("; ", A.Errors.Concat(B.Errors).Distinct().Take(8))}");
+if (part == "main") goto Part8;
+
+Part7:
 Console.WriteLine("7. выключение мода посреди боя (общая пауза, общие враги, ускорение) и повторное включение");
 {
     var sess = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session");
@@ -725,6 +733,62 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         sess.GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
         sess.GetField("TypeOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
     }
+    {   // общие сундуки: копия у гостя на том же месте от старта, свои сундуки гостя убраны, сундук достаётся одному
+        void Until(Func<bool> done, double max = 5) { var sw = System.Diagnostics.Stopwatch.StartNew(); while (sw.Elapsed.TotalSeconds < max && !done()) F(5); }
+        sess.GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, (Func<ModContext, string, List<object>>)((ctx, type) =>
+            type == "C_Battle_Item_TreasureBox" ? (ctx == H.Ctx ? hm : gm).Chests.Cast<object>().ToList() : new List<object>()));
+        var c1 = new FakeChest(5, 3, 4); hm.Chests.Add(c1);
+        Until(() => gm.Chests.Count == 1);
+        var k1 = gm.Chests.FirstOrDefault();
+        Check(k1 != null && k1.ObtainItemType == 5 && Math.Abs(k1.Pos.x - 53) < 0.01 && Math.Abs(k1.Pos.y - 54) < 0.01,
+              $"сундук хоста (3; 4) от старта — у гостя копия вида 5 в ({k1?.Pos.x}; {k1?.Pos.y}), его старт (50; 50)");
+        Check(k1 != null && k1.BoxCollider_ObjItem.center.y > 100, "копия заперта: центр коллайдера сдвинут, игра гостя её сама не подберёт");
+        var own6 = new FakeChest(6, 60, 60); gm.Chests.Add(own6);
+        Until(() => own6.Destroyed > 0);
+        Check(own6.Destroyed == 1 && k1?.Destroyed == 0, "свой сундук гостя убран, копия сундука хоста лежит");
+        c1.DestroyItem();                                                   // хост подобрал
+        Until(() => k1?.Destroyed > 0);
+        Check(k1?.Destroyed == 1, "хост взял сундук — у гостя копия пропала");
+
+        var c2 = new FakeChest(6, -2, 1); hm.Chests.Add(c2);
+        Until(() => gm.Chests.Count == 3);
+        var k2 = gm.Chests.Last();
+        G.Combat.Pos = new Vector3(48.2f, 51.1f, 0);                        // гость дошёл до копии
+        Until(() => k2.BoxCollider_ObjItem.center.y < 1);
+        Check(c2.Destroyed == 1 && k2.Destroyed == 0 && k2.BoxCollider_ObjItem.center.y < 1,
+              "гость у копии — хост отдал ему сундук: у хоста он убран, у гостя коллайдер на месте, игра гостя его подберёт");
+        Check(H.Toasts.Any(t => t.Contains("забрал сундук")), "хосту показано, кто взял сундук");
+        F(60);
+        Check(k2.Destroyed == 0, "отданную копию гость не убирает, хотя хост её из списка уже вычеркнул");
+        k2.DestroyItem(); G.Spells.Paused = true;                           // гость подобрал, у него окно артефакта
+        F(40); G.Spells.Paused = false;
+        Check(gm.Chests.Count == 3 && gm.Created == 2, $"взятый сундук гостю заново не кладётся (копий создано {gm.Created})");
+
+        var c3 = new FakeChest(5, 6, -6); hm.Chests.Add(c3);
+        Until(() => gm.Chests.Count == 4);
+        var k3 = gm.Chests.Last();
+        c3.DestroyItem();                                                   // хост взял раньше, чем дошла заявка гостя
+        G.Combat.Pos = new Vector3(56, 44, 0);
+        Until(() => k3.Destroyed > 0);
+        Check(k3.Destroyed == 1 && k3.BoxCollider_ObjItem.center.y > 100, "хост взял сундук раньше заявки — гостю не отдан, копия так и не отперта и убрана");
+        G.Combat.Pos = new Vector3(50, 50, 0);
+
+        var mine = new FakeChest(5, 51, 49);                                // окно артефакта гостя: сундук лёг посреди паузы
+        var mine2 = new FakeChest(5, 52, 49);                               // и при закрытии окна
+        own.Add(G.Ctx); F(10);
+        gm.Chests.Add(mine); F(40);
+        gm.Chests.Add(mine2); own.Remove(G.Ctx);
+        var hostMine = new FakeChest(6, 1, 1);
+        own.Add(H.Ctx); F(10);
+        hm.Chests.Add(hostMine); own.Remove(H.Ctx);
+        F(80);
+        Check(mine.Destroyed == 0 && mine2.Destroyed == 0, "сундуки от выбора артефакта гостя остаются у гостя");
+        Check(gm.Created == 3, $"сундук от умения хоста гостю не повторяется (копий создано {gm.Created})");
+        var later = new FakeChest(6, 60, 60); gm.Chests.Add(later);
+        Until(() => later.Destroyed > 0);
+        Check(later.Destroyed == 1, "после паузы свой сундук гостя снова убирается");
+        sess.GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
+    }
     own.Add(H.Ctx); Time.timeScale = 0;                                  // хост выбирает умение — у гостя общая пауза
     F(20);
     Check((bool)G.Get("_pauseForced"), "у гостя пауза из-за хоста");
@@ -749,7 +813,9 @@ Console.WriteLine("7. выключение мода посреди боя (об�
     H2.Disable(); G2.Disable();
     ownField.SetValue(null, null);
 }
-Console.WriteLine($"\nОшибки, пойманные Guard (кроме интерфейса Unity): {string.Join("; ", A.Errors.Concat(B.Errors).Distinct().Take(8))}");
+if (part == "7") goto Done;
+
+Part8:
 Console.WriteLine("8. версии библиотек ModKit: mod.json и Define() совпадают, несовместимая 2.x не запускается");
 {
     var dir = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
@@ -787,6 +853,7 @@ Console.WriteLine("9. ошибки обработчиков хуков: в жу�
           "типы боссов — через событие ModKit bossSpawn, без своих хуков");
 }
 
+Done:
 Console.WriteLine($"ИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
 
@@ -1004,9 +1071,25 @@ class BonusManager : FakeManager
     public float K;                                                       // замедление игры от FPS; 0 — поля ApplyTimeScale будто нет
     public float ApplyTimeScale => K * TimeScaleBonus;                    // игра пересчитывает каждый кадр
 }
+/// <summary>Сундук C_Battle_Item_TreasureBox (консоль на телефоне 03.11): DestroyItem прячет метку Obj_ItemPos, сам объект остаётся активным.</summary>
+class FakeChest
+{
+    public int ObtainItemType; public GameObject gameObject = new GameObject { activeSelf = true };
+    public GameObject Obj_ItemPos = new GameObject { activeSelf = true };
+    public FakeBoxCollider BoxCollider_ObjItem = new();
+    public int Destroyed;
+    public FakeChest(int kind, float x, float y) { ObtainItemType = kind; gameObject.transform.localPosition = new Vector3(x, y, 19.5f); }
+    public Vector3 Pos => gameObject.transform.localPosition;
+    public void DestroyItem() { Destroyed++; Obj_ItemPos.activeSelf = false; }
+}
+
+class FakeBoxCollider { public Vector3 center { get; set; } }
+
 class FakeManager
 {
     public Player Owner;
+    public readonly List<FakeChest> Chests = new(); public int Created;
+    public void CreateItem_Position(int id, int num, float x, float y) { for (int i = 0; i < num; i++) { Chests.Add(new FakeChest(id, x, y)); Created++; } }
     public int EnemyCreateNum = 2, EnemyCreateNum_Min = 0, EnemyCreateNum_Max = 300, OnlyBossON;
     public int ApplyMonsterClearKillNum, ApplyMonsterClearKillNumPlus, SpawnStarts;
     public float BossWave_SpeedRatio, BossWave_SizeRatio, BossWave_HitDamageRatio = 1;

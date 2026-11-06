@@ -41,6 +41,13 @@ The host picks the area, difficulty and mode (normal or Infinite Mode). Each pla
   host also gets a pop-up when a guest is ready.
 - **Locked area.** A guest enters the host's area even if they haven't unlocked it: the game checks unlocking only with
   the arrows on the selection screen.
+- **Chests.** Next to the label the host has a button «Сундуки: общие» (shared) / «Сундуки: у каждого
+  свои» (separate), shared by default. The guest sees the host's choice. Shared chests are placed only by the host's
+  game: the guest gets the same chest at the same spot, and chests from the guest's own game are removed. A chest goes to
+  one player, the first to reach it. The host takes a chest at once. A guest who reaches a chest asks the host for it.
+  The host gives it to the first request and removes it at its end. Until the host answers, the guest's game doesn't pick
+  the chest up. For everyone else the chest disappears. Chests the game places after an artifact or ability choice (for
+  example, three chests from an artifact) stay with the player who chose. All players need 1.7.8.
 
 ### Allies
 
@@ -123,6 +130,7 @@ that the player's choice is kept. **It must be on for every player.**
 | Spells | Fired projectiles, in batches of events; the friend's game repeats each one from the ally. The hero's projectile size, area, speed and number once a second in the state update |
 | Shield, Satellites, Spirits, Electric Zone, Magic Circle | In the state update during a battle |
 | Armageddon | A separate event |
+| Shared chests | The host's chests (kind and offset from the start point) in the host's updates, twice a second; a guest's request for a chest and the host's answer as events |
 | Heal and "need help" | Separate events |
 | Host's enemies (Shared enemies mode) | Positions and health of the host's enemies in the host's updates; the guest's damage as an event to the host |
 
@@ -185,6 +193,8 @@ The host's IP address and port are set in the «Кооп» window and saved betw
 - **Shared enemies** is still in progress: the guest's own boss is hidden until the host picks up the obelisk; enemy
   projectiles and some special enemies aren't fully transferred; the first frames of a battle may stutter at the guest
   while enemy copies are created.
+- **Shared chests.** A guest gets a chest after the host answers (one ping). If the host reaches the chest before the
+  guest's request arrives, the host gets it.
 - **Screens.** Button and marker placement is tested on two resolutions (1440×3200 and 1080×2220); others may need
   adjustment.
 - **Mono runtime crash** (`mono-threads-posix.c`) happened at the guest on 1.6.46 and 1.6.56. Message receiving was

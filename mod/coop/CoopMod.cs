@@ -21,7 +21,7 @@ namespace MagicSurvivalCoop
     /// </summary>
     public class CoopMod : IKitMod
     {
-        public const string ModVersion = "1.7.4";
+        public const string ModVersion = "1.7.8";
         /// <summary>
         /// Мод написан под интерфейсы библиотек 1.x: с несовместимой 2.x ModKit его не запустит. ModKit берёт depends из
         /// mod.json, совпадение с ним проверяет ModSim.
@@ -48,6 +48,7 @@ namespace MagicSurvivalCoop
                 new ModOption { Key = "bossGather", Label = "Общие враги: на босс-волну гость вдали переносится к хосту, потом обратно (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "clockSync", Label = "Общие враги: часы боя гостя по хосту (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
                 new ModOption { Key = "puppetAi", Label = "Копии врагов: анимация и атаки игры (1) или замершие (0)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
+                new ModOption { Key = "chests", Label = "Общие сундуки: кладёт хост, берёт кто первый (1 — да, 0 — нет; выбирает хост в лобби)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
                 new ModOption { Key = "sendHz", Label = "Обновлений позиции в секунду (больше — плавнее, но больше трафика)", Default = 15, Min = 5, Max = 30, Step = 5 },
                 new ModOption { Key = "ip1", Label = "IP 1", Default = 10, Min = 0, Max = 255, Hidden = true },
                 new ModOption { Key = "ip2", Label = "IP 2", Default = 66, Min = 0, Max = 255, Hidden = true },
@@ -165,6 +166,7 @@ namespace MagicSurvivalCoop
             public bool HasWorldPos;
             public int LobbyArea = -1, LobbyLevel, LobbyLoop = -1, LobbyButton = -1;   // Выбор хоста на экране локации
             public bool Ready;                 // Гость ждёт старта хоста на экране локации
+            public bool LobbyChests;           // Хост включил общие сундуки
         }
 
         public Session(ModContext ctx)
@@ -201,6 +203,7 @@ namespace MagicSurvivalCoop
             _pumpAction = Pump;
             _pauseAction = SharedPauseStep;
             _clockAction = ClockStepNow;
+            _chestAction = () => ChestStep(_frameNow);
             _arrowAction = CaptureMenuArrow;
             ctx.Every(50, () => Safe("таймер", _tickAction));
             InstallMagicHook();
@@ -212,7 +215,7 @@ namespace MagicSurvivalCoop
             ctx.Guard("кнопка в меню", ShowMenuButton);   // Мод могли включить прямо в главном меню
         }
 
-        private Action _tickAction, _clockAction, _pumpAction, _pauseAction, _arrowAction;
+        private Action _tickAction, _clockAction, _chestAction, _pumpAction, _pauseAction, _arrowAction;
         private readonly Dictionary<string, int> _hookErrors = new Dictionary<string, int>();
         private const int ReportedErrorsPerHook = 3;
 
@@ -521,6 +524,7 @@ namespace MagicSurvivalCoop
             ReadEnemies(p, s);
             ReadClock(p, s);
             ReadLobby(p, s);
+            ReadChests(p, s);
             p.HasState = true;
             p.StateAt = _clockMs;
 
@@ -586,6 +590,12 @@ namespace MagicSurvivalCoop
                 case "arma":
                     OnRemoteArmageddon();
                     break;
+                case "chest":
+                    OnRemoteChest(from, who, e);
+                    break;
+                case "chestOk":
+                    OnChestGranted(e);
+                    break;
             }
         }
 
@@ -604,6 +614,7 @@ namespace MagicSurvivalCoop
             ResetWorld();
             _entryWaitDone = false; _battleStartSec = Clock.Elapsed.TotalSeconds;
             ResetClock();
+            ResetChests();
             ResetFrameProfile();
             ResetMarkers();
             _hookErrors.Clear();
@@ -620,6 +631,7 @@ namespace MagicSurvivalCoop
             _ctx.Guard("итог кадра", LogFrameProfile);
             LogHookErrors();
             RestoreGame("конец боя", battleOver: true);
+            ResetChests();
             _inRun = false;
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             _ctx.Guard("метки союзников", DestroyMarkers);
@@ -699,6 +711,7 @@ namespace MagicSurvivalCoop
                 if (_inRun) WriteClock(w);
                 _send.Lap(3);
                 if (_inRun && OwnPause()) w.WriteNumber("op", 1);
+                if (_inRun && _hosting) WriteChests(w);
                 WriteLobby(w);
                 w.WriteNumber("t", Math.Round(Clock.Elapsed.TotalSeconds, 4));   // Время снятия позиции для интерполяции у друзей
             }));
@@ -773,6 +786,7 @@ namespace MagicSurvivalCoop
                 if (_inRun && !_spells.Paused) WorldStep(now);
                 Lap(3);
                 if (_inRun && !_spells.Paused) Safe("часы боя", _clockAction);
+                if (_inRun) Safe("сундуки", _chestAction);   // И на паузе: подбор сундука открывает окно артефакта
                 Lap(4);
                 if (!_inRun || _partners.Count == 0 || _spells.Paused) { UpdateMarkers(now); return; }   // На паузе метки прячутся
                 if (!HeroPosition(out var hx, out var hy, out var hz)) return;

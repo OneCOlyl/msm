@@ -47,6 +47,8 @@ bash build.sh
 The script builds the Unity stubs, checks that versions match, builds `coop`, `coop_debug`, `coop_cheat` and
 `coop_lab`, packs them into `dist/<mod>.zip` and runs all tests. If tests fail or versions don't
 match, the script exits with an error. `SKIP_TESTS=1 bash build.sh` only builds and packs.
+Tests run in parallel, about 80 s: ModSim takes longest (section 7 runs as a separate process, `ModSim.dll 7`, the rest
+as `ModSim.dll main`). A new networked test needs its own port.
 
 Building against the real game assemblies (the `net8/` and `il2cpp/` folders copied from the phone after Zombix's first
 launch):

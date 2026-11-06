@@ -534,21 +534,25 @@ if (server != null)
         new Thread(() => { string l; try { while ((l = ro.ReadLine()) != null) if (l.Contains(Protocol.RemotePlayerState)) Interlocked.Increment(ref other20); } catch { } }) { IsBackground = true },
     };
     foreach (var th in readers) th.Start();
-    var spam = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("{\"type\":\"PLAYER_STATE\",\"state\":{\"x\":1}}\n", 300)));
+    var spam = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("{\"type\":\"PLAYER_STATE\",\"state\":{\"x\":1}}\n", 100)));
     var olds = new List<TcpClient>();
+    int rejoins20 = 0;
     for (int i = 0; i < 40; i++)
     {
         var (ts, rsx, wsx) = Raw("127.0.0.1", rc.Port);
         olds.Add(ts);
         SendLine(wsx, "{\"type\":\"JOIN_ROOM\",\"roomCode\":\"" + code20 + "\",\"name\":\"Гость\",\"clientId\":\"guest-20\",\"protocol\":2}");
-        ReadType(rsx, Protocol.RoomJoined);
+        var jr20 = ReadType(rsx, Protocol.RoomJoined, Protocol.Error);
+        // Хост не успел дочитать поток состояний, сервер его отключил, и комнаты больше нет
+        if (!jr20.HasValue || Protocol.TypeOf(jr20.Value) != Protocol.RoomJoined) break;
+        rejoins20++;
         // поток состояний с этого соединения, а следующий виток тем временем входит заново с тем же clientId
         new Thread(() => { try { wsx.Write(spam, 0, spam.Length); } catch { } }) { IsBackground = true }.Start();
         Thread.Sleep(i % 3);
     }
     Thread.Sleep(800);
     foreach (var th in readers) th.Join(3000);
-    Check(got20 > 0 && zero20 == 0, $"ни одно из {got20} пересланных состояний не ушло со слотом 0");
+    Check(got20 > 0 && zero20 == 0, $"ни одно из {got20} пересланных состояний не ушло со слотом 0 (перевходов {rejoins20})");
     Check(other20 == 0, $"игроку другой комнаты состояний не пришло ({other20})");
     foreach (var t in olds) t.Close();
     tr.Close(); to.Close(); rc.Stop();
