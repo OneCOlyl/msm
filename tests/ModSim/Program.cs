@@ -387,6 +387,60 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
         Frames(30);
         (FakeManager.List_BattleUnitEnemyBoss_Empty, FakeManager.List_BattleUnitEnemy_Empty) = (savedBoss, savedCommon);
     }
+    {
+        var dropField = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session").GetField("DropStateOverride", BindingFlags.NonPublic | BindingFlags.Static);
+        var (savedBoss, savedCommon) = (FakeManager.List_BattleUnitEnemyBoss_Empty, FakeManager.List_BattleUnitEnemy_Empty);
+        FakeManager.List_BattleUnitEnemyBoss_Empty = Enumerable.Range(0, 3).Select(_ => new object()).ToList();
+        FakeManager.List_BattleUnitEnemy_Empty = Enumerable.Range(0, 60).Select(_ => new object()).ToList();
+        object gp = null; foreach (System.Collections.DictionaryEntry kv in A.Partners()) gp = kv.Value;
+        double F(object o, string f) => Convert.ToDouble(o.GetType().GetField(f).GetValue(o));
+        double gx = asx + F(gp, "RelX"), gy = asy + F(gp, "RelY");
+        var nearE = new List<FakeEnemy>(); var farE = new List<FakeEnemy>();
+        for (int i = 0; i < 8; i++)
+        {
+            var ne = new FakeEnemy(A, 3); ne.Transform_ObjUnit.position = new Vector3((float)gx + 2 + i * 0.5f, (float)gy + 1, 0); nearE.Add(ne);
+            var fe = new FakeEnemy(A, 4); fe.Transform_ObjUnit.position = new Vector3((float)gx + 40 + i, (float)gy - 30, 0); farE.Add(fe);
+        }
+        A.Combat.Enemies.AddRange(nearE); A.Combat.Enemies.AddRange(farE);
+        var w0 = System.Diagnostics.Stopwatch.StartNew(); while (w0.Elapsed.TotalSeconds < 1.5) Frames(1);
+        int partial = 0, nearSeen = 0, farSeen = 0;
+        var nearIds = new HashSet<int>(); var farIds = new HashSet<int>();
+        object idsOf = A.Get("_enIds");
+        foreach (System.Collections.DictionaryEntry kv in (System.Collections.IDictionary)idsOf)
+        {
+            var key = kv.Key; var id = (int)kv.Value.GetType().GetField("Item1").GetValue(kv.Value);
+            if (nearE.Any(e => ReferenceEquals(e, key) || ReferenceEquals(e.gameObject, key))) nearIds.Add(id);
+            if (farE.Any(e => ReferenceEquals(e, key) || ReferenceEquals(e.gameObject, key))) farIds.Add(id);
+        }
+        dropField.SetValue(null, (Func<object, System.Text.Json.JsonElement, bool>)((s, st) =>
+        {
+            if (s != B.Session || !st.TryGetProperty("en", out var en) || st.TryGetProperty("ef", out _)) return false;
+            partial++;
+            for (int i = 0; i + 2 < en.GetArrayLength(); i += 3) { int id = en[i].GetInt32(); if (nearIds.Contains(id)) nearSeen++; if (farIds.Contains(id)) farSeen++; }
+            return false;
+        }));
+        w0.Restart(); while (w0.Elapsed.TotalSeconds < 2) Frames(1);
+        dropField.SetValue(null, null);
+        double nearShare = partial > 0 ? nearSeen / (double)(partial * nearIds.Count) : 0, farShare = partial > 0 ? farSeen / (double)(partial * farIds.Count) : 0;
+        Check(nearIds.Count == 8 && farIds.Count == 8 && nearShare > 0.95 && farShare > 0.3 && farShare < 0.7,
+              $"5.4: ближние враги в каждой отправке ({nearShare:P0}), дальние через раз ({farShare:P0}); неполных снимков {partial}");
+        List<FakeEnemy> FarCopies() => B.Combat.Enemies.OfType<FakeEnemy>().Where(e => e.Puppet && e.Unit_IsLive && e.UnitID == 4).ToList();
+        var farBefore = FarCopies();
+        int enStates = 0;
+        dropField.SetValue(null, (Func<object, System.Text.Json.JsonElement, bool>)((s, st) => s == B.Session && st.TryGetProperty("en", out _) && enStates++ % 2 == 1));
+        w0.Restart(); while (w0.Elapsed.TotalSeconds < 3) Frames(1);
+        dropField.SetValue(null, null);
+        var after = FarCopies();
+        Check(farBefore.Count == 8 && after.Count == 8 && after.All(farBefore.Contains), $"5.4: каждое второе состояние с врагами теряется — копии дальних те же, не пересозданы ({farBefore.Count} → {after.Count})");
+        var killed = farE.Take(3).ToList();
+        foreach (var k in killed) A.Combat.Enemies.Remove(k);
+        w0.Restart();
+        while (w0.Elapsed.TotalSeconds < 2 && FarCopies().Count > 5) Frames(1);
+        Check(FarCopies().Count == 5 && w0.Elapsed.TotalSeconds < 0.6, $"5.4: убитые у хоста дальние убраны у гостя по списку погибших за {w0.Elapsed.TotalSeconds:0.00} с, не дожидаясь полного снимка");
+        foreach (var e in nearE.Concat(farE)) A.Combat.Enemies.Remove(e);
+        Frames(30);
+        (FakeManager.List_BattleUnitEnemyBoss_Empty, FakeManager.List_BattleUnitEnemy_Empty) = (savedBoss, savedCommon);
+    }
     Check(FakeManager.List_BattleUnitEnemy_Empty.Count < 30, $"пул боссов кончился — пополнен из обычного пула (статического; там осталось {FakeManager.List_BattleUnitEnemy_Empty.Count})");
     am.Time_Min = 2; am.Time_Sec = 30; am.EnemyLevelNum = 150; am.EnemyWaveID = 5;
     bm.Time_Min = 2; bm.Time_Sec = 21; bm.EnemyLevelNum = 141; bm.EnemyWaveID = 4;   // у гостя была своя пауза — отстал

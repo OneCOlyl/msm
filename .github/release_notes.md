@@ -1,5 +1,6 @@
 ## Не выпущено
 
+- Less traffic from the host with many enemies: enemies far from guests are sent every other time, a full list once a second, positions without repeated fields; dead enemies are listed explicitly. The clock and chests are sent on change and twice a second.
 - Less memory garbage from the network code: the state is written straight into a reused buffer and incoming messages are not copied. Fewer garbage collections during battle.
 - The host's game no longer talks to its own room server through a network socket, and the server relays states and events without rebuilding them: less work for the host's phone. Guests see no difference.
 - Smaller host messages with special enemies: an enemy's look is sent after it appears or changes and then once every 2 s, not in every send. The name, max HP, kills and lobby are sent on change and once every 2 s. All players need the same version.
@@ -8,6 +9,7 @@
 
 **По-русски:**
 
+- Меньше трафика от хоста при большом числе врагов: дальние от гостей враги уходят через раз, полный список — раз в секунду, позиции без повторяющихся полей; погибшие перечисляются явно. Часы и сундуки — при изменении и два раза в секунду.
 - Меньше мусора в памяти от сетевого кода: состояние пишется сразу в переиспользуемый буфер, входящие сообщения не копируются. Меньше сборок мусора в бою.
 - Игра хоста больше не общается со своим сервером комнаты через сетевой сокет, а сервер пересылает состояния и события, не собирая их заново: телефону хоста меньше работы. Для гостей ничего не меняется.
 - Меньше сообщений хоста при особых врагах: вид врага уходит после появления или изменения и затем раз в 2 с, а не в каждой отправке. Имя, здоровье максимум, убийства и лобби — при изменении и раз в 2 с. Нужна одна версия у всех игроков.

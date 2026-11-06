@@ -63,6 +63,7 @@ namespace MagicSurvivalCoop
         private void ResetChests()
         {
             _chestScanAt = 0;
+            _chestSig = 0; _chestLeft = 0; _chestSentAt = -100;
             _personalChests.Clear(); _chestsBeforePause = null;
             _chestIds.Clear(); _chestBoxes.Clear(); _chestList.Clear();
             _hostChests.Clear(); _chestCopies.Clear(); _chestDone.Clear();
@@ -94,9 +95,27 @@ namespace MagicSurvivalCoop
             _personalChests.RemoveWhere(k => !keys.Contains(k));
         }
 
+        // Список сундуков: при изменении три отправки подряд и не реже раза в ChestSendSec. Выключенные общие сундуки — "ch": null.
+        private const double ChestSendSec = 0.5;
+        private int _chestSig, _chestLeft;
+        private double _chestSentAt = -100;
+
         private void WriteChests(Utf8JsonWriter w)
         {
-            if (!ChestsOn || _partners.Count == 0) return;
+            double now = Clock.Elapsed.TotalSeconds;
+            if (!ChestsOn || _partners.Count == 0)
+            {
+                if (now - _chestSentAt < ChestSendSec) return;
+                _chestSentAt = now; _chestSig = 0;
+                w.WriteNull("ch");
+                return;
+            }
+            int sig = _chestList.Count + 1;
+            foreach (var c in _chestList) sig = sig * 31 + c.id * 7 + c.kind;
+            if (sig != _chestSig) { _chestSig = sig; _chestLeft = 3; }
+            if (_chestLeft == 0 && now - _chestSentAt < ChestSendSec) return;
+            if (_chestLeft > 0) _chestLeft--;
+            _chestSentAt = now;
             w.WriteStartArray("ch");
             foreach (var c in _chestList)
             {
@@ -112,7 +131,8 @@ namespace MagicSurvivalCoop
         private void ReadChests(Partner p, JsonElement s)
         {
             if (_hosting) return;
-            if (!s.TryGetProperty("ch", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            if (!s.TryGetProperty("ch", out var arr)) return;
+            if (arr.ValueKind != JsonValueKind.Array)
             {
                 if (p == _chestHost) _chestHost = null;
                 return;

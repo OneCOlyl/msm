@@ -509,9 +509,12 @@ namespace MagicSurvivalCoop
             if (Protocol.Bool(s, "mirror")) p.Mirror = true;
             p.WorldGuest = Protocol.Bool(s, "wg");
             p.OwnPause = Protocol.Bool(s, "op");
-            p.BattleClock = (int)Protocol.Num(s, "tm", -1);
-            p.BossWave = Protocol.Bool(s, "bw");
-            p.AreaChange = (int)Protocol.Num(s, "ac", -1);
+            if (s.TryGetProperty("tm", out _))
+            {
+                p.BattleClock = (int)Protocol.Num(s, "tm", -1);
+                p.BossWave = Protocol.Bool(s, "bw");
+                p.AreaChange = (int)Protocol.Num(s, "ac", -1);
+            }
             p.StateReal = Clock.Elapsed.TotalSeconds;
             ReadOrbits(p, s, Clock.Elapsed.TotalSeconds);
             ReadLook(p, s);
@@ -749,6 +752,7 @@ namespace MagicSurvivalCoop
         private void ResendAll()
         {
             _rareLeft = RareSends;
+            _clockSentAt = _chestSentAt = _orbSentAt = -100;
             if (_hosting) ResendLooks();
         }
 
