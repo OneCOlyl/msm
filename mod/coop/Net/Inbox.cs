@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -21,6 +22,7 @@ namespace MagicSurvivalCoop.Net
         private sealed class Item
         {
             public JsonElement Msg;
+            public IDisposable Owner;           // Документ и буфер Msg: освобождаются, когда сообщение больше не нужно
             public int Bytes;
             public bool IsState;
             public int Status;                  // Waiting → Taken (главный поток) или Dropped (сетевой), только через CAS
@@ -38,28 +40,51 @@ namespace MagicSurvivalCoop.Net
         public int Pending => Volatile.Read(ref _other);
 
         // Без проверки предела, для служебных сообщений клиента вроде DISCONNECTED.
-        public void Enqueue(JsonElement m) { lock (_writeLock) Add(m, 0, force: true); }
+        public void Enqueue(JsonElement m) { lock (_writeLock) Add(m, 0, force: true, null); }
 
-        public bool TryEnqueue(JsonElement m, int bytes) { lock (_writeLock) return Add(m, bytes, force: false); }
-
-        // Без блокировок: зовётся из главного потока игры каждый кадр.
-        public bool TryDequeue(out JsonElement m)
+        // owner освобождается вместе с сообщением, false — сообщение не принято и owner уже освобождён.
+        public bool TryEnqueue(JsonElement m, int bytes, IDisposable owner = null)
         {
+            bool ok;
+            lock (_writeLock) ok = Add(m, bytes, force: false, owner);
+            if (!ok) owner?.Dispose();
+            return ok;
+        }
+
+        private IDisposable _held;
+
+        // Без блокировок и без копии: m годен до следующего TryTake или Clear. Только для главного потока игры.
+        public bool TryTake(out JsonElement m)
+        {
+            _held?.Dispose();
+            _held = null;
             while (_q.TryDequeue(out var it))
             {
                 Interlocked.Decrement(ref _entries);
                 if (Interlocked.CompareExchange(ref it.Status, Taken, Waiting) != Waiting) continue;   // Выброшено пишущей стороной
                 Release(it);
                 m = it.Msg;
+                _held = it.Owner;
+                it.Owner = null;
                 return true;
             }
             m = default;
             return false;
         }
 
-        public void Clear() { while (TryDequeue(out _)) { } }
+        // Копия, годная сколько угодно: для тестов и редких мест, где сообщение хранят.
+        public bool TryDequeue(out JsonElement m)
+        {
+            if (!TryTake(out m)) return false;
+            m = m.Clone();
+            _held?.Dispose();
+            _held = null;
+            return true;
+        }
 
-        private bool Add(JsonElement m, int bytes, bool force)
+        public void Clear() { while (TryTake(out _)) { } _held?.Dispose(); _held = null; }
+
+        private bool Add(JsonElement m, int bytes, bool force, IDisposable owner)
         {
             var type = Protocol.TypeOf(m);
             bool isState = type == Protocol.RemotePlayerState;
@@ -70,7 +95,7 @@ namespace MagicSurvivalCoop.Net
                 if (!_states.TryGetValue(id, out var mine)) _states[id] = mine = new Queue<Item>();
                 Trim(mine);
                 while (mine.Count >= MaxStatesPerPlayer) Drop(mine.Dequeue());
-                var it = new Item { Msg = m, Bytes = bytes, IsState = true };
+                var it = new Item { Msg = m, Bytes = bytes, IsState = true, Owner = owner };
                 mine.Enqueue(it);
                 Push(it);
                 return true;
@@ -81,7 +106,7 @@ namespace MagicSurvivalCoop.Net
             else if (type == Protocol.RoomJoined || type == Protocol.RoomCreated || type == "DISCONNECTED")
                 foreach (var k in new List<string>(_states.Keys)) DropStates(k);
             Interlocked.Increment(ref _other);
-            Push(new Item { Msg = m, Bytes = bytes });
+            Push(new Item { Msg = m, Bytes = bytes, Owner = owner });
             return true;
         }
 
@@ -105,6 +130,8 @@ namespace MagicSurvivalCoop.Net
             if (Interlocked.CompareExchange(ref it.Status, Dropped, Waiting) != Waiting) return;   // Главный поток успел взять
             Release(it);
             it.Msg = default;                   // Пустая запись остаётся до прохода главного потока
+            it.Owner?.Dispose();
+            it.Owner = null;
         }
 
         // Главный поток берёт по порядку, так что взятые состояния игрока всегда в голове его очереди.

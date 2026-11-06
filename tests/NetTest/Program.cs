@@ -709,6 +709,32 @@ if (server != null)
     gt.Close(); ls.Stop();
 }
 
+{
+    Console.WriteLine("24. Inbox без Clone: документ живёт до следующего TryTake, выброшенные освобождаются сразу");
+    var ib = new Inbox();
+    var owners = new List<Owned>();
+    Owned Put(string json, int bytes = 10)
+    {
+        var o = new Owned(json); owners.Add(o);
+        ib.TryEnqueue(o.Root, bytes, o);
+        return o;
+    }
+    var o1 = Put("{\"type\":\"REMOTE_EVENT\",\"n\":1}");
+    var o2 = Put("{\"type\":\"REMOTE_EVENT\",\"n\":2}");
+    Check(ib.TryTake(out var t1) && Protocol.Num(t1, "n") == 1 && !o1.Disposed, "взятое сообщение живо, пока игра с ним работает");
+    Check(ib.TryTake(out var t2) && Protocol.Num(t2, "n") == 2 && o1.Disposed && !o2.Disposed, "следующий TryTake освободил прошлое");
+    for (int i = 0; i < Inbox.MaxStatesPerPlayer + 5; i++) Put("{\"type\":\"REMOTE_PLAYER_STATE\",\"playerId\":\"p9\",\"i\":" + i + "}");
+    int droppedFreed = owners.Skip(2).Take(5).Count(o => o.Disposed);
+    Check(droppedFreed == 5, $"выброшенные сверх предела состояния освобождены сразу ({droppedFreed} из 5)");
+    Check(ib.TryDequeue(out var copy) && o2.Disposed, "TryDequeue отдаёт копию и сразу освобождает оригинал");
+    ib.Clear();
+    Check(Protocol.TypeOf(copy) == Protocol.RemotePlayerState && owners.All(o => o.Disposed), $"копия читается после освобождения, Clear освободил всё ({owners.Count(o => o.Disposed)} из {owners.Count})");
+    var full = new Inbox();
+    var spare = new Owned("{\"type\":\"REMOTE_EVENT\"}");
+    bool took = full.TryEnqueue(spare.Root, Inbox.MaxBytes + 1, spare);
+    Check(!took && spare.Disposed, "не принятое сообщение освобождено сразу");
+}
+
 server?.Stop();
 Console.WriteLine($"\nИТОГ: {passes} PASS, {fails} FAIL");
 return fails == 0 ? 0 : 1;
@@ -793,4 +819,13 @@ sealed class Proxy : IDisposable
     }) { IsBackground = true }.Start();
     public void Cut() { lock (_open) { foreach (var c in _open) try { c.Close(); } catch { } _open.Clear(); } }
     public void Dispose() { _stop = true; try { _l.Stop(); } catch { } Cut(); }
+}
+
+sealed class Owned : IDisposable
+{
+    private readonly JsonDocument _doc;
+    public bool Disposed;
+    public Owned(string json) { _doc = JsonDocument.Parse(json); }
+    public JsonElement Root => _doc.RootElement;
+    public void Dispose() { Disposed = true; _doc.Dispose(); }
 }
