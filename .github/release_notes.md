@@ -1,4 +1,4 @@
-## Не выпущено
+## Co-op 1.8.1
 
 - **The friend's combined spells show up where they should.** Arcane Ray and its combinations, the Fireball constellation (Ghastly Rampage, Reaction, Genesis, Astrape) and a few other projectiles hang on objects of the hero who casts them. A friend's repeat used your hero, so the friend's rays came out of you and the friend's constellation circled you, or didn't show at all. Now these projectiles appear at the friend's ally.
 - **Upgrade variants of the friend's spells.** The game keeps some upgrade choices outside the hero, for example how many jets Flame Storm has (2 or 4), Energy Bullet explosion and duration, constellation duration. The friend's game now sends them with the rest of the spell look. All players need the same version.
