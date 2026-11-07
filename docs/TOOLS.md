@@ -60,7 +60,8 @@ Notes:
 
 The same actions from a PC through the `coop_debug` console: `call T:coop_lab:MagicSurvivalLab.Lab/Current.Spawn 6 10`,
 `.Status`, `.CoopStatus`. For automation: `Buttons` (active UI buttons: path, position, enabled, text), `Click <index> <path>`
-(a press, like a tap), `Pickups` (lying chests, merchant, obelisks), `GoTo <x> <y>` (hero to a point). Scenarios on two phones are in `tools/lab.py` (see [DEVELOPMENT.md](DEVELOPMENT.md#test-arena)).
+(a press, like a tap), `Pickups` (lying chests, merchant, obelisks), `GoTo <x> <y>` (hero to a point), `Shots` and `ShotsDist` (live projectiles by kind and number, distance to the own hero
+and to the friend's ally). Scenarios on two phones are in `tools/lab.py` (see [DEVELOPMENT.md](DEVELOPMENT.md#test-arena)).
 
 ## Publishing
 

@@ -1,3 +1,21 @@
+## Не выпущено
+
+- **The friend's combined spells show up where they should.** Arcane Ray and its combinations, the Fireball constellation (Ghastly Rampage, Reaction, Genesis, Astrape) and a few other projectiles hang on objects of the hero who casts them. A friend's repeat used your hero, so the friend's rays came out of you and the friend's constellation circled you, or didn't show at all. Now these projectiles appear at the friend's ally.
+- **Upgrade variants of the friend's spells.** The game keeps some upgrade choices outside the hero, for example how many jets Flame Storm has (2 or 4), Energy Bullet explosion and duration, constellation duration. The friend's game now sends them with the rest of the spell look. All players need the same version.
+- Telekinetic Sword, Soul Blade and Brandish swords of a friend no longer hang in the map centre for two minutes. The combo makes the sword animation fast, and the friend's game sent the new look only once a second, so the first swords after picking the combo were repeated with the old slow animation. The look is now sent as soon as it changes.
+- A friend's burst around their own hero (for example Snowflake Blossom) stays on the friend's ally instead of jumping to the nearest enemy.
+- Known gaps: Electric Zone combo zones (Fire Ring, Frozen Heart and others) and the permanent Plasma rays still aren't shown at the friend's ally; Tsunami flow speed and volcano duration use your values.
+- For developers: `tools/lab.py magic` no longer passes an item because of an orbit left from the previous item. New scenario `lab.py place`: spells and combos one at a time, the friend 7 units away, projectiles compared by kind and distance to the ally. `coop_lab`: `Shots`, `ShotsDist`. Findings are in `docs/MAGIC_REPLAY.md`.
+
+**По-русски:**
+
+- **Комбинированные магии друга появляются на своём месте.** Луч и его комбинации, созвездие Огненных шаров (Ghastly Rampage, Reaction, Genesis, Astrape) и ещё несколько снарядов висят на объектах героя, который кастует. Повтор магии друга брал вашего героя, поэтому лучи друга били из вас, а его созвездие кружило вокруг вас или не было видно вовсе. Теперь эти снаряды появляются у союзника-друга.
+- **Варианты улучшений магий друга.** Часть выбранных улучшений игра хранит не в герое: например, сколько струй у Flame Storm (2 или 4), взрыв и время Энергопули, время созвездия. Теперь игра друга присылает их вместе с остальным видом магии. Нужна одна версия у всех игроков.
+- Мечи Telekinetic Sword, Soul Blade и Brandish друга больше не висят две минуты в центре карты. Комбинация ускоряет анимацию меча, а игра друга присылала новый вид раз в секунду, и первые мечи после выбора комбинации повторялись со старой, медленной анимацией. Теперь вид уходит сразу, как изменился.
+- Взрыв друга вокруг его героя (например, Snowflake Blossom) остаётся на союзнике-друге, а не перескакивает на ближайшего врага.
+- Пока не сделано: зоны комбинаций Электрозоны (Fire Ring, Frozen Heart и другие) и постоянные лучи Plasma у союзника-друга не видны; скорость течения Цунами и время вулкана берутся ваши.
+- Для разработчиков: `tools/lab.py magic` больше не засчитывает пункт из-за орбиты, оставшейся от прошлого пункта. Новый сценарий `lab.py place`: магии и комбинации по одной, друг в 7 ед., снаряды сравниваются по виду и расстоянию до союзника. В `coop_lab` — `Shots`, `ShotsDist`. Найденное — в `docs/MAGIC_REPLAY.ru.md`.
+
 ## Co-op 1.8.0
 
 - Enemy copies at a guest who stands apart from the host no longer vanish at the screen edge and reappear 2 s later: the game's walls that remove far-away enemies are off while shared enemies are on and the guest is near the host.

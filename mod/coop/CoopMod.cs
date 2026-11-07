@@ -150,6 +150,8 @@ namespace MagicSurvivalCoop
             public bool Mirror;                // Союзник не стреляет сам, а повторяет касты друга
             public readonly Queue<Cast> Casts = new Queue<Cast>();
             public double[] Look;              // Поля героя друга для вида его снарядов (Session.LookFields)
+            public GameObject[] Anchors;       // Session.AnchorFields: объекты у союзника вместо объектов нашего героя
+            public Vector3[] AnchorOffsets;
             public OrbState Orb;
             public OrbVisuals OrbVis;
             public ICompanion Ghost;
@@ -620,7 +622,7 @@ namespace MagicSurvivalCoop
             ResetFrameProfile();
             ResetMarkers();
             _hookErrors.Clear();
-            foreach (var p in _partners.Values) { p.GhostTr = null; p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; }
+            foreach (var p in _partners.Values) { p.GhostTr = null; p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; p.Anchors = null; }
             DestroyBtn(ref _menuBtn);
             ResetLobby();
             _nextSend = 0;
@@ -855,6 +857,7 @@ namespace MagicSurvivalCoop
                     {
                         PlaceGhost(p, dt, hx, hy, hz, _directWrite);
                         if (p.Casts.Count > 0) { if (p.GhostTr == null) EnsureGhostTr(p); RunCasts(p, now, hz); }
+                        if (p.Anchors != null) PlaceAnchors(p);
                         if (p.Orb != null) { if (p.GhostTr == null) EnsureGhostTr(p); PlaceOrbits(p, now); }
                     }
                     else if (p.OrbVis != null) HideAll(p.OrbVis);

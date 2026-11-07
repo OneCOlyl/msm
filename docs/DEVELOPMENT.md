@@ -149,12 +149,15 @@ Scenarios on two phones (both in battle, connected, with `coop`, `coop_debug`, `
 ```bash
 python tools/lab.py mobs drop spells                 # everything; --spells 13,17 --wait 20 for selected spells
 python tools/lab.py --shots shots magic              # every spell, trait and combo (~35 min)
+python tools/lab.py --caster host place              # the friend's spell and combo projectiles in place (~20 min a side)
 python tools/lab.py --json r.json perf               # load: 200 enemies, all spells maxed, 60 s
 ```
 
 `mobs` checks that the host's mobs of every kind appear at the guest, `spells` that the host's spells are visible at the
 guest, `drop` reconnection after a dropped link and matching clocks, `magic` that every projectile of every host spell, trait
-and combo (MagicCom) is replayed at the guest with no exceptions in the game log. Before the checks the scenario makes both heroes
+and combo (MagicCom) is replayed at the guest with no exceptions in the game log, `place` that the caster's spell and combo
+projectiles exist at the friend and sit at the ally, not at the friend's hero (the friend 7 units away, see
+[MAGIC_REPLAY.md](MAGIC_REPLAY.md)). Before the checks the scenario makes both heroes
 immortal, turns experience off and removes spells. `perf` gives both of them all spells at max, keeps 200 enemies at the
 host for 60 s and prints a table of frame and network numbers for the host and the guest (`--perf-sec`, `--perf-enemies`).
 

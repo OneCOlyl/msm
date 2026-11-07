@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text.Json;
 using MagicSurvivalCoop.Net;
 using ModKit;
+using UnityEngine;
 
 namespace MagicSurvivalCoop
 {
@@ -57,7 +58,23 @@ namespace MagicSurvivalCoop
             public int Id;                         // BulletID
             public float Dx, Dy, Aim, P1, P2, S1, S2, S3, S4, Dr;
             public bool NoPos;                     // Игра создала снаряд в (0, 0): цель он выбирает сам
+            public float Rot;                      // Угол Transform_ObjArcaneRayMid у кастующего, для лучей
         }
+
+        // Эти снаряды Bullet_Create вешает на объект героя (или ставит в его точку). При повторе это был бы наш герой,
+        // поэтому на время вызова поле героя смотрит на якорь у союзника-друга.
+        private static readonly string[] AnchorFields = { "Obj_UnitArcaneRayMid", "Obj_UnitConstellationMid", "Obj_UnitDestroyFieldMid", "Obj_UnitGravityOrbMid" };
+        private const int RayAnchor = 1, HeroPoint = 16;          // 1 << AnchorFields.Length
+        private static readonly Dictionary<int, int> AnchoredBullets = new Dictionary<int, int>
+        {
+            [4] = RayAnchor, [23] = RayAnchor, [40] = RayAnchor, [51] = RayAnchor, [67] = RayAnchor, [90] = RayAnchor,
+            [94] = RayAnchor, [111] = RayAnchor, [127] = RayAnchor,
+            [27] = 2, [75] = 2, [53] = 4, [68] = 8 | HeroPoint, [91] = HeroPoint,
+        };
+        private readonly object[] _anchorSaved = new object[AnchorFields.Length + 1];
+        private int _anchorPut;
+        private object _rayMidTr;
+        private int _anchorFails;
 
         private readonly List<Cast> _outCasts = new List<Cast>();
         private const double WorldReplayRatio = 0.001;
@@ -69,7 +86,9 @@ namespace MagicSurvivalCoop
         private readonly Dictionary<int, int> _sentById = new Dictionary<int, int>();
         private int _castsDone, _castsDropped;
 
-        // Поля героя, которые читает Bullet_Create, кроме урона, крита и счётчиков самой игры
+        // Поля героя, которые читают Bullet_Create и BulletAttack снаряда, кроме урона, крита и счётчиков самой игры.
+        // Хвост списка — статические поля C_Battle_AllyUnit (вариант улучшения, например 2 или 4 струи Flame Storm).
+        // Статики, которые снаряд читает позже в корутинах (скорость Цунами, время вулкана), так не подставить.
         private static readonly string[] LookFields =
         {
             "UnitApply_ArcaneRayNum", "UnitApply_ArcaneRaySize", "UnitApply_ArcaneRayTime", "UnitApply_BlizzardArea",
@@ -81,11 +100,15 @@ namespace MagicSurvivalCoop
             "UnitApply_SpiritBulletMSpeed", "UnitApply_SpiritBulletSize", "UnitApply_ThunderArea", "UnitApply_TornadoMoveSpeed",
             "UnitApply_TornadoNum", "UnitApply_TornadoSizeExpand", "UnitApply_TornadoTime", "UnitApply_TsunamiSize",
             "ApplyTornadoSize_Cal", "ApplyLevelUpExplosion_Area",
+            "ApplyID_Incinerate", "UnitApply_EnergyBulletExplosionArea", "UnitApply_EnergyBulletTime", "ConstellationTime",
+            "UnitApply_ArcaneRayNumPlus", "UnitApply_LavaFieldSizeExpandRatioNum", "UnitApply_DetonateDeadSizeRatio",
         };
+        private const int OldLookFields = 34;     // Длина «fx» в 1.8.0 и раньше
         private readonly double[] _myLook = Enumerable.Repeat(double.NaN, LookFields.Length).ToArray();
         private readonly double[] _lookSaved = new double[LookFields.Length];
         private readonly bool[] _lookPut = new bool[LookFields.Length];
-        private double _lookAt = -1;
+        private double _lookAt = -1, _lookSentAt = -1;
+        private readonly double[] _lookNow = new double[LookFields.Length];
         private int _lookFails;
         // Рефлексия по полю IL2CPP стоит десятки микросекунд, а повтор меняет до 34 полей на каждый снаряд: пишем прямо в память героя
         private object _lookHero;
@@ -111,10 +134,10 @@ namespace MagicSurvivalCoop
         private void ResetMagic()
         {
             _outCasts.Clear();
-            _heroObj = null; _bulletCreate = null;
+            _heroObj = null; _bulletCreate = null; _rayMidTr = null;
             ResetOrbits();
             _sentById.Clear(); _castsDone = 0; _castsDropped = 0; _levels.Clear();
-            _lookAt = -1; Array.Fill(_myLook, double.NaN); _lookHero = null;
+            _lookAt = -1; _lookSentAt = -1; Array.Fill(_myLook, double.NaN); _lookHero = null;
             _castCost.Clear(); _frameMaxMs = 0; _slowFrames = 0; _slowFramesCasts = 0;
             foreach (var p in _partners.Values) p.Casts.Clear();
         }
@@ -165,6 +188,7 @@ namespace MagicSurvivalCoop
                     S1 = Convert.ToSingle(a[8]), S2 = Convert.ToSingle(a[9]), S3 = Convert.ToSingle(a[10]), S4 = Convert.ToSingle(a[11]),
                     Dr = Convert.ToSingle(a[12]),
                 };
+                if (AnchoredBullets.TryGetValue(c.Id, out var anchors) && (anchors & RayAnchor) != 0) c.Rot = RayAngle();
                 _outCasts.Add(c);
                 _sentById[c.Id] = _sentById.TryGetValue(c.Id, out var n) ? n + 1 : 1;
             }
@@ -190,7 +214,8 @@ namespace MagicSurvivalCoop
                 w.WriteNumberValue(Math.Round(c.Aim, 3)); w.WriteNumberValue(Math.Round(c.P1, 3)); w.WriteNumberValue(Math.Round(c.P2, 3));
                 w.WriteNumberValue(Math.Round(c.S1, 3)); w.WriteNumberValue(Math.Round(c.S2, 3)); w.WriteNumberValue(Math.Round(c.S3, 3)); w.WriteNumberValue(Math.Round(c.S4, 3));
                 w.WriteNumberValue(Math.Round(c.Dr, 3));
-                if (c.NoPos) w.WriteNumberValue(1);
+                if (c.NoPos || c.Rot != 0) w.WriteNumberValue(c.NoPos ? 1 : 0);
+                if (c.Rot != 0) w.WriteNumberValue(Math.Round(c.Rot, 1));
                 w.WriteEndArray();
             }
             w.WriteEndArray();
@@ -205,7 +230,7 @@ namespace MagicSurvivalCoop
             {
                 if (it.ValueKind != JsonValueKind.Array || it.GetArrayLength() < 12) continue;
                 float F(int i) => it[i].TryGetDouble(out var d) && double.IsFinite(d) ? (float)d : 0f;
-                var c = new Cast { T = it[0].TryGetDouble(out var t) ? t : 0, Id = (int)F(1), Dx = F(2), Dy = F(3), Aim = F(4), P1 = F(5), P2 = F(6), S1 = F(7), S2 = F(8), S3 = F(9), S4 = F(10), Dr = F(11), NoPos = it.GetArrayLength() >= 13 && F(12) != 0 };
+                var c = new Cast { T = it[0].TryGetDouble(out var t) ? t : 0, Id = (int)F(1), Dx = F(2), Dy = F(3), Aim = F(4), P1 = F(5), P2 = F(6), S1 = F(7), S2 = F(8), S3 = F(9), S4 = F(10), Dr = F(11), NoPos = it.GetArrayLength() >= 13 && F(12) != 0, Rot = it.GetArrayLength() >= 14 ? F(13) : 0 };
                 if (Math.Abs(c.Dx) > 40 || Math.Abs(c.Dy) > 40) continue;
                 if (p.Casts.Count < 200) p.Casts.Enqueue(c);
             }
@@ -245,8 +270,9 @@ namespace MagicSurvivalCoop
                 else
                 {
                     tx = gp.x + c.Dx; ty = gp.y + c.Dy;
-                    // Цель друга была врагом в его мире, у нас бьём ближайшего врага рядом с той же точкой
-                    double best = 2.5 * 2.5;
+                    // Цель друга была врагом в его мире, у нас бьём ближайшего врага рядом с той же точкой.
+                    // Каст у самого героя (взрыв вокруг него, меч Telekinetic Sword в 0,5 ед.) остаётся на союзнике
+                    double best = c.Dx * c.Dx + c.Dy * c.Dy < 1 ? -1 : 2.5 * 2.5;
                     for (int i = 0; i < _enemyCount; i++)
                     {
                         double ddx = _enemyX[i] - tx, ddy = _enemyY[i] - ty, d2 = ddx * ddx + ddy * ddy;
@@ -258,26 +284,120 @@ namespace MagicSurvivalCoop
                 _mirroring = true;
                 _ctx.Mark("повтор снаряда друга");
                 PutLook(hero, p.Look);
+                if (AnchoredBullets.TryGetValue(c.Id, out var anchors)) PutAnchors(hero, p, anchors, c.Rot);
                 _bulletCreate.Invoke(hero, new object[] { p.GhostTr, c.Id, (float)tx, (float)ty, (float)z, c.Aim, c.P1, c.P2, c.S1, c.S2, c.S3, c.S4, ratio });
                 _castsDone++;
             }
             catch (Exception e) { if (++_castFails <= 3) _ctx.Log("повтор снаряда: " + (e.InnerException ?? e).Message); }
-            finally { _mirroring = false; RestoreLook(hero); }
+            finally { _mirroring = false; RestoreLook(hero); RestoreAnchors(hero); }
         }
 
-        // Раз в секунду: это чтение полей героя через рефлексию.
+        private float RayAngle()
+        {
+            try
+            {
+                _rayMidTr ??= GetMember(HeroObject(), "Transform_ObjArcaneRayMid");
+                return _rayMidTr is Transform t ? (float)Math.Round(t.localEulerAngles.z, 1) : 0;
+            }
+            catch { _rayMidTr = null; return 0; }
+        }
+
+        private void PutAnchors(object hero, Partner p, int mask, float rot)
+        {
+            for (int i = 0; i <= AnchorFields.Length; i++)
+            {
+                if ((mask & (1 << i)) == 0) continue;
+                try
+                {
+                    if (i == AnchorFields.Length)
+                    {
+                        _anchorSaved[i] = GetMember(hero, "Transform_ObjUnit");
+                        SetRef(hero, "Transform_ObjUnit", p.GhostTr);
+                    }
+                    else
+                    {
+                        var a = Anchor(hero, p, i);
+                        if (a == null) continue;
+                        if (i == 0) a.transform.localEulerAngles = new Vector3(0, 0, rot);
+                        _anchorSaved[i] = GetMember(hero, AnchorFields[i]);
+                        SetRef(hero, AnchorFields[i], a);
+                    }
+                    _anchorPut |= 1 << i;
+                }
+                catch (Exception e) { if (++_anchorFails <= 3) _ctx.Log("якорь снаряда друга: " + Inner(e).Message); }
+            }
+        }
+
+        private void RestoreAnchors(object hero)
+        {
+            for (int i = 0; _anchorPut != 0 && i <= AnchorFields.Length; i++)
+            {
+                if ((_anchorPut & (1 << i)) == 0) continue;
+                _anchorPut &= ~(1 << i);
+                try { SetRef(hero, i == AnchorFields.Length ? "Transform_ObjUnit" : AnchorFields[i], _anchorSaved[i]); }
+                catch (Exception e) { if (++_anchorFails <= 3) _ctx.Log("якорь снаряда друга: возврат: " + Inner(e).Message); }
+                _anchorSaved[i] = null;
+            }
+        }
+
+        private static void SetRef(object o, string name, object v)
+        {
+            var pr = o.GetType().GetProperty(name, AnyInst) ?? throw new MissingMemberException(o.GetType().Name, name);
+            pr.SetValue(o, v);
+        }
+
+        // Якорь не уничтожается: на нём могут висеть снаряды из пулов игры.
+        private GameObject Anchor(object hero, Partner p, int i)
+        {
+            p.Anchors ??= new GameObject[AnchorFields.Length];
+            p.AnchorOffsets ??= new Vector3[AnchorFields.Length];
+            if (p.Anchors[i] == null)
+            {
+                if (!(GetMember(GetMember(hero, AnchorFields[i]), "transform") is Transform own) || _heroTr == null) return null;
+                p.Anchors[i] = new GameObject();
+                var hp = _heroTr.position;
+                var op = own.position;
+                p.AnchorOffsets[i] = new Vector3(op.x - hp.x, op.y - hp.y, op.z);
+            }
+            PlaceAnchor(p, i);
+            return p.Anchors[i];
+        }
+
+        private void PlaceAnchors(Partner p)
+        {
+            if (p.Anchors == null || p.GhostTr == null) return;
+            for (int i = 0; i < p.Anchors.Length; i++)
+                if (p.Anchors[i] != null) PlaceAnchor(p, i);
+        }
+
+        private static void PlaceAnchor(Partner p, int i)
+        {
+            var g = p.GhostTr.position;
+            var o = p.AnchorOffsets[i];
+            p.Anchors[i].transform.position = new Vector3(g.x + o.x, g.y + o.y, o.z);
+        }
+
+        // Уходит при изменении и раз в секунду. Комбинация меняет вид сразу: Telekinetic Sword ставит
+        // UnitApply_SpiritBulletMSpeed 0,035 вместо 18, а снаряд 56 ждёт столько секунд на кадр, и повтор со старым
+        // значением висел у друга минуты. Состояние уходит раньше кастов той же отправки, поэтому с кастами в очереди
+        // вид перечитывается почти каждый раз и доходит до друга не позже них.
         private void WriteMyLook(Utf8JsonWriter w)
         {
             double now = Clock.Elapsed.TotalSeconds;
-            if (now - _lookAt < 1) return;
+            if (now - _lookAt < (_outCasts.Count > 0 ? 0.05 : 0.25)) return;
             _lookAt = now;
             var hero = HeroObject();
             if (hero == null) return;
             try
             {
-                for (int i = 0; i < LookFields.Length; i++) _myLook[i] = GetLook(hero, i);
+                for (int i = 0; i < LookFields.Length; i++) _lookNow[i] = GetLook(hero, i);
             }
             catch (Exception e) { if (++_lookFails <= 3) _ctx.Log("вид магии: " + Inner(e).Message); return; }
+            bool changed = false;
+            for (int i = 0; i < LookFields.Length && !changed; i++) changed = !_lookNow[i].Equals(_myLook[i]);
+            if (!changed && now - _lookSentAt < 1) return;
+            _lookSentAt = now;
+            Array.Copy(_lookNow, _myLook, LookFields.Length);
             w.WriteStartArray("fx");
             foreach (var v in _myLook) w.WriteNumberValue(double.IsFinite(v) ? Math.Round(v, 4) : -1);
             w.WriteEndArray();
@@ -285,10 +405,15 @@ namespace MagicSurvivalCoop
 
         private static void ReadLook(Partner p, JsonElement s)
         {
-            if (!s.TryGetProperty("fx", out var a) || a.ValueKind != JsonValueKind.Array || a.GetArrayLength() != LookFields.Length) return;
+            if (!s.TryGetProperty("fx", out var a) || a.ValueKind != JsonValueKind.Array || a.GetArrayLength() < OldLookFields) return;
             var look = p.Look ??= new double[LookFields.Length];
             int i = 0;
-            foreach (var v in a.EnumerateArray()) look[i++] = v.TryGetDouble(out var d) && d >= 0 ? d : double.NaN;
+            Array.Fill(look, double.NaN);
+            foreach (var v in a.EnumerateArray())
+            {
+                if (i == look.Length) break;
+                look[i++] = v.TryGetDouble(out var d) && d >= 0 ? d : double.NaN;
+            }
         }
 
         // Свои значения читаются заново, они могли смениться за секунду.
@@ -343,7 +468,8 @@ namespace MagicSurvivalCoop
                 for (int i = 0; i < LookFields.Length; i++)
                 {
                     var f = (IntPtr)getField.Invoke(null, new object[] { klass, LookFields[i] });
-                    off[i] = f == IntPtr.Zero ? -1 : Convert.ToInt32(getOffset.Invoke(null, new object[] { f }));
+                    // У статического поля смещение считается от данных класса, а не от объекта
+                    off[i] = f == IntPtr.Zero || StaticLook(hero, i) != null ? -1 : Convert.ToInt32(getOffset.Invoke(null, new object[] { f }));
                     isInt[i] = hero.GetType().GetProperty(LookFields[i], AnyInst)?.PropertyType == typeof(int);
                     if (off[i] > 0) found++;
                 }
@@ -361,13 +487,29 @@ namespace MagicSurvivalCoop
                 int raw = System.Runtime.InteropServices.Marshal.ReadInt32(_lookPtr + _lookOff[i]);
                 return _lookInt[i] ? raw : BitConverter.Int32BitsToSingle(raw);
             }
+            var sp = StaticLook(hero, i);
+            if (sp != null) return Convert.ToDouble(sp.GetValue(null));
             return GetMember(hero, LookFields[i]) is object v ? Convert.ToDouble(v) : double.NaN;
+        }
+
+        private PropertyInfo[] _lookStatic;
+        private Type _lookStaticType;
+        private PropertyInfo StaticLook(object hero, int i)
+        {
+            var t = hero.GetType();
+            if (t != _lookStaticType)
+            {
+                _lookStaticType = t;
+                _lookStatic = LookFields.Select(n => t.GetProperty(n, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)).ToArray();
+            }
+            return _lookStatic[i];
         }
 
         private void SetLook(object hero, int i, double v)
         {
             if (_lookOff != null && _lookOff[i] > 0)
                 System.Runtime.InteropServices.Marshal.WriteInt32(_lookPtr + _lookOff[i], _lookInt[i] ? (int)Math.Round(v) : BitConverter.SingleToInt32Bits((float)v));
+            else if (StaticLook(hero, i) is PropertyInfo sp) sp.SetValue(null, Convert.ChangeType(sp.PropertyType == typeof(int) ? Math.Round(v) : v, sp.PropertyType));
             else SetMember(hero, LookFields[i], v);
         }
 

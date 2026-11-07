@@ -2,7 +2,7 @@
 """Проверки кооператива на двух телефонах через полигон coop_lab и консоль coop_debug.
 
 Оба телефона подключены по USB, на обоих включены coop, coop_debug, coop_lab (и coop_cheat для магий), оба в бою.
-Запуск:  python tools/lab.py [--host SERIAL] [--guest SERIAL] [--out отчёт.txt] [--json итог.json] mobs spells drop perf
+Запуск:  python tools/lab.py [--host SERIAL] [--guest SERIAL] [--out отчёт.txt] [--json итог.json] mobs spells drop magic place perf
 Код выхода 1 при любом провале, в том числе без телефонов.
 """
 import argparse
@@ -302,6 +302,7 @@ def magic(host, guest, casters, kinds, max_wait, shots):
             granted = batch(cp, calls)
             not_given = [x for x in granted if re.search(r": (\d+) → \1$", x) or x.startswith(("ошибка", "нет ", "комбинации "))]
             sent0, rep0 = counts(c0.get("sent")), counts(o0.get("replayed"))
+            orb0 = o0.get("partnerOrb", "")
             limit = max(max_wait, 40) if 14 in spells_ else max_wait
             t0 = time.time()
             new, rep1, orbs, arma, o1 = {}, rep0, [], 0, o0
@@ -310,8 +311,10 @@ def magic(host, guest, casters, kinds, max_wait, shots):
                 c1, o1 = coop(cp), coop(op)
                 sent1, rep1 = counts(c1.get("sent")), counts(o1.get("replayed"))
                 new = {b: sent1[b] - sent0.get(b, 0) for b in sent1 if sent1[b] > sent0.get(b, 0)}
+                # Орбита, оставшаяся у друга от прошлого пункта, этот пункт не засчитывает
                 orb = dict(x.split(":") for x in o1.get("partnerOrb", "").split(",") if ":" in x)
-                orbs = [f"{k}={orb[k]}" for k in ("sh", "sa", "sb", "sp", "ez", "mc") if orb.get(k, "0") != "0"]
+                old = dict(x.split(":") for x in orb0.split(",") if ":" in x)
+                orbs = [f"{k}={orb[k]}" for k in ("sh", "sa", "sb", "sp", "ez", "mc") if orb.get(k, "0") not in ("0", old.get(k, "0"))]
                 arma = int(o1.get("armaPlayed", 0)) - int(o0.get("armaPlayed", 0))
                 if (new and all(rep1.get(b, 0) > rep0.get(b, 0) for b in new)) or (orbs and not new) or arma:
                     break
@@ -342,6 +345,70 @@ def magic(host, guest, casters, kinds, max_wait, shots):
         t.start()
     for t in threads:
         t.join()
+
+
+def shots_dist(port):
+    """Живые снаряды по виду и номеру: {ключ: (число, расстояние до своего героя, до союзника-друга)}."""
+    raw = lab(port, "ShotsDist")
+    out = {}
+    for x in raw.split(",") if raw.count(":") else []:
+        k, c, d, a = x.split(":")
+        out[k] = (int(c), float(d), float(a))
+    return out
+
+
+def place(caster, kinds, dur):
+    """
+    Магии и комбинации у кастующего, друг стоит в 7 ед. Снаряды сравниваются по полигону (ShotsDist): что есть у
+    кастующего, должно быть и у друга, и на том же расстоянии от союзника, что у кастующего от героя.
+    """
+    begin("place")
+    cp, op = (HOST_PORT, GUEST_PORT) if caster == "host" else (GUEST_PORT, HOST_PORT)
+    who = "хост" if caster == "host" else "гость"
+    say(f"== снаряды на месте: кастует {who}, друг в 7 ед.")
+    calm_arena()
+    items = [x for x in magic_items(kinds) if x[0] != "особенность"]
+    lock = threading.Lock()
+
+    def sample(port, acc, stop):
+        while not stop.is_set():
+            for k, (c, d, al) in shots_dist(port).items():
+                with lock:
+                    m, sd, sa, n = acc.get(k, (0, 0.0, 0.0, 0))
+                    acc[k] = (max(m, c), sd + d, sa + al, n + 1)
+            time.sleep(0.3)
+
+    for kind, num, name, spells_, _ in items:
+        for port in (HOST_PORT, GUEST_PORT):
+            batch(port, ["ResetMagic"])
+        batch(HOST_PORT, [f"ToStart {0 if caster == 'host' else 7}", "NoEnemies"])
+        batch(GUEST_PORT, [f"ToStart {7 if caster == 'host' else 0}"])
+        time.sleep(2)                                   # остатки прошлого пункта гаснут
+        calls = [f"Spell {sp} 5" for sp in spells_ if sp] + ([f"Combo {num} true"] if kind == "комбинация" else [])
+        batch(cp, calls)
+        lab(HOST_PORT, "SpawnTough 1 25 1000000")
+        a, b = {}, {}
+        stop = threading.Event()
+        ts = [threading.Thread(target=sample, args=(cp, a, stop)), threading.Thread(target=sample, args=(op, b, stop))]
+        for t in ts:
+            t.start()
+        time.sleep(dur)
+        stop.set()
+        for t in ts:
+            t.join()
+        what = f"[{who}] {kind} {num} «{name}»"
+        missing = [k for k in a if a[k][0] >= 3 and k not in b]
+        # У кастующего снаряд в d от героя, у друга такой же должен быть в d от союзника
+        moved = [f"{k} {a[k][1] / a[k][3]:.1f}→{b[k][2] / b[k][3]:.1f}" for k in a if k in b and abs(a[k][1] / a[k][3] - b[k][2] / b[k][3]) > 3]
+        shown = ", ".join(f"{k}×{a[k][0]}/{b.get(k, (0,))[0]}" for k in sorted(a)) or "нет"
+        if not a:
+            note("ИНФО", f"{what}: снарядов нет")
+        else:
+            check(not missing and not moved, f"{what}: {shown}" + (f"; у друга нет {missing}" if missing else "") +
+                  (f"; не у союзника: {', '.join(moved)}" if moved else ""))
+    for port in (HOST_PORT, GUEST_PORT):
+        batch(port, ["ResetMagic"])
+    lab(HOST_PORT, "NoEnemies")
 
 
 def enemy_count():
@@ -407,6 +474,9 @@ def run_scenarios(a):
             magic(a.host, a.guest, ["host", "guest"] if a.caster == "both" else [a.caster], a.kinds.split(","), a.wait, a.shots)
         elif name == "spells":
             spells([int(x) for x in a.spells.split(",")] if a.spells else list(SPELL_NAMES), a.wait)
+        elif name == "place":
+            for c in (["host", "guest"] if a.caster == "both" else [a.caster]):
+                place(c, a.kinds.split(","), a.place_sec)
         elif name == "perf":
             perf(a.perf_sec, a.perf_enemies, a.perf_type)
         else:
@@ -422,14 +492,15 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--spells", default="", help="номера магий через запятую, по умолчанию все")
     ap.add_argument("--wait", type=float, default=6, help="секунд на магию (для magic — наибольшее ожидание)")
-    ap.add_argument("--kinds", default="spells,traits,combos", help="для magic: spells, traits, combos")
+    ap.add_argument("--kinds", default="spells,traits,combos", help="для magic и place: spells, traits, combos")
     ap.add_argument("--shots", help="для magic: папка для скриншотов обоих")
-    ap.add_argument("--caster", default="both", choices=["host", "guest", "both"], help="для magic: кто кастует")
+    ap.add_argument("--caster", default="both", choices=["host", "guest", "both"], help="для magic и place: кто кастует")
+    ap.add_argument("--place-sec", type=float, default=8, help="для place: секунд на пункт")
     ap.add_argument("--json", help="итог по сценариям в файл JSON: имя, прошёл, проверки, цифры")
     ap.add_argument("--perf-sec", type=float, default=60, help="для perf: длина замера, с")
     ap.add_argument("--perf-enemies", type=int, default=200, help="для perf: число врагов")
     ap.add_argument("--perf-type", type=int, default=6, help="для perf: тип врагов")
-    ap.add_argument("scenarios", nargs="+", choices=["mobs", "spells", "drop", "magic", "perf"])
+    ap.add_argument("scenarios", nargs="+", choices=["mobs", "spells", "drop", "magic", "place", "perf"])
     a = ap.parse_args()
     error = None
     try:

@@ -177,6 +177,43 @@ Console.WriteLine("2д. магия друга: каждый снаряд гер�
     var lk = A.Game.Looks.Skip(c1).ToList();
     Check(lk.Count == 1 && lk[0] == (1.25f, 3), $"повтор у хоста с размером и числом снарядов друга: {string.Join(",", lk)}");
     Check(A.Game.UnitApply_IncinerateSize == 1.05f && A.Game.UnitApply_TornadoNum == 1, $"после повтора у героя хоста свои значения: {A.Game.UnitApply_IncinerateSize}, {A.Game.UnitApply_TornadoNum}");
+
+    // Новый вид уходит сразу, а не через секунду: первые касты после выбора комбинации идут с ним
+    TickAll(1200);
+    B.Game.UnitApply_IncinerateSize = 1.5f;
+    TickAll(400);
+    int c4 = A.Game.Calls.Count;
+    B.Game.Bullet_Create(B.Combat.HeroTr, 15, bh.x + 2, bh.y, 0, 0, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
+    for (int fr = 0; fr < 40; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var lk2 = A.Game.Looks.Skip(c4).ToList();
+    Check(lk2.Count == 1 && lk2[0].size == 1.5f, $"смена вида у друга доходит меньше чем за полсекунды: {string.Join(",", lk2)}");
+    B.Game.UnitApply_IncinerateSize = 1.25f;
+
+    // Статик героя (вариант улучшения) тоже от друга: оба «телефона» в одном процессе, поэтому друг отправляет 1, а повтор идёт при 0
+    GameHero.ApplyID_Incinerate = 1;
+    TickAll(1200);
+    GameHero.ApplyID_Incinerate = 0;
+    ((double[])A.Get("_myLook"))[34] = 0;                                // свой последний отправленный — 0, как было бы у хоста
+    B.Set("_lookAt", 1e9);                                               // друг больше не шлёт «fx» с общим статиком 0
+    int c2 = A.Game.Calls.Count;
+    B.Game.Bullet_Create(B.Combat.HeroTr, 65, bh.x + 2, bh.y, 0, 0, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
+    for (int fr = 0; fr < 40; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var st = A.Game.Statics.Skip(c2).ToList();
+    B.Set("_lookAt", -1.0);
+    Check(st.Count == 1 && st[0] == 1 && GameHero.ApplyID_Incinerate == 0, $"статик ApplyID_Incinerate при повторе от друга, потом свой: {string.Join(",", st)} → {GameHero.ApplyID_Incinerate}");
+
+    // Снаряды на объекте героя (созвездие 75) и в его точке (91) встают у союзника друга, а не у нашего героя
+    var ownMid = A.Game.Obj_UnitConstellationMid; var ownTr = A.Game.Transform_ObjUnit;
+    ownMid.transform.position = ownTr.position;                         // в игре якорь висит на герое
+    int c3 = A.Game.Calls.Count;
+    B.Game.Bullet_Create(B.Combat.HeroTr, 75, 0, 0, 0, 0, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
+    B.Game.Bullet_Create(B.Combat.HeroTr, 91, bh.x + 1, bh.y, 0, 0, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
+    for (int fr = 0; fr < 40; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var an = A.Game.Anchors.Skip(c3).ToList();
+    Check(an.Count == 2 && an[0].mid != ownMid && Math.Abs(an[0].midPos.x - an[0].srcPos.x) < 0.01 && Math.Abs(an[0].midPos.y - an[0].srcPos.y) < 0.01 && an[0].tr == ownTr,
+          $"созвездие друга на якоре у союзника: якорь в ({(an.Count > 0 ? an[0].midPos.x - an[0].srcPos.x : 99):0.00}; {(an.Count > 0 ? an[0].midPos.y - an[0].srcPos.y : 99):0.00}) от союзника, вызовы {string.Join(",", A.Game.Calls.Skip(c3).Select(x => x.id))}, свой якорь {(an.Count > 0 && an[0].mid == ownMid)}");
+    Check(an.Count == 2 && an[1].tr == g.Tr && an[1].mid == ownMid, "снаряд 91 друга берёт точку союзника");
+    Check(A.Game.Obj_UnitConstellationMid == ownMid && A.Game.Transform_ObjUnit == ownTr, "после повтора у героя свои объекты");
 }
 
 Console.WriteLine("2е. Щит, Спутники и Духи друга видны у его союзника");
@@ -1250,7 +1287,12 @@ class GameHero
     public readonly List<(object src, int id, float x, float y, float dr)> Calls = new();
     readonly Player _p;
     public GameHero(Player p) { _p = p; }
-    public Transform Transform_ObjUnit => _p.Combat.HeroTr;
+    Transform _tr;
+    public Transform Transform_ObjUnit { get => _tr ?? _p.Combat.HeroTr; set => _tr = value; }
+    public GameObject Obj_UnitConstellationMid { get; set; } = new GameObject();
+    public static int ApplyID_Incinerate { get; set; }
+    public readonly List<int> Statics = new();
+    public readonly List<(GameObject mid, Vector3 midPos, Transform tr, Vector3 srcPos)> Anchors = new();
     // Щит/Спутники/Духи, как у C_Battle_AllyUnit (docs/ORBITALS.md)
     public bool[] Array_IsSatelliteA_P = new bool[14], Array_IsSatelliteB_P = new bool[14];
     public Transform[] Array_Transform_ObjSatellitesA = Enumerable.Range(0, 14).Select(_ => new Transform()).ToArray();
@@ -1273,6 +1315,8 @@ class GameHero
         _p.Ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", this, new object[] { src, id, x, y, z, aim, p1, p2, s1, s2, s3, s4, dr });
         Calls.Add((src, id, x, y, dr));
         Looks.Add((UnitApply_IncinerateSize, UnitApply_TornadoNum));
+        Statics.Add(ApplyID_Incinerate);
+        Anchors.Add((Obj_UnitConstellationMid, Obj_UnitConstellationMid.transform.position, Transform_ObjUnit, src.position));
     }
 }
 static class WinTimer { [System.Runtime.InteropServices.DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint ms); }

@@ -705,6 +705,56 @@ namespace MagicSurvivalLab
             return $"магии сняты, особенностей убрано {removed}";
         }
 
+        private static readonly (string type, string key, string id)[] ShotTypes =
+        {
+            ("C_Battle_AllyBullet", "b", "Apply_BulletID"), ("C_Battle_AllyArcaneRay", "r", "Apply_BulletID"),
+            ("C_Battle_AllyExplosion", "x", "Apply_ExplosionID"), ("C_Battle_AllyTornado", "t", "Apply_TornadoID"),
+            ("C_Battle_AllyMeteorLand", "m", "Apply_MeteorLand_ID"), ("C_Battle_AllyElectricZone", "z", null),
+            ("C_Battle_AllyHydraZone", "h", null), ("C_Battle_AllyBulletSub", "s", "Apply_MagicID"),
+        };
+
+        // Живые снаряды по виду и номеру, например «b65:4,x12:2»: так сравнивают магию кастующего и её повтор у друга.
+        public string Shots()
+        {
+            var n = new SortedDictionary<string, int>();
+            foreach (var (type, key, idField) in ShotTypes)
+                foreach (var o in FindAll(type))
+                {
+                    var k = key + (idField == null ? "" : Convert.ToString(GetMember(o, idField), Inv));
+                    n[k] = n.TryGetValue(k, out var c) ? c + 1 : 1;
+                }
+            return n.Count == 0 ? "нет" : string.Join(",", n.Select(kv => $"{kv.Key}:{kv.Value}"));
+        }
+
+        // То же со средним расстоянием до своего героя и до ближайшего союзника-друга: повтор магии друга должен быть у союзника.
+        public string ShotsDist()
+        {
+            if (!(GetMember(typeof(BattleState).GetProperty("Hero", Any)?.GetValue(null), "Transform_ObjUnit") is UnityEngine.Transform ht)) return "нет героя";
+            var hp = ht.position;
+            var allies = new List<UnityEngine.Vector3>();
+            if (GetMember(CoopSession(), "_partners") is IDictionary parts)
+                foreach (var pp in parts.Values)
+                    if (GetMember(pp, "GhostTr") is UnityEngine.Transform gt) allies.Add(gt.position);
+            var n = new SortedDictionary<string, (int c, double d, double a)>();
+            foreach (var (type, key, idField) in ShotTypes)
+                foreach (var o in FindAll(type))
+                {
+                    var k = key + (idField == null ? "" : Convert.ToString(GetMember(o, idField), Inv));
+                    double d = -1, a = -1;
+                    if (GetMember(o, "transform") is UnityEngine.Transform t)
+                    {
+                        var p = t.position;
+                        d = Dist(p, hp);
+                        if (allies.Count > 0) a = allies.Min(x => Dist(p, x));
+                    }
+                    var v = n.TryGetValue(k, out var c) ? c : (0, 0, 0);
+                    n[k] = (v.c + 1, v.d + d, v.a + a);
+                }
+            return n.Count == 0 ? "нет" : string.Join(",", n.Select(kv => $"{kv.Key}:{kv.Value.c}:{(kv.Value.d / kv.Value.c).ToString("0.0", Inv)}:{(kv.Value.a / kv.Value.c).ToString("0.0", Inv)}"));
+        }
+
+        private static double Dist(UnityEngine.Vector3 p, UnityEngine.Vector3 q) => Math.Sqrt((p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y));
+
         private static int SetLearned(object cheat, int id, int count)
         {
             var list = CallMethod(cheat, "Static", LearnList);
