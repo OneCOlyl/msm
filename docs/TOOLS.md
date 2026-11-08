@@ -61,7 +61,11 @@ Notes:
 The same actions from a PC through the `coop_debug` console: `call T:coop_lab:MagicSurvivalLab.Lab/Current.Spawn 6 10`,
 `.Status`, `.CoopStatus`. For automation: `Buttons` (active UI buttons: path, position, enabled, text), `Click <index> <path>`
 (a press, like a tap), `Pickups` (lying chests, merchant, obelisks), `GoTo <x> <y>` (hero to a point), `Shots` and `ShotsDist` (live projectiles by kind and number, distance to the own hero
-and to the friend's ally). Scenarios on two phones are in `tools/lab.py` (see [DEVELOPMENT.md](DEVELOPMENT.md#test-arena)).
+and to the friend's ally), `Looks` (the same with prefab, sprite and scale), `Mobs` (enemies and copies by the host's
+enemy number, with type, sprite and scale), `KillEnemy <id>` (host), `HurtEnemy <id>` (guest), `FreezeEnemies true|false`
+(enemies stand still), `MobScales <id>` (scales from the sprite up the parents), `Chest <kind> <dx> <dy>`
+and `Chests` (lying chests relative to the start point), `ClearChests` (remove lying chests without a pickup),
+`ArtifactPick <id>` (every card of the open chest window becomes artifact id). Scenarios on two phones are in `tools/lab.py` (see [DEVELOPMENT.md](DEVELOPMENT.md#test-arena)).
 
 ## Publishing
 

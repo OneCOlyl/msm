@@ -82,7 +82,7 @@ script does everything:
 
 ```bash
 python tools/phones.py run --build                  # build, install, restart, connect, battle, lab.py mobs drop, logs
-python tools/phones.py run --no-deploy --lab "spells --spells 13,17"
+python tools/phones.py run --no-deploy --lab "--kinds spells magic"
 python tools/phones.py status                       # mod versions on the phones and coop state
 ```
 
@@ -147,18 +147,40 @@ The same actions from a PC through the console: `call T:coop_lab:MagicSurvivalLa
 Scenarios on two phones (both in battle, connected, with `coop`, `coop_debug`, `coop_lab` and `coop_cheat`):
 
 ```bash
-python tools/lab.py mobs drop spells                 # everything; --spells 13,17 --wait 20 for selected spells
-python tools/lab.py --shots shots magic              # every spell, trait and combo (~35 min)
-python tools/lab.py --caster host place              # the friend's spell and combo projectiles in place (~20 min a side)
+python tools/lab.py mobs chests drop                 # mobs, chests, dropped link
+python tools/lab.py --kinds spells magic             # 21 spells, cast in turn by the host and the guest
+python tools/lab.py magic                            # every spell, trait and combo (about an hour)
 python tools/lab.py --json r.json perf               # load: 200 enemies, all spells maxed, 60 s
 ```
 
-`mobs` checks that the host's mobs of every kind appear at the guest, `spells` that the host's spells are visible at the
-guest, `drop` reconnection after a dropped link and matching clocks, `magic` that every projectile of every host spell, trait
-and combo (MagicCom) is replayed at the guest with no exceptions in the game log, `place` that the caster's spell and combo
-projectiles exist at the friend and sit at the ally, not at the friend's hero (the friend 7 units away, see
-[MAGIC_REPLAY.md](MAGIC_REPLAY.md)). Before the checks the scenario makes both heroes
-immortal, turns experience off and removes spells. `perf` gives both of them all spells at max, keeps 200 enemies at the
+- `magic`: no enemies, so the screenshots show only the magic. Every spell, trait and combo is cast first by the host,
+  then by the guest. While the spell appears, the friend stands 2 units to the right of the caster, so the screenshot
+  shows both heroes. The projectile look is compared between the caster and the friend: number, prefab, sprite without
+  the frame number, scale. Then the friend steps 7 units away and the place is measured: at the friend the projectile
+  must be at the ally, not at the friend's hero (see [MAGIC_REPLAY.md](MAGIC_REPLAY.md)). At 2 units a projectile is
+  about equally close to both heroes, so the place isn't measured there. The host's own spell and the guest's own spell
+  must look the same; a projectile kind that appeared at only one of them during the item (a meteor, for example) is
+  marked `ИНФО`. Orbits (Shield, Satellite, Spirit, Electric Zone, Magic Circle), Armageddon and exceptions in the game
+  log are checked too. Spells that need a target (Tsunami, Ghost, Armageddon and others) don't fire without enemies and
+  are marked `ИНФО`. `--kinds`, `--caster`, `--wait` (how long to wait for the spell), `--after` (how long to measure
+  the place).
+- `mobs`: the host spawns mobs of each kind, and the mobs stand still (`FreezeEnemies`). The guest's copies are matched
+  with the host's enemies by enemy number and compared: type, sprite, on-screen size, the outline of special mobs and
+  place (within 0.3 units). The host and guest screenshots are taken with the mobs standing. Then the mobs walk towards
+  the heroes for 3 s: a copy must lag no more than 1.5 units behind. Then the host kills two and the guest wounds two
+  copies: the enemy at the host and its copy at the guest must disappear no more than 1 s apart.
+- `chests`: the host drops a chest, and it must appear at the guest in the same place. The host takes the first chest,
+  the guest the second and the merchant; after the pickup the chest disappears for both. The chest window is closed with
+  the first card, the shop with its exit. Then the artifacts that drop chests (75 and 104, put into every card of the
+  window) are chosen by the host, then by the guest. Chests and the merchant from an artifact must lie at the same spots for
+  both and stay there. Between cases the chests are removed without a pickup (`ClearChests`). Needs shared chests
+  (`chests` at the host).
+- `drop`: reconnection after a dropped link and matching clocks.
+
+Screenshots of both phones are taken when the magic, the mobs and the chest appear. They and `итог.md` with tables (what
+the host cast and what the guest saw, and the other way round; which mobs the host and the guest had and when they died)
+go to `dist/lab/<time>/`; `--dir` sets the folder. Before the checks the scenario makes both heroes immortal, turns
+experience off and removes spells. `perf` gives both of them all spells at max, keeps 200 enemies at the
 host for 60 s and prints a table of frame and network numbers for the host and the guest (`--perf-sec`, `--perf-enemies`).
 
 `lab.py` exits with code 1 on any failure, including no phones or no adb. adb is taken from the `ADB` variable, then from

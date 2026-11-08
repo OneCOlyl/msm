@@ -27,23 +27,24 @@ namespace MagicSurvivalCoop
             Id = "coop",
             Name = "Кооператив",
             Version = ModVersion,
-            Description = "Игра с друзьями (2–4) через Anywherelan/Tailscale/ZeroTier: друзья — союзники в вашем бою, их здоровье на экране, лечение друга.",
+            Description = "Игра с друзьями (2–4) через VPN: друзья — союзники в вашем бою.",
             Depends = { ["modkit_combat"] = LibRange, ["modkit_hero"] = LibRange, ["modkit_spells"] = LibRange, ["modkit_companions"] = LibRange },
+            // В карточке ModKit подпись влезает в 2 строки по ~16 символов, пояснения — в docs/FEATURES.md, раздел «Настройки»
             Options =
             {
-                new ModOption { Key = "ghostDist", Label = "Дальность призрака друга", Default = 6, Min = 2, Max = 12, Step = 1 },
-                new ModOption { Key = "healPct", Label = "Лечение друга, % (0 — выкл.)", Default = 25, Min = 0, Max = 50, Step = 5 },
+                new ModOption { Key = "ghostDist", Label = "Дальность призрака", Default = 6, Min = 2, Max = 12, Step = 1 },
+                new ModOption { Key = "healPct", Label = "Лечение друга, %", Default = 25, Min = 0, Max = 50, Step = 5 },
                 new ModOption { Key = "healCd", Label = "Перезарядка лечения, с", Default = 40, Min = 10, Max = 120, Step = 5 },
-                new ModOption { Key = "mirrorDmg", Label = "Урон магии друга у вас, % (0 — только эффект)", Default = 100, Min = 0, Max = 200, Step = 25 },
-                new ModOption { Key = "orbitals", Label = "Показывать Щит, Спутников и Духов друга (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
-                new ModOption { Key = "sharedPause", Label = "Общая пауза: пока друг выбирает умение, пауза у всех (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
-                new ModOption { Key = "world", Label = "Общие враги: у всех враги хоста (1 — да, 0 — нет; включить у всех игроков)", Default = 1, Min = 0, Max = 1, Step = 1 },
-                new ModOption { Key = "worldZone", Label = "Общие враги: гость дальше этого от хоста — у него свои враги (0 — никогда)", Default = 15, Min = 0, Max = 40, Step = 5 },
-                new ModOption { Key = "bossGather", Label = "Общие враги: на босс-волну гость вдали переносится к хосту, потом обратно (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1 },
+                new ModOption { Key = "mirrorDmg", Label = "Урон магии друга", Default = 100, Min = 0, Max = 200, Step = 25 },
+                new ModOption { Key = "orbitals", Label = "Щит и спутники друга", Default = 1, Min = 0, Max = 1, Step = 1 },
+                new ModOption { Key = "sharedPause", Label = "Общая пауза", Default = 1, Min = 0, Max = 1, Step = 1 },
+                new ModOption { Key = "world", Label = "Общие враги", Default = 1, Min = 0, Max = 1, Step = 1 },
+                new ModOption { Key = "worldZone", Label = "Зона общих врагов", Default = 15, Min = 0, Max = 40, Step = 5 },
+                new ModOption { Key = "bossGather", Label = "Сбор на босса", Default = 1, Min = 0, Max = 1, Step = 1 },
                 new ModOption { Key = "clockSync", Label = "Общие враги: часы боя гостя по хосту (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
                 new ModOption { Key = "puppetAi", Label = "Копии врагов: анимация и атаки игры (1) или замершие (0)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
                 new ModOption { Key = "chests", Label = "Общие сундуки: кладёт хост, берёт кто первый (1 — да, 0 — нет; выбирает хост в лобби)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
-                new ModOption { Key = "sendHz", Label = "Обновлений позиции в секунду (больше — плавнее, но больше трафика)", Default = 15, Min = 5, Max = 30, Step = 5 },
+                new ModOption { Key = "sendHz", Label = "Обновлений в секунду", Default = 15, Min = 5, Max = 30, Step = 5 },
                 new ModOption { Key = "ip1", Label = "IP 1", Default = 10, Min = 0, Max = 255, Hidden = true },
                 new ModOption { Key = "ip2", Label = "IP 2", Default = 66, Min = 0, Max = 255, Hidden = true },
                 new ModOption { Key = "ip3", Label = "IP 3", Default = 0, Min = 0, Max = 255, Hidden = true },
@@ -597,6 +598,9 @@ namespace MagicSurvivalCoop
                 case "chestOk":
                     OnChestGranted(e);
                     break;
+                case "chestNew":
+                    OnRemoteNewChest(who, e);
+                    break;
                 case "full":
                     ResendAll();
                     break;
@@ -1138,6 +1142,10 @@ namespace MagicSurvivalCoop
             _winStatus = UiKit.Label(root, StatusText(), 30, y, 660, 110, 24, 0);
             y += 120;
 
+            UiKit.Label(root, "Ваше имя:", 30, y, 180, 64, 24, 3);
+            AddNameField(root, 220, y, 470, 64);
+            y += 80;
+
             UiKit.Label(root, "Ваш IP (скажите его друзьям, если вы хост):", 30, y, 660, 34, 22, 3);
             y += 36;
             UiKit.Label(root, LocalAddresses(), 30, y, 660, 70, 24, 0);
@@ -1173,6 +1181,24 @@ namespace MagicSurvivalCoop
 
             UiKit.Label(root, "Локацию и сложность выбирает хост, персонажа — каждый сам. Гость на экране локации ждёт, " +
                               "пока хост начнёт бой, и входит следом. Кнопка «Лечить» в бою появляется, когда другу плохо.", 30, y, 660, 110, 20, 0);
+        }
+
+        // В ModKit нет текстового поля: берём числовое и снимаем ограничение на цифры. Текст задаём после смены типа,
+        // иначе InputField отфильтрует буквы.
+        private void AddNameField(RectTransform root, double x, double y, double w, double h)
+        {
+            UnityEngine.UI.InputField field = null;
+            field = UiKit.AddNumberField(root, "", x, y, w, h, 28, false, s => _ctx.Guard("ввод имени", () =>
+            {
+                if (string.IsNullOrWhiteSpace(s)) { field.text = _myName; return; }
+                _myName = Protocol.CleanName(s);
+                _ctx.Store.Set("name", _myName);
+                field.text = _myName;
+                _ctx.Log($"имя «{_myName}»");
+            }));
+            field.contentType = UnityEngine.UI.InputField.ContentType.Standard;
+            field.characterLimit = 20;
+            field.text = _myName;
         }
 
         private void SafeAction(string what, Action fn)

@@ -33,4 +33,4 @@ both sides log the explosion's frame-by-frame breakdown (on, renderer, α, frame
 
 Tested on phones (1.4.8): the replay at the receiver matches the original frame by frame (flash `Armageddon1…8` ~1.6 s,
 then Land/Destroy) and **deals damage**: enemies 45 → 10 in 3 s (like the player's own explosion, 49 → 9). Damage is kept
-full (the «Урон магии друга, %» setting doesn't apply to Armageddon), a decision from 23.10.2026; a balance tweak may come later.
+full (the «Урон магии друга» setting doesn't apply to Armageddon), a decision from 23.10.2026; a balance tweak may come later.

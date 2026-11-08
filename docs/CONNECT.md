@@ -119,7 +119,8 @@ enter it: friends connect by IP only.
 ## Joining a game (other players)
 
 1. Turn on the VPN and make sure the host's phone is visible in the VPN app.
-2. Start Zombix and tap **«Кооп»**.
+2. Start Zombix and tap **«Кооп»**. In the «Ваше имя» (Your name) field you can type a name up to 20 characters long;
+   friends will see it. Otherwise the mod calls you «Игрок» (Player) with a random number.
 3. On the «Подключиться к хосту — IP и порт» (Connect to host: IP and port) line, enter the four numbers of the host's
    IP, for example `10` . `66` . `0` . `2`. Leave the port at `8766` unless the host said otherwise.
 4. Tap **«Подключиться»** (Connect). The status shows «подключаюсь…» (connecting…), then «Хост …: на связи, пинг N мс»
@@ -198,7 +199,7 @@ The host must have tapped «Создать игру» already and keep the game 
 ### 5. In-game connection
 
 In the guest's «Кооп» window the status reads «на связи, пинг N мс» (connected, ping N ms). The higher the ping, the
-more the allies lag behind. On a weak connection, lower the mod setting «Обновлений позиции в секунду» (Position updates
+more the allies lag behind. On a weak connection, lower the mod setting «Обновлений в секунду» (Updates
 per second) to 10.
 
 ## If you can't connect

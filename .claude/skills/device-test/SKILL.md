@@ -46,7 +46,7 @@ python tools/phones.py run --build --lab "mobs drop magic"
 Если игра уже в бою и телефоны на связи, сценарии можно запустить отдельно:
 
 ```bash
-python tools/lab.py --json r.json mobs spells drop magic perf
+python tools/lab.py --json r.json mobs chests drop magic perf
 ```
 
 Сборку с номером будущего релиза (`VERSION=X.Y.Z`) на телефоны не ставьте: ModKit не перечитывает архив той же

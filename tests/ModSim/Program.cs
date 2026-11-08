@@ -344,6 +344,27 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     Check(pups.All(e => !e.CoroutinesStopped && e.UnitApply_MoveSpeed == 0 && e.UnitBase_MoveSpeed == 0 && e.Rigidbody_ObjUnit.isKinematic),
           "у копий ИИ работает (анимация), но скорость нулевая, тело кинематическое");
     Check(pups.All(e => Math.Abs(e.Transform_ObjUnitSprite.localScale.x - 1.25f) < 0.01), "картинка копии — по размеру врага (1,25), как у обычного врага");
+    {
+        var fix = typeof(MagicSurvivalCoop.CoopMod).Assembly.GetType("MagicSurvivalCoop.Session").GetMethod("FixSpriteScale", BindingFlags.NonPublic | BindingFlags.Static);
+        var sp = pups[0];
+        var (root0, sprite0) = (sp.Transform_ObjUnit.localScale, sp.Transform_ObjUnitSprite.localScale);
+        sp.Transform_ObjUnit.localScale = new Vector3(0.9f, 0.9f, 1);
+        foreach (var root in new[] { 0.9f, 1.25f, 1f })
+        {
+            sp.Transform_ObjUnit.localScale = new Vector3(root, root, 1);
+            fix.Invoke(null, new object[] { sp, sp });
+            double total = sp.Transform_ObjUnit.localScale.x * sp.Transform_ObjUnitSprite.localScale.x;
+            Check(Math.Abs(total - 1.25) < 0.01 && Math.Abs(sp.Transform_ObjUnit.localScale.x - root) < 0.01,
+                  $"корень копии {root}: на экране размер врага хоста 1,25, корень не тронут — {total:0.##}");
+        }
+        var spriteTr = sp.Transform_ObjUnitSprite;
+        sp.Transform_ObjUnitSprite = sp.Transform_ObjUnit;
+        sp.Transform_ObjUnit.localScale = new Vector3(1.25f, 1.25f, 1);
+        fix.Invoke(null, new object[] { sp, sp });
+        Check(Math.Abs(sp.Transform_ObjUnit.localScale.x - 1.25f) < 0.01, $"картинка и есть корень (обычная заготовка): размер 1,25 — {sp.Transform_ObjUnit.localScale.x:0.##}");
+        sp.Transform_ObjUnitSprite = spriteTr;
+        (sp.Transform_ObjUnit.localScale, sp.Transform_ObjUnitSprite.localScale) = (root0, sprite0);
+    }
     Check(FakeManager.ApplyBossNum == 1, $"счётчик боссов после создания копий возвращён (гость держит 1 с начала боя): {FakeManager.ApplyBossNum}");
     FakeEnemy P6() => pups.First(e => e.UnitID == 6);
     var q = P6().Transform_ObjUnit.position;
@@ -1010,6 +1031,20 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         var own6 = new FakeChest(6, 60, 60); gm.Chests.Add(own6);
         Until(() => own6.Destroyed > 0);
         Check(own6.Destroyed == 1 && k1?.Destroyed == 0, "свой сундук гостя убран, копия сундука хоста лежит");
+        {
+            // Смерть моба кладёт предмет 5, а игра сама решает: сундук или торговец (вид 7). У гостя жребий свой
+            var own7 = new FakeChest(7, 62, 60); gm.Chests.Add(own7);
+            Until(() => own7.Destroyed > 0);
+            Check(own7.Destroyed == 1, "свой торговец гостя (вид 7) убран, как свой сундук");
+            var m7 = new FakeChest(7, -4, 2); hm.Chests.Add(m7);
+            Until(() => gm.Chests.Any(c => c.ObtainItemType == 7 && c != own7));
+            var k7 = gm.Chests.FirstOrDefault(c => c.ObtainItemType == 7 && c != own7);
+            Check(k7 != null && Math.Abs(k7.Pos.x - 46) < 0.01 && Math.Abs(k7.Pos.y - 52) < 0.01, "торговец хоста (вид 7) повторён у гостя на том же месте");
+            m7.DestroyItem();
+            Until(() => k7?.Destroyed > 0);
+            Check(k7?.Destroyed == 1, "хост ушёл от торговца — у гостя торговец пропал");
+            hm.Chests.Remove(m7); gm.Chests.Remove(own7); gm.Chests.Remove(k7); gm.Created--;
+        }
         c1.DestroyItem();                                                   // хост подобрал
         Until(() => k1?.Destroyed > 0);
         Check(k1?.Destroyed == 1, "хост взял сундук — у гостя копия пропала");
@@ -1046,8 +1081,12 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         own.Add(H.Ctx); F(10);
         hm.Chests.Add(hostMine); own.Remove(H.Ctx);
         F(80);
-        Check(mine.Destroyed == 0 && mine2.Destroyed == 0, "сундуки от выбора артефакта гостя остаются у гостя");
-        Check(gm.Created == 3, $"сундук от умения хоста гостю не повторяется (копий создано {gm.Created})");
+        bool At(FakeChest c, float x, float y) => Math.Abs(c.Pos.x - x) < 0.01 && Math.Abs(c.Pos.y - y) < 0.01;
+        Check(mine.Destroyed == 1 && mine2.Destroyed == 1, "сундуки от выбора гостя отданы хосту, у гостя свои убраны");
+        Check(hm.Chests.Any(c => At(c, 1, -1)) && hm.Chests.Any(c => At(c, 2, -1)), "хост положил их у себя на тех же местах от старта");
+        Check(gm.Chests.Any(c => c != mine && At(c, 51, 49) && c.Destroyed == 0) && gm.Chests.Any(c => c != mine2 && At(c, 52, 49) && c.Destroyed == 0),
+              "у гостя они вернулись копиями хоста — общие");
+        Check(gm.Chests.Any(c => c.ObtainItemType == 6 && At(c, 51, 51) && c.Destroyed == 0), "сундук от выбора хоста общий: у гостя его копия");
         var later = new FakeChest(6, 60, 60); gm.Chests.Add(later);
         Until(() => later.Destroyed > 0);
         Check(later.Destroyed == 1, "после паузы свой сундук гостя снова убирается");
@@ -1354,7 +1393,9 @@ class FakeManager
 {
     public Player Owner;
     public readonly List<FakeChest> Chests = new(); public int Created;
-    public void CreateItem_Position(int id, int num, float x, float y) { for (int i = 0; i < num; i++) { Chests.Add(new FakeChest(id, x, y)); Created++; } }
+    // Как в игре: торговца (7) CreateItem_Position не кладёт, CreateItem_Character кладёт его у героя
+    public void CreateItem_Position(int id, int num, float x, float y) { if (id == 7) return; for (int i = 0; i < num; i++) { Chests.Add(new FakeChest(id, x, y)); Created++; } }
+    public void CreateItem_Character(int id, int num) { var p = Owner.Combat.Pos; for (int i = 0; i < num; i++) { Chests.Add(new FakeChest(id, p.x + 1, p.y)); Created++; } }
     public int EnemyCreateNum = 2, EnemyCreateNum_Min = 0, EnemyCreateNum_Max = 300, OnlyBossON;
     public int ApplyMonsterClearKillNum, ApplyMonsterClearKillNumPlus, SpawnStarts;
     public float BossWave_SpeedRatio, BossWave_SizeRatio, BossWave_HitDamageRatio = 1;

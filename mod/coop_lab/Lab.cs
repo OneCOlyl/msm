@@ -43,7 +43,7 @@ namespace MagicSurvivalLab
         private object _mgr;
         private bool _inBattle;
 
-        private bool _noSpawn, _immortal, _clockHeld, _noMana;
+        private bool _noSpawn, _immortal, _clockHeld, _noMana, _frozen;
         private object[] _savedSpawn;
         private int _heldClock;
         private int _type = 1, _countIdx, _item = 1;
@@ -71,7 +71,7 @@ namespace MagicSurvivalLab
             ctx.Events.On("battleStart", _ => ctx.Guard("полигон: начало боя", OnBattleStart));
             ctx.Events.On("battleEnd", _ => ctx.Guard("полигон: конец боя", OnBattleEnd));
             ctx.Every(100, () => ctx.Guard("полигон: шаг", Step));
-            ctx.Log("полигон 0.1.11 включён: в бою кнопка «ПОЛИГОН»");
+            ctx.Log("полигон 0.1.12 включён: в бою кнопка «ПОЛИГОН»");
         }
 
         public void Stop()
@@ -86,7 +86,8 @@ namespace MagicSurvivalLab
         private void OnBattleStart()
         {
             _inBattle = true;
-            _noSpawn = _clockHeld = false;
+            _noSpawn = _clockHeld = _frozen = false;
+            _speeds.Clear();
             _savedSpawn = null;
             ShowToggle();
         }
@@ -101,7 +102,7 @@ namespace MagicSurvivalLab
             _inBattle = false;
             SetImmortal(false);
             SetMana(true);
-            _noSpawn = _clockHeld = false;
+            _noSpawn = _clockHeld = _frozen = false;
             _savedSpawn = null;
             ClosePanel();
             Kill(ref _toggle);
@@ -115,6 +116,7 @@ namespace MagicSurvivalLab
             if (_immortal) KeepAlive();
             if (_noMana && _levelMgr != null) PassLevelMana();
             if (_noSpawn && _stepN++ % 5 == 0) SuppressSpawn();   // Новая волна возвращает число врагов в пачке
+            if (_frozen) StopEnemies();
         }
 
         // Арена
@@ -447,6 +449,7 @@ namespace MagicSurvivalLab
             Add("replayed", () => Pairs(GetMember(s, "_castCost"), v => GetMember(v, "Item3")));
             Add("armaPlayed", () => GetMember(s, "_armaPlayed"));
             Add("armaSent", () => GetMember(s, "_armaSent"));
+            Add("chestsShared", () => GetMember(s, "ChestsShared"));
             Add("puppets", () =>
             {
                 var byType = new SortedDictionary<string, int>();
@@ -731,10 +734,7 @@ namespace MagicSurvivalLab
         {
             if (!(GetMember(typeof(BattleState).GetProperty("Hero", Any)?.GetValue(null), "Transform_ObjUnit") is UnityEngine.Transform ht)) return "нет героя";
             var hp = ht.position;
-            var allies = new List<UnityEngine.Vector3>();
-            if (GetMember(CoopSession(), "_partners") is IDictionary parts)
-                foreach (var pp in parts.Values)
-                    if (GetMember(pp, "GhostTr") is UnityEngine.Transform gt) allies.Add(gt.position);
+            var allies = AllyPositions();
             var n = new SortedDictionary<string, (int c, double d, double a)>();
             foreach (var (type, key, idField) in ShotTypes)
                 foreach (var o in FindAll(type))
@@ -751,6 +751,264 @@ namespace MagicSurvivalLab
                     n[k] = (v.c + 1, v.d + d, v.a + a);
                 }
             return n.Count == 0 ? "нет" : string.Join(",", n.Select(kv => $"{kv.Key}:{kv.Value.c}:{(kv.Value.d / kv.Value.c).ToString("0.0", Inv)}:{(kv.Value.a / kv.Value.c).ToString("0.0", Inv)}"));
+        }
+
+        // Вид живых снарядов: «вид|префаб|спрайт без номера кадра|число|масштаб|до героя|до союзника» по строке.
+        public string Looks()
+        {
+            if (!(GetMember(typeof(BattleState).GetProperty("Hero", Any)?.GetValue(null), "Transform_ObjUnit") is UnityEngine.Transform ht)) return "нет героя";
+            var hp = ht.position;
+            var allies = AllyPositions();
+            var n = new SortedDictionary<string, (int c, double scale, double d, double a)>(StringComparer.Ordinal);
+            foreach (var (type, key, idField) in ShotTypes)
+                foreach (var o in FindAll(type))
+                {
+                    var go = GetMember(o, "gameObject");
+                    var k = key + (idField == null ? "" : Convert.ToString(GetMember(o, idField), Inv)) + "|" + Prefab(go) + "|" + SpriteFamily(go);
+                    double d = -1, a = -1, scale = 0;
+                    if (GetMember(o, "transform") is UnityEngine.Transform t)
+                    {
+                        d = Dist(t.position, hp);
+                        if (allies.Count > 0) a = allies.Min(x => Dist(t.position, x));
+                        scale = Math.Abs(t.localScale.x);
+                    }
+                    var v = n.TryGetValue(k, out var c) ? c : (0, 0, 0, 0);
+                    n[k] = (v.c + 1, Math.Max(v.scale, scale), v.d + d, v.a + a);
+                }
+            return string.Join("\n", n.Select(kv => $"{kv.Key}|{kv.Value.c}|{F(kv.Value.scale)}|{F(kv.Value.d / kv.Value.c)}|{F(kv.Value.a / kv.Value.c)}"));
+        }
+
+        private static readonly string[] SpeedFields = { "UnitBase_MoveSpeed", "UnitApply_MoveSpeed", "BUnitApply_MoveSpeed", "UnitApply_MoveSpeed_Bonus", "UnitApply_MoveSpeed_Buff", "ApplyMoveSpeedBonus" };
+
+        private readonly Dictionary<object, float[]> _speeds = new Dictionary<object, float[]>();
+
+        // Стоящие враги: у хоста и гостя они на одном месте, и скриншоты можно сравнить. Скорость игра пересчитывает, поэтому
+        // обнуляется каждый шаг, а прежняя запоминается: сама игра её не вернёт.
+        public string FreezeEnemies(bool on)
+        {
+            _frozen = on;
+            if (on) { StopEnemies(); return "враги стоят"; }
+            int n = 0;
+            foreach (var e in _enemies.Alive.ToList())
+            {
+                if (!_speeds.TryGetValue(PtrOrSelf(e.Raw), out var v)) continue;
+                for (int i = 0; i < SpeedFields.Length; i++) if (!float.IsNaN(v[i])) TrySet(e.Raw, SpeedFields[i], v[i]);
+                n++;
+            }
+            _speeds.Clear();
+            return $"враги ходят, скорость возвращена {n}";
+        }
+
+        private void StopEnemies()
+        {
+            foreach (var e in _enemies.Alive.ToList())
+            {
+                var key = PtrOrSelf(e.Raw);
+                if (!_speeds.ContainsKey(key))
+                {
+                    var v = new float[SpeedFields.Length];
+                    for (int i = 0; i < v.Length; i++)
+                        try { v[i] = Convert.ToSingle(GetMember(e.Raw, SpeedFields[i]) ?? float.NaN); } catch { v[i] = float.NaN; }
+                    _speeds[key] = v;
+                }
+                foreach (var f in SpeedFields) TrySet(e.Raw, f, 0f);
+            }
+        }
+
+        // Масштабы от картинки моба вверх по родителям: где игра задаёт размер. Для копии гостя — по номеру врага хоста.
+        public string MobScales(int id)
+        {
+            var s = CoopSession();
+            object unit = null;
+            if (GetMember(s, "_puppets") is IDictionary pd && pd.Contains(id)) unit = GetMember(pd[id], "Obj");
+            if (unit == null)
+            {
+                var ids = HostEnemyIds(s);
+                unit = _enemies.Alive.ToList().FirstOrDefault(e => ids.TryGetValue(PtrOrSelf(e.Raw), out var x) && x == id)?.Raw;
+            }
+            if (unit == null) return $"врага {id} нет";
+            var sb = new StringBuilder();
+            sb.Append("UnitApply_UnitSize ").Append(GetMember(unit, "UnitApply_UnitSize")).Append("; BUnitApply_UnitSize ").Append(GetMember(unit, "BUnitApply_UnitSize"));
+            for (var tr = GetMember(unit, "Transform_ObjUnitSprite") as UnityEngine.Transform; tr != null; tr = GetMember(tr, "parent") as UnityEngine.Transform)
+                sb.Append("; ").Append(NameOf(tr)).Append(' ').Append(tr.localScale);
+            return sb.ToString();
+        }
+
+        // Враги: «id|тип|own или copy|префаб|спрайт без номера кадра|масштаб на экране|обводка|x от старта|y от старта».
+        // id — номер врага хоста у coop.
+        public string Mobs()
+        {
+            var s = CoopSession();
+            double sx = GetMember(s, "_startX") is double x0 ? x0 : 0, sy = GetMember(s, "_startY") is double y0 ? y0 : 0;
+            var lines = new List<string>();
+            var copies = new HashSet<object>();
+            if (GetMember(s, "_puppets") is IDictionary pd)
+                foreach (DictionaryEntry kv in pd)
+                {
+                    var p = kv.Value;
+                    var obj = GetMember(p, "Obj");
+                    if (obj == null || GetMember(p, "LocalDead") is bool dead && dead) continue;
+                    copies.Add(PtrOrSelf(obj));
+                    lines.Add(MobLine(Convert.ToInt32(kv.Key), Convert.ToInt32(GetMember(p, "Type")), "copy", obj, sx, sy));
+                }
+            var ids = HostEnemyIds(s);
+            foreach (var e in _enemies.Alive.ToList())
+            {
+                var ptr = PtrOrSelf(e.Raw);
+                if (copies.Contains(ptr)) continue;
+                int type = -1; try { type = Convert.ToInt32(GetMember(e.Raw, "UnitID") ?? -1); } catch { }
+                lines.Add(MobLine(ids.TryGetValue(ptr, out var id) ? id : -1, type, "own", e.Raw, sx, sy));
+            }
+            return string.Join("\n", lines);
+        }
+
+        private static string MobLine(int id, int type, string kind, object unit, double sx, double sy)
+        {
+            double scale = ScreenScale(GetMember(unit, "Transform_ObjUnitSprite") as UnityEngine.Transform);
+            var back = GetMember(GetMember(unit, "Obj_UnitSprite_Back"), "activeSelf") is bool b && b;
+            var pos = GetMember(unit, "transform") is UnityEngine.Transform t ? t.position : new UnityEngine.Vector3(float.NaN, float.NaN, 0);
+            return $"{id}|{type}|{kind}|{Prefab(GetMember(unit, "gameObject"))}|{SpriteFamily(GetMember(unit, "Obj_UnitSprite"))}|{F(scale)}|{(back ? 1 : 0)}|{F(pos.x - sx)}|{F(pos.y - sy)}";
+        }
+
+        // Размер особых игра задаёт не только картинке, но и объекту выше. lossyScale в сборке игры вырезан.
+        private static double ScreenScale(UnityEngine.Transform tr)
+        {
+            double s = 1;
+            for (int i = 0; tr != null && i < 10; i++, tr = GetMember(tr, "parent") as UnityEngine.Transform)
+                s *= Math.Abs(tr.localScale.x);
+            return s;
+        }
+
+        // Ключи _enIds coop — адреса объектов игры.
+        private static Dictionary<object, int> HostEnemyIds(object session)
+        {
+            var ids = new Dictionary<object, int>();
+            if (GetMember(session, "_enIds") is IDictionary en)
+                foreach (DictionaryEntry kv in en) ids[kv.Key] = Convert.ToInt32(GetMember(kv.Value, "Item1"));
+            return ids;
+        }
+
+        // Хост: враг с номером id гибнет, как от удара.
+        public string KillEnemy(int id)
+        {
+            var ids = HostEnemyIds(CoopSession());
+            foreach (var e in _enemies.Alive.ToList())
+                if (ids.TryGetValue(PtrOrSelf(e.Raw), out var x) && x == id)
+                {
+                    SetMember(e.Raw, "Unit_Hp", 0f);
+                    CallMethod(e.Raw, "Unit_Death");
+                    return $"враг {id} убит";
+                }
+            return $"врага {id} нет";
+        }
+
+        // Гость: копия теряет почти всё здоровье, coop отправит хосту урон, и враг погибнет у хоста.
+        public string HurtEnemy(int id)
+        {
+            if (!(GetMember(CoopSession(), "_puppets") is IDictionary pd) || !pd.Contains(id)) return $"копии {id} нет";
+            var obj = GetMember(pd[id], "Obj");
+            if (obj == null) return $"копия {id} ещё не создана";
+            SetMember(obj, "Unit_Hp", 1f);
+            return $"копия {id} ранена";
+        }
+
+        // Сундук (вид 5 или 6) рядом с героем.
+        public string Chest(int kind, double dx, double dy)
+        {
+            if (_mgr == null) return "не в бою";
+            if (!(GetMember(typeof(BattleState).GetProperty("Hero", Any)?.GetValue(null), "Transform_ObjUnit") is UnityEngine.Transform tr)) return "нет героя";
+            var p = tr.position;
+            try
+            {
+                if (kind != 7) CallMethod(_mgr, "CreateItem_Position", kind, 1, (float)(p.x + dx), (float)(p.y + dy));
+                else
+                {
+                    // Торговца CreateItem_Position не кладёт: CreateItem_Character у героя и перенос
+                    var before = new HashSet<object>(FindAll("C_Battle_Item_TreasureBox").Where(b => ActiveSelf(GetMember(b, "Obj_ItemPos"))).Select(PtrOrSelf));
+                    CallMethod(_mgr, "CreateItem_Character", kind, 1);
+                    var box = FindAll("C_Battle_Item_TreasureBox").FirstOrDefault(b => ActiveSelf(GetMember(b, "Obj_ItemPos")) && !before.Contains(PtrOrSelf(b)));
+                    if (!(GetMember(box, "transform") is UnityEngine.Transform bt)) return "торговец не лёг";
+                    bt.localPosition = new UnityEngine.Vector3((float)(p.x + dx), (float)(p.y + dy), bt.localPosition.z);
+                }
+            }
+            catch (Exception e) { return $"сундук {kind}: " + Inner(e).Message; }
+            return $"сундук {kind} в {p.x + dx:0.##}, {p.y + dy:0.##}";
+        }
+
+        // Убрать лежащие сундуки и торговцев без подбора: подбор открыл бы окно, а случайный артефакт положил бы новые.
+        public string ClearChests()
+        {
+            int n = 0;
+            foreach (var box in FindAll("C_Battle_Item_TreasureBox"))
+            {
+                if (!ActiveSelf(GetMember(box, "gameObject")) || !ActiveSelf(GetMember(box, "Obj_ItemPos"))) continue;
+                int kind = Convert.ToInt32(GetMember(box, "ObtainItemType"));
+                if (kind < 5 || kind > 7) continue;
+                try { CallMethod(box, "DestroyItem"); n++; } catch { }
+            }
+            return $"убрано сундуков: {n}";
+        }
+
+        // В открытом окне сундука все карты становятся артефактом id (75 кладёт сундуки рядом, 104 — тоже).
+        // Хук на Button_Artifact_Select роняет игру, поэтому подмена списка, а не перехват выбора.
+        public string ArtifactPick(int id)
+        {
+            var mgr = FindAll("V_Artifact_Manager").FirstOrDefault();
+            if (mgr == null) return "нет V_Artifact_Manager";
+            var list = GetMember(mgr, "List_ArtifactSelectID");
+            int n = Count(list);
+            if (n == 0) return "окно артефакта не открыто";
+            for (int i = 0; i < n; i++) CallMethod(list, "set_Item", i, id);
+            return $"карт с артефактом {id}: {n}";
+        }
+
+        // Лежащие сундуки: «вид|x от старта|y от старта|x|y». Мир друга совмещён с нашим по точкам старта.
+        public string Chests()
+        {
+            var s = CoopSession();
+            double sx = GetMember(s, "_startX") is double x0 ? x0 : 0, sy = GetMember(s, "_startY") is double y0 ? y0 : 0;
+            var sb = new StringBuilder();
+            foreach (var box in FindAll("C_Battle_Item_TreasureBox"))
+            {
+                if (!ActiveSelf(GetMember(box, "gameObject")) || !ActiveSelf(GetMember(box, "Obj_ItemPos"))) continue;
+                if (!(GetMember(box, "transform") is UnityEngine.Transform tr) || tr.position.z > 100) continue;
+                var p = tr.position;
+                sb.Append(GetMember(box, "ObtainItemType")).Append('|').Append(F(p.x - sx)).Append('|').Append(F(p.y - sy))
+                  .Append('|').Append(F(p.x)).Append('|').Append(F(p.y)).Append('\n');
+            }
+            return sb.ToString().TrimEnd();
+        }
+
+        private List<UnityEngine.Vector3> AllyPositions()
+        {
+            var allies = new List<UnityEngine.Vector3>();
+            if (GetMember(CoopSession(), "_partners") is IDictionary parts)
+                foreach (var pp in parts.Values)
+                    if (GetMember(pp, "GhostTr") is UnityEngine.Transform gt) allies.Add(gt.position);
+            return allies;
+        }
+
+        private static string F(double v) => v.ToString("0.##", Inv);
+
+        private static object PtrOrSelf(object o) => GetMember(o, "Pointer") ?? o;
+
+        private static string Prefab(object go) => (NameOf(go) ?? "?").Replace("(Clone)", "").Replace('|', '/').Trim();
+
+        private static readonly Dictionary<Type, MethodInfo> SpriteGetters = new Dictionary<Type, MethodInfo>();
+
+        // Номер кадра в конце имени спрайта отбрасывается: у хоста и друга анимация в разной фазе.
+        private static string SpriteFamily(object go)
+        {
+            if (go == null) return "нет";
+            var t = go.GetType();
+            if (!SpriteGetters.TryGetValue(t, out var m))
+                SpriteGetters[t] = m = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(x => x.Name == "GetComponentInChildren" && x.IsGenericMethodDefinition && x.GetParameters().Length == 0)
+                    ?.MakeGenericMethod(typeof(UnityEngine.SpriteRenderer));
+            object sr;
+            try { sr = m?.Invoke(go, null); } catch { return "нет"; }
+            var name = NameOf(GetMember(sr, "sprite"));
+            return name == null ? "нет" : System.Text.RegularExpressions.Regex.Replace(name, @"[\s_\-]*\(?\d+\)?$", "").Replace('|', '/');
         }
 
         private static double Dist(UnityEngine.Vector3 p, UnityEngine.Vector3 q) => Math.Sqrt((p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y));

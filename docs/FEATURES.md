@@ -46,8 +46,10 @@ The host picks the area, difficulty and mode (normal or Infinite Mode). Each pla
   game: the guest gets the same chest at the same spot, and chests from the guest's own game are removed. A chest goes to
   one player, the first to reach it. The host takes a chest at once. A guest who reaches a chest asks the host for it.
   The host gives it to the first request and removes it at its end. Until the host answers, the guest's game doesn't pick
-  the chest up. For everyone else the chest disappears. Chests the game places after an artifact or ability choice (for
-  example, three chests from an artifact) stay with the player who chose. All players need 1.7.8.
+  the chest up. For everyone else the chest disappears. All chests are shared, and so is the merchant that
+  sometimes drops from mobs instead of a chest. Chests for an artifact or ability choice (for example, three chests from
+  an artifact) are shared too: if the guest chose, the guest's game hands them to the host, and a couple of seconds later
+  they lie at the same spots for everyone. All players need the same mod version.
 
 ### Allies
 
@@ -57,7 +59,7 @@ The host picks the area, difficulty and mode (normal or Infinite Mode). Each pla
 - An ally **repeats the friend's magic**: every projectile of the friend's hero (Fireball, Meteor, Lightning and most
   other spells) is fired from the ally in your game. Size, area, speed and number of projectiles come from the friend's
   hero, so their upgrades and combinations look the same as in their game. Damage of repeated spells is computed from
-  **your** hero's stats and the «Урон магии друга у вас» (Friend's magic damage in your game) setting.
+  **your** hero's stats and the «Урон магии друга» (Friend's magic damage) setting.
 - The friend's **Shield, Satellites, Spirits, Electric Zone and Magic Circle** are shown around their ally.
 - The friend's **Armageddon** also goes off in your game, with animation and damage.
 - A friend who dies disappears from your battle. A friend with no data for 3 seconds also disappears and comes back when
@@ -99,17 +101,17 @@ that the player's choice is kept. **It must be on for every player.**
 
 - Guests don't get their own enemies: instead they have copies of the host's enemies in the same places. An enemy killed
   at the host is killed at the guest too, with experience. A guest's damage to enemies counts at the host.
-- A guest who moves further from the host than the «Общие враги: гость дальше этого от хоста» (Shared enemies: guest
-  further than this from the host) setting (15 by default) gets their own enemies: the guest's game spawns them again,
+- A guest who moves further from the host than the «Зона общих врагов» (Shared enemies zone)
+  setting (15 by default) gets their own enemies: the guest's game spawns them again,
   and they go for the guest. The host doesn't see these enemies; the guest finishes them off alone. When the guest comes
   back closer (2 units inside the border, so it doesn't flip back and forth), new own enemies stop spawning. Those that
   followed the guest from afar stay until the guest kills them. During a boss wave the guest has no own enemies even far
   from the host.
 - A guest who is far from the host when a boss wave starts is moved to the host right away, and the guest's boss arena
   is set the same as the host's. When the host picks up the obelisk, all mana on the field is pulled to the guest, and
-  2 s later the guest returns to where they stood. Turned off with the «на босс-волну гость вдали переносится к хосту»
-  (on a boss wave a far guest is moved to the host) setting.
-- In this mode an ally stands where the friend really is, without the «Дальность призрака друга» (Friend ghost range)
+  2 s later the guest returns to where they stood. Turned off with the «Сбор на босса» (Boss gathering)
+  setting.
+- In this mode an ally stands where the friend really is, without the «Дальность призрака» (Ghost range)
   limit.
 - The boss and obelisk follow the host: when the host picks up the obelisk, the guests' boss wave ends, their clocks align
   with the host, and the guest gets what a pickup would give: a legendary artifact choice and pulled-in mana. After the
@@ -123,14 +125,14 @@ that the player's choice is kept. **It must be on for every player.**
 
 | What | How it's sent |
 |---|---|
-| Hero position | Offset from the battle start point, 15 times per second (the «Обновлений позиции в секунду» setting), with a timestamp for smooth movement |
+| Hero position | Offset from the battle start point, 15 times per second (the «Обновлений в секунду», Updates per second, setting), with a timestamp for smooth movement |
 | Health, death, kills | In every state update |
 | Battle entry, pause, skill choice window | In every state update; shared pause and shared battle start are built on this |
 | Battle clock | In every state update during a battle |
 | Spells | Fired projectiles, in batches of events; the friend's game repeats each one from the ally. The hero's projectile size, area, speed and number once a second in the state update |
 | Shield, Satellites, Spirits, Electric Zone, Magic Circle | In the state update during a battle |
 | Armageddon | A separate event |
-| Shared chests | The host's chests (kind and offset from the start point) in the host's updates, twice a second; a guest's request for a chest and the host's answer as events |
+| Shared chests | The host's chests (kind and offset from the start point) in the host's updates, twice a second; a guest's request for a chest, the host's answer and a chest for the guest's choice as events |
 | Heal and "need help" | Separate events |
 | Host's enemies (Shared enemies mode) | Positions and health of the host's enemies in the host's updates; the guest's damage as an event to the host |
 
@@ -140,20 +142,21 @@ location in their own game.
 
 ## Settings
 
-Settings are in the «Моды» (Mods) window → the «Кооператив» card. They apply to your phone.
+Settings are in the «Моды» (Mods) window → the «Кооператив» card. They apply to your phone. Where the range is 0–1,
+1 means on and 0 means off.
 
 | Setting | Default | Range | What it changes |
 |---|---|---|---|
-| «Дальность призрака друга» (Friend ghost range) | 6 | 2–12 | How far from you an ally can go. |
+| «Дальность призрака» (Ghost range) | 6 | 2–12 | How far from you an ally can go. |
 | «Лечение друга, %» (Friend heal, %) | 25 | 0–50 | How much the «Лечить» button restores. 0 removes the button. |
 | «Перезарядка лечения, с» (Heal cooldown, s) | 40 | 10–120 | How often you can heal. |
-| «Урон магии друга у вас, %» (Friend's magic damage in your game, %) | 100 | 0–200 | Strength of the friend's repeated spells in your battle. 0 means effect only, no damage. |
-| «Показывать Щит, Спутников и Духов друга» (Show friend's Shield, Satellites and Spirits) | 1 | 0–1 | 1 shows them around the ally, 0 doesn't. |
+| «Урон магии друга» (Friend's magic damage) | 100 | 0–200 | Strength of the friend's repeated spells in your battle, %. 0 means effect only, no damage. |
+| «Щит и спутники друга» (Friend's shield and satellites) | 1 | 0–1 | 1 shows the friend's Shield, Satellites and Spirits around the ally, 0 doesn't. |
 | «Общая пауза» (Shared pause) | 1 | 0–1 | 1: your battle pauses while a friend picks a skill and waits for friends at the start; 0: you have your own pause. |
 | «Общие враги» (Shared enemies) | 1 | 0–1 | 1: every player fights the host's enemies (experimental). Turn it on for every player. |
-| «Общие враги: гость дальше этого от хоста — у него свои враги» (Shared enemies: guest further than this from the host gets own enemies) | 15 | 0–40 | Applies at the guest. Beyond this distance from the host the guest's own enemies spawn and go for the guest; 0 means never. |
-| «Общие враги: на босс-волну гость вдали переносится к хосту» (Shared enemies: on a boss wave a far guest is moved to the host) | 1 | 0–1 | Applies at the guest. 1: moved to the host for the boss wave, after the wave mana is pulled in and the guest goes back; 0: stays put. |
-| «Обновлений позиции в секунду» (Position updates per second) | 15 | 5–30 | How often your phone tells friends where you are. Higher means allies repeat movement more precisely, but more traffic (about 3 KB/s at 15). 20–30 on a good connection, 10 on a weak one. |
+| «Зона общих врагов» (Shared enemies zone) | 15 | 0–40 | Applies at the guest. Beyond this distance from the host the guest's own enemies spawn and go for the guest; 0 means never. |
+| «Сбор на босса» (Boss gathering) | 1 | 0–1 | Applies at the guest. 1: moved to the host for the boss wave, after the wave mana is pulled in and the guest goes back; 0: stays put. |
+| «Обновлений в секунду» (Updates per second) | 15 | 5–30 | How often your phone tells friends where you are. Higher means allies repeat movement more precisely, but more traffic (about 3 KB/s at 15). 20–30 on a good connection, 10 on a weak one. |
 
 The host's IP address and port are set in the «Кооп» window and saved between launches.
 
@@ -192,8 +195,6 @@ The host's IP address and port are set in the «Кооп» window and saved betw
   when they return to the game, the mod puts them back in the room with the same number.
 - **Shared pause has no time limit.** If a friend opened the pause menu and walked away from the phone, the others wait
   until they come back or leave the battle (or turn off «Общая пауза» in your own game).
-- **Player name** («Игрок» and a random number) is picked by the mod the first time it's turned on; you can't change it
-  in the interface.
 - **One game per host**, up to 4 players. Connection is by IP only; there's no game discovery on the network.
 - **Shared enemies** is still in progress: the guest's own boss is hidden until the host picks up the obelisk; enemy
   projectiles and some special enemies aren't fully transferred; the first frames of a battle may stutter at the guest

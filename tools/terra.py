@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Автобой на Terra вдвоём: окна выбора, сундуки, торговец и обелиски проходит сам, без касаний.
 
-Нужно то же, что для phones.py (оба телефона на USB, coop, coop_debug, coop_lab), и coop_lab 0.1.11+.
+Нужно то же, что для phones.py (оба телефона на USB, coop, coop_debug, coop_lab), и coop_lab 0.1.12+.
 Запуск:  python tools/terra.py [--minutes 6] [--no-restart]
 Умение и атрибут: верхняя карта. Усиление магии: первая магия сверху слева, в каждом следующем окне следующая
 вправо по рядам. Сундук: первый артефакт.
@@ -17,19 +17,15 @@ import time
 
 import lab
 import phones
-from lab import ADB, GUEST_PORT, HOST_PORT
+from lab import ADB, ARTIFACT_CARD, GUEST_PORT, HOST_PORT, MERCHANT_OUT, OBTAIN, buttons, in_reading_order
 
-HUD = ("Canvas/ModKitHud_", "Canvas/Field_BattleUI/")
 ABILITY_CARD = re.compile(r"Canvas/Canvas_Ability/Field_Ability/\d+")
 TRAIT_CARD = re.compile(r"Canvas/Canvas_AbilityCh/Field_AbilityChButton/\d+")
 LEARN = "Canvas/Canvas_AbilityCh/Button_AbilityCh_Decision"
-ARTIFACT_CARD = re.compile(r"Canvas/Canvas_Artifact/Field_Artifact/\d+")
-OBTAIN = "Canvas/Canvas_Artifact/Field_ArtifactSelect/Button_ArtifactSelect"
 UPGRADE_CARD = re.compile(r"Canvas/Canvas_MagicUpgrade/Field_MagicUpgrade/\d+")
 UPGRADE_OK = "Canvas/Canvas_MagicUpgrade/Button_MagicUpgrade_Decision"
 MERCHANT_CARD = re.compile(r"Canvas/Canvas_Merchant/Field_MerchantSheet/\d+")
 BUY = "Canvas/Canvas_Merchant/Button_Merchant_BUY"
-MERCHANT_OUT = "Canvas/Canvas_Merchant/Button_Merchant_OUT"
 # Эти окна открываются поверх окна умений, поэтому проверяются раньше него
 OVERLAYS = ((TRAIT_CARD, LEARN, "атрибут"), (UPGRADE_CARD, UPGRADE_OK, "усиление магии"), (ARTIFACT_CARD, OBTAIN, "артефакт"))
 OBELISKS = ("box9", "box10", "box11", "obelisk")
@@ -40,30 +36,12 @@ def call(port, what):
     return lab.lab(port, what)
 
 
-def buttons(port):
-    res = []
-    for ln in call(port, "Buttons").splitlines():
-        parts = ln.split("|", 5)
-        if len(parts) == 6 and parts[0].isdigit():
-            res.append({"i": int(parts[0]), "path": parts[1], "x": float(parts[2]), "y": float(parts[3]),
-                        "on": parts[4] == "True", "text": re.sub(r"<[^>]+>", "", parts[5])})
-    return [b for b in res if not b["path"].startswith(HUD)]
-
-
 def pickups(port):
     res = []
     for ln in call(port, "Pickups").splitlines():
         kind, x, y = ln.split("|")
         res.append((kind, float(x), float(y)))
     return res
-
-
-def in_reading_order(bs, pattern):
-    """
-    Сверху вниз, в ряду слева направо. Номера карт в окнах игры идут в этом порядке, а координаты во время анимации
-    открытия окна ещё не на месте.
-    """
-    return sorted((b for b in bs if pattern.fullmatch(b["path"])), key=lambda b: int(b["path"].rsplit("/", 1)[1]))
 
 
 class Player:

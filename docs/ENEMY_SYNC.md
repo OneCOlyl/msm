@@ -168,3 +168,19 @@ guest's own boss wave and from failures (then the broken preform is turned off a
 2 s).
 
 How to summon special mobs at the host via `coop_debug` is in docs/device-tests/1.6.116.md.
+
+## Copy size (phones, 2026-11-08)
+
+An enemy's on-screen size is the scale of the mob's root (`Transform_ObjUnit`) times the scale of its picture
+(`Transform_ObjUnitSprite`). Where the size sits depends on the preform (`coop_lab` `MobScales <id>` prints the chain):
+
+- normal preform: the picture is the root itself, scale = `UnitApply_UnitSize`;
+- epic and special mob preforms (`Sprite_UnitEnemyEpic`, `Sprite_UnitEnemySpecial`): the picture is a child with scale 1,
+  the size is on the root. For a special mob at the host the root equals the special size (type 11 → 1.12); for its copy
+  `Start_Unit` sets the root to the type's base size (0.9).
+
+`lossyScale` is stripped from the game build (`get_lossyScale_Injected` is not resolved), so the size is computed as the
+product of `localScale` up the parents. Up to 1.8.1 the mod set the copy's picture to `UnitApply_UnitSize` regardless of
+the root: copies of special and transition mobs came out 10–25% smaller, normal copies on an epic preform got the size
+squared. Now the picture gets the size divided by the root scale (when the root is a different object), and during the
+copy's first seconds this is checked 6 more times: the pool hands out preforms of different kinds.

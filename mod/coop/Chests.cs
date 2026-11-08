@@ -7,17 +7,20 @@ using UnityEngine;
 
 namespace MagicSurvivalCoop
 {
-    // Хук на V_Artifact_Manager.Button_Artifact_Select роняет игру при нажатии, поэтому личные сундуки — появившиеся за свою паузу.
+    // Все сундуки общие. Свои сундуки гостя — копии дропа хоста, их гость убирает. Сундук за свой выбор (артефакт, умение)
+    // игра гостя кладёт за его паузу: гость отдаёт его хосту, хост кладёт у себя, и сундук приходит всем как общий.
+    // Хук на V_Artifact_Manager.Button_Artifact_Select роняет игру при нажатии, поэтому такие сундуки узнаются по паузе.
     internal sealed partial class Session
     {
-        private static readonly int[] ChestKinds = { 5, 6 };
+        // 7 — торговец: смерть моба кладёт предмет 5, а сундук это или торговец, игра решает сама, у гостя жребий свой
+        private static readonly int[] ChestKinds = { 5, 6, 7 };
+        private const int MerchantKind = 7;
         // Скан сундуков — FindObjectsOfType по всей сцене, в замере кадра это было главное в части «сундуки»
         private const double ChestScanSec = 1, ChestClaimRadius = 0.5, ChestClaimRetrySec = 2;
         private static readonly Vector3 ChestLockedCenter = new Vector3(0, 1000, 0);
         private bool ChestsOn => _ctx.Setting("chests") > 0;
 
         private double _chestScanAt;
-        private readonly HashSet<object> _personalChests = new HashSet<object>();
         private HashSet<object> _chestsBeforePause;
         // Хост: id лежащих сундуков
         private int _chestSeq;
@@ -44,8 +47,8 @@ namespace MagicSurvivalCoop
 
         private bool ChestsShared => _hosting ? ChestsOn && _partners.Count > 0 : _chestHost != null;
 
-        // Перед каждым сканом паузы и на её конце: скан гостя убрал бы новый сундук как свой.
-        private void PersonalChestStep(double now)
+        // Гость, перед каждым сканом паузы и на её конце: скан убрал бы новый сундук как свой.
+        private void ChoiceChestStep(double now)
         {
             bool paused = ChestsShared && OwnPause();
             if (paused && _chestsBeforePause == null) { _chestsBeforePause = LyingChests().Select(KeyOf).ToHashSet(); return; }
@@ -55,17 +58,53 @@ namespace MagicSurvivalCoop
             foreach (var box in LyingChests())
             {
                 var key = KeyOf(box);
-                if (!_chestsBeforePause.Contains(key) && !copies.Contains(key) && _personalChests.Add(key)) n++;
+                if (_chestsBeforePause.Contains(key) || copies.Contains(key)) continue;
+                var pos = ChestPos(box);
+                int kind = ItemType(box);
+                double x = pos.x - _startX.Value, y = pos.y - (_startY ?? 0);
+                _client.SendEvent(Protocol.Build(w => { w.WriteString("kind", "chestNew"); w.WriteNumber("k", kind); w.WriteNumber("x", Math.Round(x, 2)); w.WriteNumber("y", Math.Round(y, 2)); }));
+                DestroyChest(box, "отдан хосту");
+                _chestsBeforePause.Add(key);
+                n++;
             }
-            if (n > 0) _ctx.Log($"сундук: окно выбора положило мне {n} — они только мои");
+            if (n > 0) _ctx.Log($"сундук: окно выбора положило мне {n} — отдал хосту, он положит их всем");
             if (!paused) _chestsBeforePause = null;
+        }
+
+        // Хост: сундук за выбор гостя кладётся у хоста и дальше идёт как общий.
+        private void OnRemoteNewChest(string who, JsonElement e)
+        {
+            if (!_hosting || !_inRun || !ChestsOn || _battleMgr == null || !_startX.HasValue) return;
+            int kind = (int)Protocol.Num(e, "k", -1);
+            if (Array.IndexOf(ChestKinds, kind) < 0) return;
+            double x = _startX.Value + Protocol.Num(e, "x", 0), y = (_startY ?? 0) + Protocol.Num(e, "y", 0);
+            var box = CreateChestAt(kind, x, y, out string how);
+            _ctx.Log(box != null ? $"сундук от «{who}» (вид {kind}): положил у себя в ({x - _startX.Value:0.0}; {y - (_startY ?? 0):0.0}) от старта"
+                                 : $"сундук от «{who}» (вид {kind}): не лёг после {how}");
+        }
+
+        // Вызовы ничего не возвращают: сундук это тот, что лёг при вызове. Торговца CreateItem_Position не кладёт,
+        // его кладёт CreateItem_Character у героя, а мод переносит на место.
+        private object CreateChestAt(int kind, double x, double y, out string how)
+        {
+            var before = LyingChests().Select(KeyOf).ToHashSet();
+            how = kind == MerchantKind ? "CreateItem_Character" : "CreateItem_Position";
+            if (kind == MerchantKind) CallMethod(_battleMgr, how, kind, 1);
+            else CallMethod(_battleMgr, how, kind, 1, (float)x, (float)y);
+            var box = LyingChests().FirstOrDefault(b => ItemType(b) == kind && !before.Contains(KeyOf(b)));
+            if (box != null && kind == MerchantKind)
+            {
+                var tr = ((GameObject)GetMember(box, "gameObject")).transform;
+                tr.localPosition = new Vector3((float)x, (float)y, tr.localPosition.z);
+            }
+            return box;
         }
 
         private void ResetChests()
         {
             _chestScanAt = 0;
             _chestSig = 0; _chestLeft = 0; _chestSentAt = -100;
-            _personalChests.Clear(); _chestsBeforePause = null;
+            _chestsBeforePause = null;
             _chestIds.Clear(); _chestBoxes.Clear(); _chestList.Clear();
             _hostChests.Clear(); _chestCopies.Clear(); _chestDone.Clear();
             _chestHost = null; _hostChestsAt = -100; _ownChestsRemoved = 0;
@@ -86,14 +125,6 @@ namespace MagicSurvivalCoop
         private void DestroyChest(object box, string what)
         {
             try { CallMethod(box, "DestroyItem"); } catch (Exception e) { _ctx.Log($"сундук: {what}: DestroyItem: {Inner(e).Message}"); }
-        }
-
-        // Объект пула потом станет другим сундуком.
-        private void PrunePersonal(List<object> lying)
-        {
-            if (_personalChests.Count == 0) return;
-            var keys = lying.Select(KeyOf).ToHashSet();
-            _personalChests.RemoveWhere(k => !keys.Contains(k));
         }
 
         // Список сундуков: при изменении три отправки подряд и не реже раза в ChestSendSec. Выключенные общие сундуки — "ch": null.
@@ -153,7 +184,7 @@ namespace MagicSurvivalCoop
         private void ChestStep(double now)
         {
             if (!_startX.HasValue) return;
-            PersonalChestStep(now);
+            if (!_hosting) ChoiceChestStep(now);
             if (!_hosting && _chestCopies.Count > 0) ClaimStep(now);
             if (now < _chestScanAt) return;
             _chestScanAt = now + ChestScanSec;
@@ -165,13 +196,10 @@ namespace MagicSurvivalCoop
         {
             _chestList.Clear();
             if (!ChestsOn || _partners.Count == 0) { _chestIds.Clear(); _chestBoxes.Clear(); return; }
-            var lying = LyingChests();
-            PrunePersonal(lying);
             var seen = new HashSet<int>();
-            foreach (var box in lying)
+            foreach (var box in LyingChests())
             {
                 var key = KeyOf(box);
-                if (_personalChests.Contains(key)) continue;
                 if (!_chestIds.TryGetValue(key, out int id)) { id = ++_chestSeq; _chestIds[key] = id; }
                 _chestBoxes[id] = box;
                 seen.Add(id);
@@ -268,13 +296,11 @@ namespace MagicSurvivalCoop
             }
             _chestDone.RemoveWhere(id => !_hostChests.ContainsKey(id));
 
-            var lyingNow = LyingChests();
-            PrunePersonal(lyingNow);
             var copies = new HashSet<object>(_chestCopies.Values.Select(c => c.Key));
-            foreach (var box in lyingNow)
+            foreach (var box in LyingChests())
             {
                 var key = KeyOf(box);
-                if (copies.Contains(key) || _personalChests.Contains(key)) continue;
+                if (copies.Contains(key)) continue;
                 DestroyChest(box, "свой у гостя");
                 if (++_ownChestsRemoved <= 3) _ctx.Log("сундук: свой у гостя убран — сундуки кладёт хост");
             }
@@ -284,18 +310,17 @@ namespace MagicSurvivalCoop
                     PlaceChestCopy(kv.Key, kv.Value.kind, _startX.Value + kv.Value.x, (_startY ?? 0) + kv.Value.y);
         }
 
-        // CreateItem_Position ничего не возвращает: копия это сундук, который лёг при вызове.
         private void PlaceChestCopy(int id, int kind, double x, double y)
         {
-            var before = LyingChests().Select(KeyOf).ToHashSet();
-            try { _ctx.Mark("сундук: копия у гостя"); CallMethod(_battleMgr, "CreateItem_Position", kind, 1, (float)x, (float)y); }
-            catch (Exception e) { _chestDone.Add(id); _ctx.Log($"сундук #{id}: CreateItem_Position: {Inner(e).Message}"); return; }
-            var box = LyingChests().FirstOrDefault(b => ItemType(b) == kind && !before.Contains(KeyOf(b)));
+            object box;
+            string how;
+            try { _ctx.Mark("сундук: копия у гостя"); box = CreateChestAt(kind, x, y, out how); }
+            catch (Exception e) { _chestDone.Add(id); _ctx.Log($"сундук #{id}: {Inner(e).Message}"); return; }
             if (box == null)
             {
                 // Без копии в руках повторный вызов клал бы новый сундук каждые полсекунды
                 _chestDone.Add(id);
-                _ctx.Log($"сундук #{id}: копия не нашлась после CreateItem_Position");
+                _ctx.Log($"сундук #{id}: копия не нашлась после {how}");
                 return;
             }
             var c = new ChestCopy { Box = box, Key = KeyOf(box), Kind = kind, X = x, Y = y };

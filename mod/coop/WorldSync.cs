@@ -37,6 +37,7 @@ namespace MagicSurvivalCoop
         // Урон гостя по копии виден через её здоровье: от попадания до смерти копии проходят этот опрос, отправка урона
         // и состояние хоста со списком погибших
         private const int PuppetCheckFrames = 2;
+        private const int ScaleChecks = 6, ScaleCheckFrames = 15;
         private const double DamageFlushSec = 0.05;
         private const int MaxPuppetKillsPerFrame = 4;
         private const double PuppetKillBudgetMs = 2;
@@ -72,6 +73,7 @@ namespace MagicSurvivalCoop
             public Transform Tr;
             public bool LocalDead;
             public bool Placed;
+            public int ScaleChecks;                        // Сверок масштаба после создания: игра может сменить масштаб корня позже
             public bool LookPending;
             public double FirstSeen;
             public double DeadAt;                          // Через 2 с после гибели у гостя создаём заново, если враг жив у хоста
@@ -812,6 +814,7 @@ namespace MagicSurvivalCoop
                         pp.LocalDead = true; pp.DeadAt = now; _wLocalDead++; _wReused++;
                         continue;
                     }
+                    if (pp.ScaleChecks < ScaleChecks && (_worldFrame + pp.Id) % ScaleCheckFrames == 0) { pp.ScaleChecks++; FixSpriteScale(pp.Obj, pp.Key); }
                     if ((_worldFrame + pp.Id) % PuppetCheckFrames == 0)
                     {
                         ReadUnitState(pp, out bool alive, out double hp);
@@ -1243,7 +1246,7 @@ namespace MagicSurvivalCoop
                 if (++_wFails <= 5) _ctx.Log($"общие враги: тип {pp.Type} не создался");
                 return false;
             }
-            pp.Obj = obj; pp.Placed = false; pp.Key = KeyOf(obj); _puppetKeys.Add(pp.Key);
+            pp.Obj = obj; pp.Placed = false; pp.ScaleChecks = 0; pp.Key = KeyOf(obj); _puppetKeys.Add(pp.Key);
             if (pp.Key != null) _ownerByKey[pp.Key] = pp;
             if (pp.Special) ApplySpecialLook(pp, obj);
             pp.Tr = GetMember(obj, "Transform_ObjUnit") as Transform;
@@ -1317,7 +1320,9 @@ namespace MagicSurvivalCoop
             return m.Prop != null ? m.Prop.GetValue(target) : m.Field.GetValue(target);
         }
 
-        // У копии из пула боссов масштаб картинки 1, а у обычного врага он равен размеру.
+        // На экране размер врага — масштаб корня, умноженный на масштаб картинки. У врагов хоста размер стоит то на картинке, то
+        // на корне (особые, заготовки эпических), а корню копии Start_Unit ставит базовый размер типа. Корень не трогаем: игра
+        // меняет его сама, картинка добирает остальное.
         private static void FixSpriteScale(object enemy, object key)
         {
             try
@@ -1326,6 +1331,9 @@ namespace MagicSurvivalCoop
                 if (size <= 0.01f) return;
                 var tr = GetMember(enemy, "Transform_ObjUnitSprite") as Transform;
                 if (tr == null) return;
+                // У обычной заготовки картинка и есть корень
+                if (GetMember(enemy, "Transform_ObjUnit") is Transform root && !Equals(KeyOf(root), KeyOf(tr)) && Math.Abs(root.localScale.x) > 0.01f)
+                    size /= Math.Abs(root.localScale.x);
                 var ls = tr.localScale;
                 tr.localScale = new Vector3(ls.x < 0 ? -size : size, size, ls.z == 0 ? 1 : ls.z);
             }
