@@ -1080,8 +1080,10 @@ Console.WriteLine("7. выключение мода посреди боя (об�
         var hostMine = new FakeChest(6, 1, 1);
         own.Add(H.Ctx); F(10);
         hm.Chests.Add(hostMine); own.Remove(H.Ctx);
-        F(80);
         bool At(FakeChest c, float x, float y) => Math.Abs(c.Pos.x - x) < 0.01 && Math.Abs(c.Pos.y - y) < 0.01;
+        // Хост и гость сверяют сундуки раз в секунду: на медленной машине CI фиксированного числа кадров не хватало
+        Until(() => gm.Chests.Any(c => c.ObtainItemType == 6 && At(c, 51, 51) && c.Destroyed == 0)
+                    && gm.Chests.Any(c => c != mine && At(c, 51, 49) && c.Destroyed == 0) && gm.Chests.Any(c => c != mine2 && At(c, 52, 49) && c.Destroyed == 0), 10);
         Check(mine.Destroyed == 1 && mine2.Destroyed == 1, "сундуки от выбора гостя отданы хосту, у гостя свои убраны");
         Check(hm.Chests.Any(c => At(c, 1, -1)) && hm.Chests.Any(c => At(c, 2, -1)), "хост положил их у себя на тех же местах от старта");
         Check(gm.Chests.Any(c => c != mine && At(c, 51, 49) && c.Destroyed == 0) && gm.Chests.Any(c => c != mine2 && At(c, 52, 49) && c.Destroyed == 0),
