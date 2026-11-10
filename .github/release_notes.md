@@ -1,3 +1,17 @@
+## Co-op 1.9.1
+
+- **A friend's ice burst is the right size.** Ice Age, Snowflake Blossom (and Zero Nova), Frozen Heart and Glacium bursts cast by a friend used to be 4–5 times bigger on your screen and kept growing; your own burst could also come out the wrong size after it. The game counts the burst waves on the hero, and the friend's repeat used your counter. Now the friend's game sends the wave number with each burst. All players need the same version.
+- **A friend's Satellite variants look right.** With Will o’ the Wisp, Nuclear Fusion and their combos (Ghastly Rampage, Neutron Generation, Plasma Ray, Hyperion, Black Hole, Age of the Sun, Soul Blade and others) a friend's satellites were shown as the plain small white ones on the plain ring. Now they have the friend's sprite, size and ring radius, for example the big fireballs of Nuclear Fusion. Soul Blade spirits get their own sprite too. All players need the same version.
+- **A friend's doppelgangers are visible.** The copies from Doppelganger and Avatar used to be missing next to the friend's ally: only their bullets flew out of thin air. Now the copies stand where the friend has them. All players need the same version.
+- For developers: `tools/lab.py magic` also checks ultimates, keeps the heroes in place, casts past the cooldown (`--cast-every`), puts standing targets (`--targets`), repeats an item when the link drops, compares the look fields the friend received and writes `magic.html` with screenshots. `--place` turns the place check on. `coop_lab`: `Ultimate`, `AutoCast`, `LookParams`. Spell, trait, combo and ultimate tables are in `docs/MAGIC_LIST.md`.
+
+**По-русски:**
+
+- **Ледяной взрыв друга нужного размера.** Взрывы Ice Age, Snowflake Blossom (и Zero Nova), Frozen Heart и Glacium, которые кастует друг, были у вас на экране в 4–5 раз крупнее и продолжали расти; после них и свой взрыв мог выйти не того размера. Игра считает волны взрыва на герое, и повтор магии друга брал ваш счётчик. Теперь игра друга шлёт номер волны с каждым взрывом. Нужна одна версия у всех.
+- **Варианты Спутника друга выглядят как надо.** С Will o’ the Wisp, Nuclear Fusion и их комбинациями (Ghastly Rampage, Neutron Generation, Plasma Ray, Hyperion, Black Hole, Age of the Sun, Soul Blade и другими) спутники друга показывались обычными маленькими белыми на обычном круге. Теперь у них картинка, размер и радиус круга как у друга, например большие огненные шары Nuclear Fusion. Духи Soul Blade тоже получают свою картинку. Нужна одна версия у всех.
+- **Двойники друга видны.** Копий от Doppelganger и Avatar у союзника-друга не было: их пули летели из пустого места. Теперь копии стоят там же, где у друга. Нужна одна версия у всех.
+- Для разработчиков: `tools/lab.py magic` проверяет и ультимейты, не двигает героев, кастует в обход перезарядки (`--cast-every`), ставит стоящие цели (`--targets`), повторяет пункт при обрыве связи, сравнивает поля вида, полученные другом, и пишет `magic.html` со скриншотами. `--place` включает проверку места. `coop_lab`: `Ultimate`, `AutoCast`, `LookParams`. Таблицы магий, особенностей, комбинаций и ультимейтов — в `docs/MAGIC_LIST.md`.
+
 ## Co-op 1.9.0
 
 - **Your own name.** The «Кооп» window has a «Ваше имя» (Your name) field, up to 20 characters. The name is saved and shown to friends. If you change it while connected, friends see the new name right away.

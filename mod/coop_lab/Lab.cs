@@ -44,6 +44,8 @@ namespace MagicSurvivalLab
         private bool _inBattle;
 
         private bool _noSpawn, _immortal, _clockHeld, _noMana, _frozen;
+        private int[] _autoCast = new int[0];
+        private int _autoEvery = 5, _autoStep, _autoFails;
         private object[] _savedSpawn;
         private int _heldClock;
         private int _type = 1, _countIdx, _item = 1;
@@ -87,6 +89,7 @@ namespace MagicSurvivalLab
         {
             _inBattle = true;
             _noSpawn = _clockHeld = _frozen = false;
+            _autoCast = new int[0];
             _speeds.Clear();
             _savedSpawn = null;
             ShowToggle();
@@ -103,6 +106,7 @@ namespace MagicSurvivalLab
             SetImmortal(false);
             SetMana(true);
             _noSpawn = _clockHeld = _frozen = false;
+            _autoCast = new int[0];
             _savedSpawn = null;
             ClosePanel();
             Kill(ref _toggle);
@@ -117,6 +121,7 @@ namespace MagicSurvivalLab
             if (_noMana && _levelMgr != null) PassLevelMana();
             if (_noSpawn && _stepN++ % 5 == 0) SuppressSpawn();   // Новая волна возвращает число врагов в пачке
             if (_frozen) StopEnemies();
+            if (_autoCast.Length > 0 && ++_autoStep % _autoEvery == 0) CastNow();
         }
 
         // Арена
@@ -445,6 +450,10 @@ namespace MagicSurvivalLab
             Add("clock", () => CallMethod(s, "MyClock"));
             Add("castsDone", () => GetMember(s, "_castsDone"));
             Add("castFails", () => GetMember(s, "_castFails"));
+            Add("castsDropped", () => GetMember(s, "_castsDropped"));
+            Add("stateAge", () => F(((System.Diagnostics.Stopwatch)GetMember(s, "Clock")).Elapsed.TotalSeconds
+                                    - ((IDictionary)GetMember(s, "_partners")).Values.Cast<object>().Max(p => Convert.ToDouble(GetMember(p, "StateReal")))));
+            Add("castsQueued", () => ((IDictionary)GetMember(s, "_partners")).Values.Cast<object>().Sum(p => Count(GetMember(p, "Casts"))));
             Add("sent", () => Pairs(GetMember(s, "_sentById"), v => v));
             Add("replayed", () => Pairs(GetMember(s, "_castCost"), v => GetMember(v, "Item3")));
             Add("armaPlayed", () => GetMember(s, "_armaPlayed"));
@@ -644,6 +653,7 @@ namespace MagicSurvivalLab
         }
 
         private const string LearnList = "List_AllyAbilityLearn";
+        private const string UltimateList = "List_ApplyUltimateON";
 
         public string Catalog()
         {
@@ -661,6 +671,14 @@ namespace MagicSurvivalLab
                     lines.Add($"{(kind == "combo" ? "combo" : "trait")}|{GetMember(row, "Id")}|{GetMember(row, "Name")}|{(req == null ? "" : string.Join("+", req))}");
                 }
             }
+            // Ультимейт комбинации: «궁극기 조건» — номер школы, без него окно ультимейта не предлагает. 0 — ультимейта нет.
+            var tb = CallMethod(GetMember(cheat, "_tables"), "Table", "MagicCom");
+            if (tb != null)
+                for (int r = 0; r < Count(tb); r++)
+                {
+                    int id = Cell(tb, r, GetMember(tb, "IdColumn") as string), school = Cell(tb, r, "궁극기 조건");
+                    if (id > 0 && school > 0) lines.Add($"ult|{id}|{CallMethod(tb, "Get", r, "궁극기 이름")}|{school}");
+                }
             return string.Join("\n", lines);
         }
 
@@ -694,6 +712,124 @@ namespace MagicSurvivalLab
             return $"комбинации {n} нет";
         }
 
+        // Как V_Ability_Manager.Button_Ultimate_Decision: номер в первую нулевую ячейку. List_Book_Ultimate (книга,
+        // сохраняется в профиль) не трогаем.
+        public string Ultimate(int n, bool on)
+        {
+            var cheat = ModTarget("coop_cheat", "_c");
+            if (cheat == null) return "нет coop_cheat";
+            var list = CallMethod(cheat, "Static", UltimateList);
+            if (list == null) return "нет " + UltimateList;
+            int at = -1, free = -1;
+            for (int i = 0; i < Count(list); i++)
+            {
+                int v = Convert.ToInt32(ItemAt(list, i));
+                if (v == n && at < 0) at = i;
+                if (v == 0 && free < 0) free = i;
+            }
+            if (on && at < 0)
+            {
+                if (free < 0) return $"ультимейт {n}: нет свободной ячейки";
+                CallMethod(list, "set_Item", free, n);
+            }
+            if (!on && at >= 0) CallMethod(list, "set_Item", at, 0);
+            CallMethod(cheat, "Recalc");
+            return $"ультимейт {n}: ячейки [{string.Join(",", Enumerable.Range(0, Count(list)).Select(i => ItemAt(list, i)))}]";
+        }
+
+        // Каст в обход перезарядки (ISpells.Cast): на проверке вида магия видна всё время, а не раз в несколько секунд.
+        // ids через запятую, 0 — выключить; every — шагов по 100 мс между кастами.
+        public string AutoCast(string ids, int every)
+        {
+            _autoCast = (ids ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(x => int.Parse(x.Trim(), Inv)).Where(x => x > 0).ToArray();
+            _autoEvery = Math.Max(1, every);
+            _autoFails = 0;
+            return _autoCast.Length == 0 ? "каст по таймеру выкл" : $"каст {string.Join(",", _autoCast)} каждые {_autoEvery * 100} мс";
+        }
+
+        private void CastNow()
+        {
+            var spells = GetMember(ModTarget("coop_cheat", "_c"), "_spells");
+            if (spells == null) return;
+            foreach (var id in _autoCast)
+                try { CallMethod(spells, "Cast", id, 2); }
+                catch (Exception e) { if (++_autoFails <= 3) _ctx.Log($"полигон: каст {id}: {Inner(e).Message}"); }
+        }
+
+        // Поля героя, от которых зависит вид снарядов (Session.LookFields): свои — как их шлёт coop, и полученные от друга.
+        public string LookParams()
+        {
+            var s = CoopSession();
+            if (!(GetMember(s, "LookFields") is string[] names)) return "нет coop";
+            string Line(string who, double[] v) =>
+                v == null ? who + "|нет" : who + "|" + string.Join(",", names.Select((n, i) => i < v.Length && !double.IsNaN(v[i]) ? $"{n}={v[i].ToString("0.####", Inv)}" : null).Where(x => x != null));
+            var lines = new List<string> { Line("my", GetMember(s, "_myLook") as double[]) };
+            foreach (DictionaryEntry kv in (IDictionary)GetMember(s, "_partners"))
+                lines.Add(Line("partner", GetMember(kv.Value, "Look") as double[]));
+            return string.Join("\n", lines);
+        }
+
+        // Орбиты: свои (объекты героя) и копии у союзника-друга, по группам sa, sb (Спутники), sp (Духи), dp (двойники).
+        // Строка: чьи|группа|число|спрайт|масштаб|средний радиус|мин|макс|цвет.
+        public string Orbs()
+        {
+            var lines = new List<string>();
+            var hero = typeof(BattleState).GetProperty("Hero", Any)?.GetValue(null);
+            if (GetMember(hero, "Transform_ObjUnit") is UnityEngine.Transform ht)
+            {
+                List<object> On(string flags, string objs, int from)
+                {
+                    var f = GetMember(hero, flags); var o = GetMember(hero, objs);
+                    var res = new List<object>();
+                    for (int i = from; i < Count(f); i++)
+                        if (ItemAt(f, i) is bool b && b && ItemAt(o, i) is object go && ActiveSelf(go)) res.Add(go);
+                    return res;
+                }
+                lines.Add(OrbLine("own", "sa", On("Array_IsSatelliteA_P", "Array_Obj_UnitSatellitesA", 0), ht.position));
+                lines.Add(OrbLine("own", "sb", On("Array_IsSatelliteB_P", "Array_Obj_UnitSatellitesB", 0), ht.position));
+                lines.Add(OrbLine("own", "sp", On("List_IsSpirit_P", "List_ObjSpirit", 1), ht.position));
+                var dop = new List<object>();
+                if (GetMember(hero, "IsDoppelganger_P") is bool d && d)
+                    for (int i = 1; i <= 8; i++)
+                        if (GetMember(hero, "Obj_UnitDoppelganger0" + i) is object go && ActiveSelf(go)) dop.Add(go);
+                lines.Add(OrbLine("own", "dp", dop, ht.position));
+            }
+            var s = CoopSession();
+            if (s != null)
+                foreach (DictionaryEntry kv in (IDictionary)GetMember(s, "_partners"))
+                {
+                    var vis = GetMember(kv.Value, "OrbVis");
+                    if (!(GetMember(kv.Value, "GhostTr") is UnityEngine.Transform gt) || vis == null) continue;
+                    foreach (var (key, field) in new[] { ("sa", "SatA"), ("sb", "SatB"), ("sp", "Spirits"), ("dp", "Doppels") })
+                    {
+                        var gos = new List<object>();
+                        var list = GetMember(vis, field);
+                        for (int i = 0; i < Count(list); i++)
+                            if (GetMember(ItemAt(list, i), "Go") is object go && ActiveSelf(go)) gos.Add(go);
+                        lines.Add(OrbLine("partner", key, gos, gt.position));
+                    }
+                    break;
+                }
+            return string.Join("\n", lines);
+        }
+
+        private static string OrbLine(string who, string key, List<object> gos, UnityEngine.Vector3 c)
+        {
+            if (gos.Count == 0) return $"{who}|{key}|0|нет|0|0|0|0|нет";
+            var r = gos.Select(g => GetMember(g, "transform") is UnityEngine.Transform t ? Dist(t.position, c) : 0).ToList();
+            double scale = GetMember(gos[0], "transform") is UnityEngine.Transform t0 ? Math.Abs(t0.localScale.x) : 0;
+            string color = "нет";
+            try
+            {
+                var m = gos[0].GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(x => x.Name == "GetComponentInChildren" && x.IsGenericMethodDefinition && x.GetParameters().Length == 0)
+                    ?.MakeGenericMethod(typeof(UnityEngine.SpriteRenderer));
+                if (GetMember(m?.Invoke(gos[0], null), "color") is UnityEngine.Color col) color = $"{F(col.r)} {F(col.g)} {F(col.b)} {F(col.a)}";
+            }
+            catch { }
+            return $"{who}|{key}|{gos.Count}|{SpriteFamily(gos[0])}|{F(scale)}|{F(r.Average())}|{F(r.Min())}|{F(r.Max())}|{color}";
+        }
+
         public string ResetMagic()
         {
             var cheat = ModTarget("coop_cheat", "_c");
@@ -702,9 +838,25 @@ namespace MagicSurvivalLab
             int removed = 0;
             for (int i = Count(list) - 1; i >= 0; i--)
                 if (Convert.ToInt32(ItemAt(list, i)) >= 361) { CallMethod(list, "RemoveAt", i); removed++; }
+            var ult = CallMethod(cheat, "Static", UltimateList);
+            for (int i = 0; i < Count(ult); i++) CallMethod(ult, "set_Item", i, 0);
             ClearCounts(cheat);
             CallMethod(cheat, "Recalc");
             for (int id = 1; id <= 21; id++) Spell(id, 0);
+            // Круги Спутников игра сама не гасит: снятых особенностей в ней не бывает
+            var hero = typeof(BattleState).GetProperty("Hero", Any)?.GetValue(null);
+            foreach (var ring in new[] { "A", "B" })
+            {
+                var flags = GetMember(hero, $"Array_IsSatellite{ring}_P"); var objs = GetMember(hero, $"Array_Obj_UnitSatellites{ring}");
+                for (int i = 0; i < Count(flags); i++)
+                    try
+                    {
+                        if (!(ItemAt(flags, i) is bool on && on)) continue;
+                        CallMethod(flags, "set_Item", i, false);
+                        CallMethod(ItemAt(objs, i), "SetActive", false);
+                    }
+                    catch { }
+            }
             return $"магии сняты, особенностей убрано {removed}";
         }
 
@@ -1012,6 +1164,11 @@ namespace MagicSurvivalLab
         }
 
         private static double Dist(UnityEngine.Vector3 p, UnityEngine.Vector3 q) => Math.Sqrt((p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y));
+
+        private static int Cell(object table, int row, string col)
+        {
+            try { return Convert.ToInt32(CallMethod(table, "Num", row, col)); } catch { return 0; }
+        }
 
         private static int SetLearned(object cheat, int id, int count)
         {

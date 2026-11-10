@@ -65,7 +65,7 @@ and to the friend's ally), `Looks` (the same with prefab, sprite and scale), `Mo
 enemy number, with type, sprite and scale), `KillEnemy <id>` (host), `HurtEnemy <id>` (guest), `FreezeEnemies true|false`
 (enemies stand still), `MobScales <id>` (scales from the sprite up the parents), `Chest <kind> <dx> <dy>`
 and `Chests` (lying chests relative to the start point), `ClearChests` (remove lying chests without a pickup),
-`ArtifactPick <id>` (every card of the open chest window becomes artifact id). Scenarios on two phones are in `tools/lab.py` (see [DEVELOPMENT.md](DEVELOPMENT.md#test-arena)).
+`ArtifactPick <id>` (every card of the open chest window becomes artifact id), `Ultimate <number> true|false` (a combo's ultimate), `AutoCast <id,…> <steps>` (casts past the cooldown every N×100 ms, `0` turns it off), `LookParams` (projectile look fields: own and received from the friend), `Orbs` (the hero's Satellites, Spirits and doppelgangers and their copies at the friend's ally: count, sprite, size, radius). Scenarios on two phones are in `tools/lab.py` (see [DEVELOPMENT.md](DEVELOPMENT.md#test-arena)).
 
 ## Publishing
 

@@ -59,7 +59,14 @@ namespace MagicSurvivalCoop
             public float Dx, Dy, Aim, P1, P2, S1, S2, S3, S4, Dr;
             public bool NoPos;                     // Игра создала снаряд в (0, 0): цель он выбирает сам
             public float Rot;                      // Угол Transform_ObjArcaneRayMid у кастующего, для лучей
+            public float Wave;                     // IceNovaAreaNum кастующего перед вызовом, для ледяного взрыва
         }
+
+        // Play_IceNova обнуляет IceNovaAreaNum героя и трижды зовёт Bullet_Create(35): каждый вызов берёт счётчик как номер
+        // волны (от него размер взрыва) и прибавляет 1. При повторе счётчик нашего героя никто не обнуляет, взрыв друга рос
+        // без конца, а свой сбивался.
+        private const int IceNovaBullet = 35;
+        private const string IceNovaWave = "IceNovaAreaNum";
 
         // Эти снаряды Bullet_Create вешает на объект героя (или ставит в его точку). При повторе это был бы наш герой,
         // поэтому на время вызова поле героя смотрит на якорь у союзника-друга.
@@ -189,6 +196,7 @@ namespace MagicSurvivalCoop
                     Dr = Convert.ToSingle(a[12]),
                 };
                 if (AnchoredBullets.TryGetValue(c.Id, out var anchors) && (anchors & RayAnchor) != 0) c.Rot = RayAngle();
+                if (c.Id == IceNovaBullet && GetMember(HeroObject(), IceNovaWave) is object wave) c.Wave = Convert.ToSingle(wave);
                 _outCasts.Add(c);
                 _sentById[c.Id] = _sentById.TryGetValue(c.Id, out var n) ? n + 1 : 1;
             }
@@ -214,8 +222,9 @@ namespace MagicSurvivalCoop
                 w.WriteNumberValue(Math.Round(c.Aim, 3)); w.WriteNumberValue(Math.Round(c.P1, 3)); w.WriteNumberValue(Math.Round(c.P2, 3));
                 w.WriteNumberValue(Math.Round(c.S1, 3)); w.WriteNumberValue(Math.Round(c.S2, 3)); w.WriteNumberValue(Math.Round(c.S3, 3)); w.WriteNumberValue(Math.Round(c.S4, 3));
                 w.WriteNumberValue(Math.Round(c.Dr, 3));
-                if (c.NoPos || c.Rot != 0) w.WriteNumberValue(c.NoPos ? 1 : 0);
-                if (c.Rot != 0) w.WriteNumberValue(Math.Round(c.Rot, 1));
+                if (c.NoPos || c.Rot != 0 || c.Wave != 0) w.WriteNumberValue(c.NoPos ? 1 : 0);
+                if (c.Rot != 0 || c.Wave != 0) w.WriteNumberValue(Math.Round(c.Rot, 1));
+                if (c.Wave != 0) w.WriteNumberValue(c.Wave);
                 w.WriteEndArray();
             }
             w.WriteEndArray();
@@ -230,7 +239,7 @@ namespace MagicSurvivalCoop
             {
                 if (it.ValueKind != JsonValueKind.Array || it.GetArrayLength() < 12) continue;
                 float F(int i) => it[i].TryGetDouble(out var d) && double.IsFinite(d) ? (float)d : 0f;
-                var c = new Cast { T = it[0].TryGetDouble(out var t) ? t : 0, Id = (int)F(1), Dx = F(2), Dy = F(3), Aim = F(4), P1 = F(5), P2 = F(6), S1 = F(7), S2 = F(8), S3 = F(9), S4 = F(10), Dr = F(11), NoPos = it.GetArrayLength() >= 13 && F(12) != 0, Rot = it.GetArrayLength() >= 14 ? F(13) : 0 };
+                var c = new Cast { T = it[0].TryGetDouble(out var t) ? t : 0, Id = (int)F(1), Dx = F(2), Dy = F(3), Aim = F(4), P1 = F(5), P2 = F(6), S1 = F(7), S2 = F(8), S3 = F(9), S4 = F(10), Dr = F(11), NoPos = it.GetArrayLength() >= 13 && F(12) != 0, Rot = it.GetArrayLength() >= 14 ? F(13) : 0, Wave = it.GetArrayLength() >= 15 ? F(14) : 0 };
                 if (Math.Abs(c.Dx) > 40 || Math.Abs(c.Dy) > 40) continue;
                 if (p.Casts.Count < 200) p.Casts.Enqueue(c);
             }
@@ -262,6 +271,7 @@ namespace MagicSurvivalCoop
         {
             var hero = HeroObject();
             if (hero == null || _bulletCreate == null) return;
+            object ownWave = null;
             try
             {
                 var gp = p.GhostTr.position;
@@ -285,11 +295,16 @@ namespace MagicSurvivalCoop
                 _ctx.Mark("повтор снаряда друга");
                 PutLook(hero, p.Look);
                 if (AnchoredBullets.TryGetValue(c.Id, out var anchors)) PutAnchors(hero, p, anchors, c.Rot);
+                if (c.Id == IceNovaBullet && (ownWave = GetMember(hero, IceNovaWave)) != null) SetMember(hero, IceNovaWave, c.Wave);
                 _bulletCreate.Invoke(hero, new object[] { p.GhostTr, c.Id, (float)tx, (float)ty, (float)z, c.Aim, c.P1, c.P2, c.S1, c.S2, c.S3, c.S4, ratio });
                 _castsDone++;
             }
             catch (Exception e) { if (++_castFails <= 3) _ctx.Log("повтор снаряда: " + (e.InnerException ?? e).Message); }
-            finally { _mirroring = false; RestoreLook(hero); RestoreAnchors(hero); }
+            finally
+            {
+                _mirroring = false; RestoreLook(hero); RestoreAnchors(hero);
+                if (ownWave != null) try { SetMember(hero, IceNovaWave, ownWave); } catch { }
+            }
         }
 
         private float RayAngle()

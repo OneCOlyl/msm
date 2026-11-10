@@ -24,7 +24,32 @@ Data: hero probe (`coop_probe` 0.4.0–0.5.0, 2026-10-22), a hero with all 21 sp
 - `UnitApply_SpiritNum` (7) are on: flags 1..7 are `True`. The "UnitSpirit1MotionA" sprite is set on the inactive ones too.
 - They fire the `BulletID_Spirit` (19) projectile from their objects (`Unit_Spirit01`…), forwarded since Co-op 1.3.2.
 
-**Doppelgangers**: `Obj_UnitDoppelganger01..09`; the 9th is taken by the friend's ally (`modkit_companions`).
+**Doppelgangers** (Doppelganger 367, Avatar)
+- `Obj_UnitDoppelganger01..09` ("Sprite_UnitDoppelgangerNN", children of the hero object), `Transform_ObjUnitDoppelgangerNN`,
+  `SpriteRenderer_DoppelgangerNN`, flag `IsDoppelganger_P`. The 9th is taken by the friend's ally (`modkit_companions`).
+- When on, a doppelganger is active, stands 0.5–1.5 units from the hero, its sprite is the hero's frames
+  (`AUnit1Motion1…`), white with alpha 0.3–0.4. It shoots by itself (`Play_Doppelganger_Attack`) through `Bullet_Create`,
+  so the bullets are forwarded like any other.
+- After 1.9.0 co-op sends a `dp` array in `orb`: triples (x, y from the hero, alpha) of the active doppelgangers, except
+  the one taken by an ally. The receiver puts copies of its own `Obj_UnitDoppelganger01` at the ally and takes the frame
+  from the ally itself 10 times a second.
+
+## Satellite traits (2026-11-10)
+
+Measured with `coop_lab` `Orbs` on a phone, level 5:
+
+| Variant | Ring A | Ring B | Sprite |
+|---|---|---|---|
+| Satellite, Anti-Gravity (389) | 5, radius 2.25, size 0.92 | — | `UnitSpirit4Motion…` |
+| Will o’ the Wisp (390) and its combos | 5, radius 1.6, size 0.62 | 5, radius 2.7, size 0.62 | `UnitSpirit6Motion…` |
+| Nuclear Fusion (391) and its combos | 1, radius 2.76, size 0.61 | up to 5, radius 2.7 | `UnitSpirit7Motion…` (a big fireball) |
+| Soul Blade (62) spirits | | | `UnitSpirit8Motion…` |
+
+The frames are flipped by the satellite's own script `C_Battle_AllyUnit_Satellite` (`OnEnable` → `Play_Satellite_Motion`).
+On a copy it runs by itself and uses the receiver's plain look, so before the fix a friend saw small white satellites at
+radius 2.25 instead of fireballs. Now `orb` carries the radius and size of each ring (`ra`, `rb`, `ka`, `kb`), the
+script's coroutines on a copy are stopped, and Satellite and Spirit copies get the sprite sent by the friend (`isa`,
+`isb`, `isp`).
 
 ## Pitfalls
 - You can't read `Renderer.enabled`: `ICall UnityEngine.Renderer::get_enabled was not resolved` (in this Unity build).

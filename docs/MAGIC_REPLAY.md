@@ -73,6 +73,21 @@ the same spot for every player. After 1.8.0 a cast at the caster's own position 
 Snowflake Blossom burst around the hero, the Telekinetic Sword sword 0.5 from it) isn't pulled and stays on the
 ally.
 
+## Counters the game keeps on the hero
+
+`Play_IceNova` sets the hero's `IceNovaAreaNum` to 0 and calls `Bullet_Create(35)` three times. Each call passes the
+counter to `ExplosionAttack` as the wave number (the burst size grows with it) and adds 1. A replay ran on the
+receiver's hero, where nobody resets the counter: the friend's burst kept growing (scale 6–7 against 1.49 at the caster:
+Ice Age, Snowflake Blossom, Frozen Heart, Glacium), and the receiver's own counter was thrown off. Now the caster sends
+the counter with the cast (15th number), the receiver puts it on its hero for the call and restores its own value.
+
+`Bullet_Create` also reads `Tsunami_PosX/Y` (bullets 102, 115) and `LavaField_SpecialVar01`, `LavaField_RandomPosValue`
+(62, 110) from the hero. The replay doesn't carry them; no visible difference was found on the phones.
+
+A bullet's transparent `C_Battle_AllyBulletSub` (Flash Shock, `Sprite_FlashShock_Center`) is a damage area that
+`C_Battle_AllyBullet.BulletAttack` turns on when its last argument is above 0. The friend doesn't get it, and nothing
+looks different.
+
 ## Not covered by the replay
 
 - Electric Zone combo zones: `C_Battle_AllyElectricZone.Start_FireRing`, `Start_FrozenHeart`, `Start_ElectricZone_Com01`

@@ -28,8 +28,10 @@ namespace MagicSurvivalCoop
             public double DispA, DispB, LastFrame = -1;               // Рисуемый угол плавно догоняет предсказанный
             public bool HasDisp;
             public int ShownSatA, ShownSatB;
+            public double RadA = SatRadius, RadB = SatRadius, ScaleA = double.NaN, ScaleB = double.NaN;
             public double[] SpiritOff;                                // Смещения духов от героя друга парами x, y
             public double[] SpiritDisp;
+            public double[] DopOff;                                   // Двойники друга тройками: x, y от его героя и прозрачность
             public bool Zone, ZoneOn;
             public string ImgZone; public bool ZoneEn = true; public double ZoneA = double.NaN;
             public double ShieldDx, ShieldDy = 0.03, ShieldSx = 1, ShieldSy = 1;
@@ -42,6 +44,7 @@ namespace MagicSurvivalCoop
         {
             public object Go; public Transform Tr; public object Sr;
             public string Applied, Missed;
+            public double Scale = double.NaN;
             public double MissedAt;
             public bool? Active;
         }
@@ -50,6 +53,10 @@ namespace MagicSurvivalCoop
         {
             public readonly List<OrbClone> SatA = new List<OrbClone>(), SatB = new List<OrbClone>(), Spirits = new List<OrbClone>();
             public OrbClone Shield, Zone, Mc;
+            public readonly List<OrbClone> Doppels = new List<OrbClone>();
+            public readonly List<double> DopAlpha = new List<double>();
+            public double DopImgAt = -1;
+            public object GhostSr;
             public readonly List<OrbClone> McKids = new List<OrbClone>();
             public bool McFailed, McLogged; public double McS = double.NaN;
             public readonly double[] McRotSet = { double.NaN, double.NaN, double.NaN };
@@ -65,17 +72,20 @@ namespace MagicSurvivalCoop
                 foreach (var c in SatA) fn(c);
                 foreach (var c in SatB) fn(c);
                 foreach (var c in Spirits) fn(c);
+                foreach (var c in Doppels) fn(c);
                 if (Shield != null) fn(Shield);
                 if (Zone != null) fn(Zone);
                 if (Mc != null) fn(Mc);
             }
-            public int Count => SatA.Count + SatB.Count + Spirits.Count + (Shield != null ? 1 : 0) + (Zone != null ? 1 : 0) + (Mc != null ? 1 : 0);
+            public int Count => SatA.Count + SatB.Count + Spirits.Count + Doppels.Count + (Shield != null ? 1 : 0) + (Zone != null ? 1 : 0) + (Mc != null ? 1 : 0);
         }
 
         private double _orbAt = -1;
         private int _myOrbSatA, _myOrbSatB, _myOrbSpirits;
         private bool _myOrbShield;
         private double _myOrbAngA, _myOrbAngB;
+        // Особенности Спутника меняют круг: Will o’ the Wisp — радиусы 1,6 и 2,7 и размер 0,62, Nuclear Fusion — 2,76
+        private double _myOrbRadA = SatRadius, _myOrbRadB = SatRadius, _myOrbScaleA = double.NaN, _myOrbScaleB = double.NaN;
         private string _myImgShield, _myImgSatA, _myImgSatB, _myImgSpirit;
         private double _myShieldDx, _myShieldDy = 0.03, _myShieldSx = 1, _myShieldSy = 1;
         private int _orbFails, _orbStateLogs;
@@ -83,6 +93,11 @@ namespace MagicSurvivalCoop
         private int _myOrbLogs;
         private readonly List<Transform> _mySpiritTr = new List<Transform>();
         private readonly List<double> _mySpiritOff = new List<double>();
+        // Двойники (Doppelganger, Avatar): Obj_UnitDoppelganger01..09 героя. Один из них занят союзником-другом
+        private const int DoppelSlots = 9;
+        private readonly List<Transform> _myDopTr = new List<Transform>();
+        private readonly List<double> _myDopA = new List<double>();
+        private readonly List<double> _myDopOff = new List<double>();
         private bool _myZone, _myZoneOn;      // Зона вспыхивает, включение читаем при каждой отправке
         private object _myZoneObj;
         private string _myZoneImg; private bool? _myZoneEn; private float _myZoneA = float.NaN;
@@ -99,8 +114,8 @@ namespace MagicSurvivalCoop
                 var hero0 = HeroObject();
                 try
                 {
-                    if (_myOrbSatA > 0) _myOrbAngA = FirstAngle(GetMember(hero0, "Array_Transform_ObjSatellitesA"), hx, hy);
-                    if (_myOrbSatB > 0) _myOrbAngB = FirstAngle(GetMember(hero0, "Array_Transform_ObjSatellitesB"), hx, hy);
+                    if (_myOrbSatA > 0) _myOrbAngA = FirstAngle(GetMember(hero0, "Array_Transform_ObjSatellitesA"), hx, hy, out _myOrbRadA, out _myOrbScaleA);
+                    if (_myOrbSatB > 0) _myOrbAngB = FirstAngle(GetMember(hero0, "Array_Transform_ObjSatellitesB"), hx, hy, out _myOrbRadB, out _myOrbScaleB);
                 }
                 catch { }
             }
@@ -127,13 +142,47 @@ namespace MagicSurvivalCoop
                 }
                 catch { _mySpiritOff.Clear(); }
             }
+            _myDopOff.Clear();
+            if (_myDopTr.Count > 0 && HeroPosition(out var dx, out var dy, out _))
+            {
+                try
+                {
+                    for (int i = 0; i < _myDopTr.Count; i++)
+                    {
+                        var q = _myDopTr[i].position;
+                        _myDopOff.Add(Math.Round(q.x - dx, 2)); _myDopOff.Add(Math.Round(q.y - dy, 2)); _myDopOff.Add(_myDopA[i]);
+                    }
+                }
+                catch { _myDopOff.Clear(); }
+            }
+        }
+
+        private void RefreshMyDoppels(object hero)
+        {
+            _myDopTr.Clear(); _myDopA.Clear();
+            if (!(GetMember(hero, "IsDoppelganger_P") is bool on && on)) return;
+            for (int i = 1; i <= DoppelSlots; i++)
+            {
+                var go = GetMember(hero, "Obj_UnitDoppelganger0" + i);
+                if (go == null || !Convert.ToBoolean(GetMember(go, "activeSelf") ?? false)) continue;
+                if (!(GetMember(hero, "Transform_ObjUnitDoppelganger0" + i) is Transform tr)) continue;
+                var ptr = PtrOf(tr);
+                bool ghost = false;
+                foreach (var pp in _partners.Values)
+                    if (pp.GhostTr != null && (ptr != IntPtr.Zero ? ptr == PtrOf(pp.GhostTr) : ReferenceEquals(tr, pp.GhostTr))) { ghost = true; break; }
+                if (ghost) continue;
+                var c = ColorOf(GetMember(hero, "SpriteRenderer_Doppelganger0" + i));
+                _myDopTr.Add(tr); _myDopA.Add(c != null ? Math.Round(c[3], 2) : 0.4);
+            }
         }
 
         private void RefreshOrbitCounts(double now)
         {
             _orbAt = now;
             var hero = HeroObject();
-            if (hero == null) { _myOrbSatA = _myOrbSatB = _myOrbSpirits = 0; _myOrbShield = false; _myZone = false; _mySpiritTr.Clear(); return; }
+            if (hero == null) { _myOrbSatA = _myOrbSatB = _myOrbSpirits = 0; _myOrbShield = false; _myZone = false; _mySpiritTr.Clear(); _myDopTr.Clear(); return; }
+            try { RefreshMyDoppels(hero); }
+            catch (Exception e) { _myDopTr.Clear(); if (++_orbFails <= 6) _ctx.Log("орбиты: двойники: " + Inner(e).Message); }
             try
             {
                 _myOrbSatA = CountTrue(GetMember(hero, "Array_IsSatelliteA_P"), 0);
@@ -198,10 +247,10 @@ namespace MagicSurvivalCoop
 
         private void WriteMyOrbits(Utf8JsonWriter w)
         {
-            bool none = _myOrbSatA + _myOrbSatB + _myOrbSpirits == 0 && !_myOrbShield && !_myZone && !_myMc;
+            bool none = _myOrbSatA + _myOrbSatB + _myOrbSpirits + _myDopTr.Count == 0 && !_myOrbShield && !_myZone && !_myMc;
             int sig = none ? 0 : HashCode.Combine(
                 HashCode.Combine(_myOrbSatA, _myOrbSatB, _myOrbSpirits, _myOrbShield, _myImgShield, _myImgSatA, _myImgSatB, _myImgSpirit),
-                HashCode.Combine(_myZone, _myZoneOn, _myZoneImg, _myZoneEn, Math.Round(_myZoneA, 2)), CircleSig());
+                HashCode.Combine(_myZone, _myZoneOn, _myZoneImg, _myZoneEn, Math.Round(_myZoneA, 2)), CircleSig(), _myDopTr.Count);
             double now = Clock.Elapsed.TotalSeconds;
             if (sig == _orbSig && now - _orbSentAt < (none ? NoOrbSendSec : OrbSendSec)) return;
             _orbSig = sig; _orbSentAt = now;
@@ -209,6 +258,8 @@ namespace MagicSurvivalCoop
             w.WriteStartObject("orb");
             w.WriteNumber("sa", _myOrbSatA); w.WriteNumber("sb", _myOrbSatB); w.WriteNumber("sp", _myOrbSpirits); w.WriteNumber("sh", _myOrbShield ? 1 : 0);
             w.WriteNumber("aa", Math.Round(_myOrbAngA, 3)); w.WriteNumber("ab", Math.Round(_myOrbAngB, 3));
+            if (_myOrbSatA > 0) { w.WriteNumber("ra", Math.Round(_myOrbRadA, 2)); if (!double.IsNaN(_myOrbScaleA)) w.WriteNumber("ka", Math.Round(_myOrbScaleA, 2)); }
+            if (_myOrbSatB > 0) { w.WriteNumber("rb", Math.Round(_myOrbRadB, 2)); if (!double.IsNaN(_myOrbScaleB)) w.WriteNumber("kb", Math.Round(_myOrbScaleB, 2)); }
             if (_myImgShield != null)
             {
                 w.WriteString("ish", _myImgShield);
@@ -222,6 +273,12 @@ namespace MagicSurvivalCoop
             {
                 w.WriteStartArray("so");
                 foreach (var v in _mySpiritOff) w.WriteNumberValue(v);
+                w.WriteEndArray();
+            }
+            if (_myDopOff.Count > 0)
+            {
+                w.WriteStartArray("dp");
+                foreach (var v in _myDopOff) w.WriteNumberValue(v);
                 w.WriteEndArray();
             }
             if (_myZone)
@@ -273,11 +330,15 @@ namespace MagicSurvivalCoop
             for (int i = from; i < n; i++) if (ItemAt(coll, i) is bool b && b) k++;
             return k;
         }
-        private static double FirstAngle(object coll, double hx, double hy)
+        private static double FirstAngle(object coll, double hx, double hy, out double radius, out double scale)
         {
+            radius = SatRadius; scale = double.NaN;
             if (!(ItemAt(coll, 0) is Transform tr)) return 0;
             var p = tr.position;
-            return Math.Atan2(p.y - hy, p.x - hx);
+            double dx = p.x - hx, dy = p.y - hy, r = Math.Sqrt(dx * dx + dy * dy);
+            if (r > 0.2 && r < 8) radius = r;
+            try { scale = Math.Abs(tr.localScale.x); } catch { }
+            return Math.Atan2(dy, dx);
         }
 
         private readonly Dictionary<Type, MethodInfo> _rendererGetters = new Dictionary<Type, MethodInfo>();
@@ -596,7 +657,7 @@ namespace MagicSurvivalCoop
             double senderT = Protocol.Num(s, "t", -1);
             if (!s.TryGetProperty("orb", out var o)) return;
             var st = p.Orb ??= new OrbState();
-            if (o.ValueKind != JsonValueKind.Object) { st.SatA = st.SatB = st.Spirits = 0; st.Shield = false; st.Zone = false; st.Mc = st.McOn = false; st.SpiritOff = null; return; }
+            if (o.ValueKind != JsonValueKind.Object) { st.SatA = st.SatB = st.Spirits = 0; st.Shield = false; st.Zone = false; st.Mc = st.McOn = false; st.SpiritOff = null; st.DopOff = null; return; }
             st.SatA = Clamp((int)Protocol.Num(o, "sa"), 0, 14);
             st.SatB = Clamp((int)Protocol.Num(o, "sb"), 0, 14);
             st.Spirits = Clamp((int)Protocol.Num(o, "sp"), 0, 14);
@@ -618,6 +679,14 @@ namespace MagicSurvivalCoop
                 st.SpiritOff = arr;
             }
             else st.SpiritOff = null;
+            if (o.TryGetProperty("dp", out var dp) && dp.ValueKind == JsonValueKind.Array)
+            {
+                var arr = new double[Math.Min(DoppelSlots * 3, dp.GetArrayLength() / 3 * 3)];
+                int i = 0;
+                foreach (var v in dp.EnumerateArray()) { if (i >= arr.Length) break; arr[i++] = v.ValueKind == JsonValueKind.Number ? v.GetDouble() : 0; }
+                st.DopOff = arr;
+            }
+            else st.DopOff = null;
             st.ImgShield = Protocol.Str(o, "ish") ?? st.ImgShield;
             if (o.TryGetProperty("shx", out _))
             {
@@ -627,6 +696,8 @@ namespace MagicSurvivalCoop
             st.ImgSatA = Protocol.Str(o, "isa") ?? st.ImgSatA;
             st.ImgSatB = Protocol.Str(o, "isb") ?? st.ImgSatB;
             st.ImgSpirit = Protocol.Str(o, "isp") ?? st.ImgSpirit;
+            st.RadA = Protocol.Num(o, "ra", SatRadius); st.RadB = Protocol.Num(o, "rb", SatRadius);
+            st.ScaleA = Protocol.Num(o, "ka", double.NaN); st.ScaleB = Protocol.Num(o, "kb", double.NaN);
             double aa = Protocol.Num(o, "aa"), ab = Protocol.Num(o, "ab");
             if (st.AngAt > 0)
             {
@@ -733,7 +804,22 @@ namespace MagicSurvivalCoop
             v.ForEach(c => { if (c.Go != null) { try { _destroy?.Invoke(null, new[] { c.Go }); } catch { } } });
         }
 
-        private void EnsureCount(List<OrbClone> list, int want, object hero, string field, int index, string img, double now, string what)
+        // Свой скрипт копии Спутника (C_Battle_AllyUnit_Satellite) листает кадры обычного спутника. Вид особенности
+        // (UnitSpirit6…, UnitSpirit7…) он не знает, поэтому его корутины стоят, а кадры идут от друга.
+        private MethodInfo _getBehaviour;
+        private void StopMotion(OrbClone c)
+        {
+            try
+            {
+                _getBehaviour ??= c.Go.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(x => x.Name == "GetComponent" && x.IsGenericMethodDefinition && x.GetParameters().Length == 0)
+                    ?.MakeGenericMethod(typeof(MonoBehaviour));
+                (_getBehaviour?.Invoke(c.Go, null) as MonoBehaviour)?.StopAllCoroutines();
+            }
+            catch (Exception e) { if (++_orbFails <= 6) _ctx.Log("орбиты: анимация копии: " + Inner(e).Message); }
+        }
+
+        private void EnsureCount(List<OrbClone> list, int want, object hero, string field, int index, string img, double now, string what, double scale = double.NaN, bool still = false)
         {
             while (list.Count < want)
             {
@@ -743,8 +829,17 @@ namespace MagicSurvivalCoop
             }
             for (int i = 0; i < list.Count; i++)
             {
-                if (i < want) ApplyImage(list[i], img, now, what, true);
+                bool was = list[i].Active == true;
                 Show(list[i], i < want);
+                if (i >= want) continue;
+                // При включении скрипт копии успевает вернуть обычный кадр
+                if (still && !was) { StopMotion(list[i]); list[i].Applied = null; }
+                ApplyImage(list[i], img, now, what);
+                if (!double.IsNaN(scale) && scale != list[i].Scale)
+                {
+                    list[i].Scale = scale;
+                    try { SetMember(list[i].Tr, "localScale", new Vector3((float)scale, (float)scale, 1f)); } catch { }
+                }
             }
         }
         private static void Show(OrbClone c, bool on)
@@ -764,8 +859,8 @@ namespace MagicSurvivalCoop
             v.Hidden = false;
             try
             {
-                EnsureCount(v.SatA, st.SatA, hero, "Array_Obj_UnitSatellitesA", 0, st.ImgSatA, now, "спутник");
-                EnsureCount(v.SatB, st.SatB, hero, "Array_Obj_UnitSatellitesB", 0, st.ImgSatB, now, "спутник B");
+                EnsureCount(v.SatA, st.SatA, hero, "Array_Obj_UnitSatellitesA", 0, st.ImgSatA, now, "спутник", st.ScaleA, true);
+                EnsureCount(v.SatB, st.SatB, hero, "Array_Obj_UnitSatellitesB", 0, st.ImgSatB, now, "спутник B", st.ScaleB, true);
                 EnsureCount(v.Spirits, st.Spirits, hero, "List_ObjSpirit", 1, st.ImgSpirit, now, "дух");
                 if (st.Shield && v.Shield == null && !v.ShieldFailed)
                 {
@@ -794,6 +889,7 @@ namespace MagicSurvivalCoop
                         if (c != null) { c[3] = (float)st.ZoneA; SetColor(v.Zone.Sr, c); }
                     }
                 }
+                UpdateDoppels(p, v, st, hero, now);
                 UpdateCircleCopy(p, v, st, hero, now);
                 var key = (st.SatA, st.SatB, st.Spirits, st.Shield, st.Zone);
                 if (!v.HasKey || !key.Equals(v.LastKey))
@@ -814,8 +910,8 @@ namespace MagicSurvivalCoop
             // Число спутников изменилось, круг перестроен: ставим сразу
             if (!st.HasDisp || st.ShownSatA != st.SatA || st.ShownSatB != st.SatB) { st.DispA = ta; st.DispB = tb; st.HasDisp = true; st.ShownSatA = st.SatA; st.ShownSatB = st.SatB; }
             else { st.DispA = Follow(st.DispA, ta, st.SpeedA, fdt); st.DispB = Follow(st.DispB, tb, st.SpeedB, fdt); }
-            Ring(v.SatA, st.SatA, g, SatRadius, st.DispA);
-            Ring(v.SatB, st.SatB, g, SatRadius, st.DispB);
+            Ring(v.SatA, st.SatA, g, st.RadA, st.DispA);
+            Ring(v.SatB, st.SatB, g, st.RadB, st.DispB);
             if (st.SpiritOff != null && st.SpiritOff.Length > 0) PlaceSpirits(v.Spirits, st, g, fdt);
             else Ring(v.Spirits, st.Spirits, g, SpiritRadius, now * 0.8);
             if (v.Shield != null && st.Shield)
@@ -827,6 +923,8 @@ namespace MagicSurvivalCoop
                     try { SetMember(v.Shield.Tr, "localScale", new Vector3((float)st.ShieldSx, (float)st.ShieldSy, 1f)); } catch { }
                 }
             }
+            for (int i = 0; st.DopOff != null && i < st.DopOff.Length / 3 && i < v.Doppels.Count; i++)
+                v.Doppels[i].Tr.position = new Vector3((float)(g.x + st.DopOff[3 * i]), (float)(g.y + st.DopOff[3 * i + 1]), g.z + 1);
             PlaceCircleCopy(v, st, g);
             if (v.Zone != null && st.ZoneOn)
             {
@@ -837,6 +935,38 @@ namespace MagicSurvivalCoop
                     try { SetMember(v.Zone.Tr, "localScale", new Vector3((float)st.ZoneSx, (float)st.ZoneSy, 1f)); }
                     catch (Exception e) { v.ZoneScaleFailed = true; _ctx.Log("орбиты: размер электрозоны: " + Inner(e).Message); }
                 }
+            }
+        }
+
+        // Копии своего шаблона двойника: игра их не двигает и не анимирует. Кадр берём у союзника-друга (он сам двойник
+        // с анимацией героя), прозрачность — от друга.
+        private void UpdateDoppels(Partner p, OrbVisuals v, OrbState st, object hero, double now)
+        {
+            int want = st.DopOff == null ? 0 : st.DopOff.Length / 3;
+            while (v.Doppels.Count < want)
+            {
+                var c = MakeClone(GetMember(hero, "Obj_UnitDoppelganger01"));
+                if (c == null) break;
+                v.Doppels.Add(c); v.DopAlpha.Add(double.NaN);
+            }
+            bool frame = want > 0 && now - v.DopImgAt >= 0.1;
+            object sprite = null;
+            if (frame)
+            {
+                v.DopImgAt = now;
+                v.GhostSr ??= RendererOf(GetMember(p.GhostTr, "gameObject"));
+                sprite = SpriteOf(v.GhostSr);
+            }
+            for (int i = 0; i < v.Doppels.Count; i++)
+            {
+                var c = v.Doppels[i];
+                Show(c, i < want);
+                if (i >= want) continue;
+                c.Sr ??= RendererOf(c.Go);
+                if (c.Sr == null) continue;
+                if (sprite != null) SetSprite(c.Sr, sprite);
+                double a = st.DopOff[3 * i + 2];
+                if (a != v.DopAlpha[i]) { v.DopAlpha[i] = a; SetColor(c.Sr, new[] { 1f, 1f, 1f, (float)a }); }
             }
         }
 
@@ -882,6 +1012,7 @@ namespace MagicSurvivalCoop
         private void ResetOrbits()
         {
             _sprites.Clear(); _spriteScanDone = false; _spriteHarvestAt = -1; _myOrbState = null; _myOrbLogs = 0; _orbStateLogs = 0; _mySpiritTr.Clear(); _mySpiritOff.Clear();
+            _myDopTr.Clear(); _myDopOff.Clear();
             _orbSig = int.MinValue; _orbSentAt = -100;
         }
     }

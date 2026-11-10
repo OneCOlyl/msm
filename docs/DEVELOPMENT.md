@@ -149,21 +149,29 @@ Scenarios on two phones (both in battle, connected, with `coop`, `coop_debug`, `
 ```bash
 python tools/lab.py mobs chests drop                 # mobs, chests, dropped link
 python tools/lab.py --kinds spells magic             # 21 spells, cast in turn by the host and the guest
-python tools/lab.py magic                            # every spell, trait and combo (about an hour)
+python tools/lab.py magic                            # every spell, trait, combo and ultimate
 python tools/lab.py --json r.json perf               # load: 200 enemies, all spells maxed, 60 s
 ```
 
-- `magic`: no enemies, so the screenshots show only the magic. Every spell, trait and combo is cast first by the host,
-  then by the guest. While the spell appears, the friend stands 2 units to the right of the caster, so the screenshot
-  shows both heroes. The projectile look is compared between the caster and the friend: number, prefab, sprite without
-  the frame number, scale. Then the friend steps 7 units away and the place is measured: at the friend the projectile
-  must be at the ally, not at the friend's hero (see [MAGIC_REPLAY.md](MAGIC_REPLAY.md)). At 2 units a projectile is
-  about equally close to both heroes, so the place isn't measured there. The host's own spell and the guest's own spell
-  must look the same; a projectile kind that appeared at only one of them during the item (a meteor, for example) is
-  marked `ИНФО`. Orbits (Shield, Satellite, Spirit, Electric Zone, Magic Circle), Armageddon and exceptions in the game
-  log are checked too. Spells that need a target (Tsunami, Ghost, Armageddon and others) don't fire without enemies and
-  are marked `ИНФО`. `--kinds`, `--caster`, `--wait` (how long to wait for the spell), `--after` (how long to measure
-  the place).
+- `magic`: every spell, trait, combo and ultimate is cast first by the host, then by the guest. The host stands at the
+  start point, the guest 2 units to the right; the places don't change, both heroes are in the frame. The item's spells
+  are cast past the cooldown every 0.5 s (`--cast-every N`: every N×100 ms, 0 leaves the game's cooldown). Screenshots of
+  both phones are taken 0.6 and 1.6 s after the spell appears at the caster. The projectile look is compared between
+  the caster and the friend: number, prefab, sprite without the frame number. The hero fields the look depends on
+  (`LookParams`, see [MAGIC_REPLAY.md](MAGIC_REPLAY.md)) must match between the caster and what the friend received. A
+  different largest scale is marked `ИНФО`: fire and explosions grow during the animation. The host's own spell and the
+  guest's own spell must look the same; a projectile kind that appeared at only one of them during the item (a meteor,
+  for example) is marked `ИНФО`. The friend's orbit copies (Satellites, Spirits, doppelgangers; `Orbs`) are compared with the caster's objects: count, sprite, size, radius. Shield, Electric Zone, Magic Circle, Armageddon and
+  exceptions in the game log are checked too. There are no enemies, so spells that need a target stay silent (`ИНФО`).
+  `--targets N` puts N standing unkillable enemies at the host for every item. `--place`: after the screenshots the
+  friend steps 7 units away and the place is measured: at the friend the projectile must be at the ally, not at the
+  friend's hero (at 2 units it is about equally close to both). Also `--kinds` (spells, traits, combos, ults), `--items`
+  (numbers separated by commas), `--caster`, `--wait` (how long to wait for the spell), `--after` (how long to watch
+  after the second screenshot). A kind the friend's samples missed isn't a failure (`ИНФО`) when the friend did repeat the projectile (a
+  fast one dies between samples) or when it is an explosion from a hit: the game picks the constellation explosion
+  75–77 at random for each player. If the friend's state didn't arrive for over 1 s (the link
+  dropped), the item is repeated up to two times and then marked `НЕТ`. The report with screenshots and look fields is
+  `magic.html`.
 - `mobs`: the host spawns mobs of each kind, and the mobs stand still (`FreezeEnemies`). The guest's copies are matched
   with the host's enemies by enemy number and compared: type, sprite, on-screen size, the outline of special mobs and
   place (within 0.3 units). The host and guest screenshots are taken with the mobs standing. Then the mobs walk towards

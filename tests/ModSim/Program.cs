@@ -202,6 +202,13 @@ Console.WriteLine("2д. магия друга: каждый снаряд гер�
     B.Set("_lookAt", -1.0);
     Check(st.Count == 1 && st[0] == 1 && GameHero.ApplyID_Incinerate == 0, $"статик ApplyID_Incinerate при повторе от друга, потом свой: {string.Join(",", st)} → {GameHero.ApplyID_Incinerate}");
 
+    // Ледяной взрыв: три волны с номерами 0, 1, 2 у кастующего. Повтор берёт номера друга и не трогает счётчик нашего героя
+    A.Game.IceNovaAreaNum = 7; A.Game.Waves.Clear();
+    B.Game.IceNovaAreaNum = 0;
+    for (int k = 0; k < 3; k++) B.Game.Bullet_Create(B.Combat.HeroTr, 35, bh.x, bh.y, 0, 0, 1f, 0f, 0f, 0f, 0f, 0f, 1f);
+    for (int fr = 0; fr < 40; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    Check(string.Join(",", A.Game.Waves) == "0,1,2" && A.Game.IceNovaAreaNum == 7, $"волны ледяного взрыва друга: {string.Join(",", A.Game.Waves)}, свой счётчик {A.Game.IceNovaAreaNum}");
+
     // Снаряды на объекте героя (созвездие 75) и в его точке (91) встают у союзника друга, а не у нашего героя
     var ownMid = A.Game.Obj_UnitConstellationMid; var ownTr = A.Game.Transform_ObjUnit;
     ownMid.transform.position = ownTr.position;                         // в игре якорь висит на герое
@@ -233,6 +240,18 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     Check(on.Count(c => c.Kind == "satA") == 3, $"у хоста 3 копии Спутников: {on.Count(c => c.Kind == "satA")}");
     Check(on.Count(c => c.Kind == "spirit") == 2, $"2 копии Духов: {on.Count(c => c.Kind == "spirit")}");
     Check(on.Count(c => c.Kind == "shield") == 1, "копия Щита включена");
+    // Двойники друга (Doppelganger, Avatar) стоят у союзника на тех же местах
+    bg.IsDoppelganger_P = true;
+    bg.Obj_UnitDoppelganger01.activeSelf = true; bg.Obj_UnitDoppelganger01.transform.position = new Vector3(bp.x - 0.6f, bp.y + 0.5f, 0);
+    bg.Obj_UnitDoppelganger02.activeSelf = true; bg.Obj_UnitDoppelganger02.transform.position = new Vector3(bp.x + 0.7f, bp.y + 0.3f, 0);
+    for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    var dops = CloneGo.Made.Where(c => c.activeSelf && c.Kind == "doppel").Select(c => c.transform.position).ToList();
+    var gd = g.Tr.position;
+    Check(dops.Count == 2 && dops.Any(q => Math.Abs(q.x - gd.x + 0.6) < 0.05 && Math.Abs(q.y - gd.y - 0.5) < 0.05) && dops.Any(q => Math.Abs(q.x - gd.x - 0.7) < 0.05 && Math.Abs(q.y - gd.y - 0.3) < 0.05),
+          $"2 копии двойников друга у союзника: {string.Join(" ", dops.Select(q => $"({q.x - gd.x:0.00}; {q.y - gd.y:0.00})"))}");
+    bg.IsDoppelganger_P = false;
+    for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
+    Check(!CloneGo.Made.Any(c => c.activeSelf && c.Kind == "doppel"), "двойников у друга нет — копии скрыты");
     var gp = g.Tr.position;
     var sats = on.Where(c => c.Kind == "satA").Select(c => c.transform.position).ToList();
     Check(sats.All(q => Math.Abs(Math.Sqrt((q.x - gp.x) * (q.x - gp.x) + (q.y - gp.y) * (q.y - gp.y)) - 2.25) < 0.05), "Спутники по кругу 2,25 вокруг союзника");
@@ -293,7 +312,7 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     on = CloneGo.Made.Where(c => c.activeSelf).ToList();
     Check(on.Count(c => c.Kind == "satA") == 0 && on.Count(c => c.Kind == "shield") == 0 && on.Count(c => c.Kind == "spirit") == 2, "Спутники и Щит пропали у друга — копии выключены, Духи остались");
     Check(on.Count(c => c.Kind == "zone") == 0, "Электрозона пропала у друга — копия выключена");
-    Check(CloneGo.Made.Count == 8, $"новых копий не создаётся (с копией Маг. круга): {CloneGo.Made.Count}");
+    Check(CloneGo.Made.Count == 10, $"новых копий не создаётся (с копией Маг. круга и двумя двойниками): {CloneGo.Made.Count}");
 }
 
 Console.WriteLine("2ж. Армагеддон друга: взрыв виден у хоста (объекты менеджера боя)");
@@ -1351,12 +1370,21 @@ class GameHero
     public float UnitApply_IncinerateSize { get; set; } = 1.05f;
     public int UnitApply_TornadoNum { get; set; } = 1;
     public readonly List<(float size, int num)> Looks = new();
+    public float IceNovaAreaNum { get; set; }
+    public bool IsDoppelganger_P;
+    public CloneGo Obj_UnitDoppelganger01 = new CloneGo("doppel", "AUnit1Motion1") { activeSelf = false }, Obj_UnitDoppelganger02 = new CloneGo("doppel", "AUnit1Motion1") { activeSelf = false };
+    public Transform Transform_ObjUnitDoppelganger01 => Obj_UnitDoppelganger01.transform;
+    public Transform Transform_ObjUnitDoppelganger02 => Obj_UnitDoppelganger02.transform;
+    public SpriteRenderer SpriteRenderer_Doppelganger01 => Obj_UnitDoppelganger01.Sr;
+    public SpriteRenderer SpriteRenderer_Doppelganger02 => Obj_UnitDoppelganger02.Sr;
+    public readonly List<float> Waves = new();
     public void Bullet_Create(Transform src, int id, float x, float y, float z, float aim, float p1, float p2, float s1, float s2, float s3, float s4, float dr)
     {
         _p.Ctx.Fire("Before C_Battle_AllyUnit.Bullet_Create/13", this, new object[] { src, id, x, y, z, aim, p1, p2, s1, s2, s3, s4, dr });
         Calls.Add((src, id, x, y, dr));
         Looks.Add((UnitApply_IncinerateSize, UnitApply_TornadoNum));
         Statics.Add(ApplyID_Incinerate);
+        if (id == 35) { Waves.Add(IceNovaAreaNum); IceNovaAreaNum += 1; }      // как в игре: номер волны и +1
         Anchors.Add((Obj_UnitConstellationMid, Obj_UnitConstellationMid.transform.position, Transform_ObjUnit, src.position));
     }
 }
