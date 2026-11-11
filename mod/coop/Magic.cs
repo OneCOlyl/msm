@@ -290,7 +290,7 @@ namespace MagicSurvivalCoop
                     }
                 }
                 // Урон друга по общим врагам идёт через здоровье копий. Не 0: при 0 не видно Маг. круга
-                float ratio = (float)(c.Dr * (ReplayWithoutDamage(p) ? WorldReplayRatio : Math.Max(0, _ctx.Setting("mirrorDmg")) / 100.0));
+                float ratio = (float)(c.Dr * (ReplayWithoutDamage(p) ? WorldReplayRatio : Math.Max(0, Rule("mirrorDmg")) / 100.0));
                 _mirroring = true;
                 _ctx.Mark("повтор снаряда друга");
                 PutLook(hero, p.Look);

@@ -1,3 +1,13 @@
+## Co-op 1.10.0
+
+- **Enemy health and damage.** Two new settings in the «Кооператив» card: «ХП врагов, ×» (enemy health) and «Урон врагов, ×» (enemy damage), from 0.5 to 10 in steps of 0.5, 1 by default. The host sets them and they apply for everyone in the room: at 2 enemies take twice as long to kill and hit heroes twice as hard. All players need the same version.
+- **The host sets the battle rules.** Friend heal and its cooldown, friend's magic damage, shared pause, shared enemies, the shared enemies zone, boss gathering and enemy health and damage now come from the host: a guest plays with the host's values, whatever the guest's own card says. The guest's «Кооп» window shows the host's rules. Ghost range, the friend's shield and satellites and updates per second stay personal. Shared enemies no longer break when a guest forgot to turn them on. All players need the same version.
+
+**По-русски:**
+
+- **Здоровье и урон врагов.** Две новые настройки в карточке «Кооператив»: «ХП врагов, ×» и «Урон врагов, ×», от 0,5 до 10 с шагом 0,5, по умолчанию 1. Задаёт хост, действуют у всех в комнате: при 2 врагов нужно бить вдвое дольше, и героев они бьют вдвое сильнее. Нужна одна версия у всех.
+- **Правила боя задаёт хост.** Лечение друга и его перезарядка, урон магии друга, общая пауза, общие враги, зона общих врагов, сбор на босса, ХП и урон врагов теперь берутся у хоста: гость играет с его значениями, что бы ни стояло в его карточке. В окне «Кооп» у гостя видны правила хоста. Дальность призрака, щит и спутники друга и обновлений в секунду остаются личными. Общие враги больше не ломаются, если гость забыл их включить. Нужна одна версия у всех.
+
 ## Co-op 1.9.1
 
 - **A friend's ice burst is the right size.** Ice Age, Snowflake Blossom (and Zero Nova), Frozen Heart and Glacium bursts cast by a friend used to be 4–5 times bigger on your screen and kept growing; your own burst could also come out the wrong size after it. The game counts the burst waves on the hero, and the friend's repeat used your counter. Now the friend's game sends the wave number with each burst. All players need the same version.

@@ -42,19 +42,20 @@ namespace MagicSurvivalCoop
         private Partner LobbyHost() => _hosting ? null
             : _partners.Values.FirstOrDefault(p => p.LobbyArea >= 0 && p.HasState && _clockMs - p.StateAt < 3000);
 
-        private (int area, int level, int loop, int button, bool chests, bool ready) LobbyNow()
+        private (int area, int level, int loop, int button, bool chests, bool ready, string rules) LobbyNow()
         {
-            if (!_hosting) return (-1, 0, -1, -1, false, !_inRun && _onAreaScreen && LobbyHost() != null);
+            if (!_hosting) return (-1, 0, -1, -1, false, !_inRun && _onAreaScreen && LobbyHost() != null, null);
             int area = DbInt("Game_AreaID");
-            if (area < 0) return (-1, 0, -1, -1, false, false);
-            return (area, DbInt("Game_AreaLevel"), DbInt("Game_BattleLoopON"), _startButton, ChestsOn, false);
+            if (area < 0) return (-1, 0, -1, -1, false, false, RulesSignature());
+            return (area, DbInt("Game_AreaLevel"), DbInt("Game_BattleLoopON"), _startButton, ChestsOn, false, RulesSignature());
         }
 
         // Лобби уходит не в каждом состоянии, поэтому «la» есть всегда, когда пишет хост, а «rdy», когда гость.
-        private void WriteLobby(System.Text.Json.Utf8JsonWriter w, (int area, int level, int loop, int button, bool chests, bool ready) l)
+        private void WriteLobby(System.Text.Json.Utf8JsonWriter w, (int area, int level, int loop, int button, bool chests, bool ready, string rules) l)
         {
             if (!_hosting) { w.WriteNumber("rdy", l.ready ? 1 : 0); return; }
             w.WriteNumber("la", l.area);
+            WriteRules(w);
             if (l.area < 0) return;
             w.WriteNumber("ll", l.level);
             w.WriteNumber("lp", l.loop);
@@ -71,6 +72,7 @@ namespace MagicSurvivalCoop
                 p.LobbyLoop = (int)Net.Protocol.Num(s, "lp", -1);
                 p.LobbyButton = (int)Net.Protocol.Num(s, "lb", -1);
                 p.LobbyChests = Net.Protocol.Bool(s, "chs");
+                ReadRules(p, s);
             }
             if (!s.TryGetProperty("rdy", out _)) return;
             bool was = p.Ready;

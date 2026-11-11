@@ -47,7 +47,7 @@ namespace MagicSurvivalCoop
         private readonly Queue<Puppet> _dying = new Queue<Puppet>();
 
         private ICombat _combat;
-        private bool WorldOn => _ctx.Setting("world") > 0;
+        private bool WorldOn => Rule("world") > 0;
 
         private readonly Dictionary<int, IEnemy> _enById = new Dictionary<int, IEnemy>();   // Для урона гостей
         private double _dmgIn; private int _dmgInMiss;
@@ -402,6 +402,7 @@ namespace MagicSurvivalCoop
         private void OnEnemyStart(object self, object[] a)
         {
             if (_spawningPuppet) { _justCreated = self; return; }
+            if (self != null) ForgetEnemyHp(KeyOf(self));
             int origin = _spawnOrigin;
             if (_hosting && WorldOn && _inRun && self != null) NoteHostVars(self, a, origin);
             if (!_worldActive || self == null) return;
@@ -972,7 +973,7 @@ namespace MagicSurvivalCoop
         // Расстояние до хоста считается от точек старта обоих.
         private void UpdateAway(Partner host, bool hasHero, double hx, double hy)
         {
-            double r = _ctx.Setting("worldZone");
+            double r = Rule("worldZone");
             bool was = _away;
             if (r <= 0 || !hasHero || !host.HasState || !_startX.HasValue) _away = false;
             else

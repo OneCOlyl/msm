@@ -16,7 +16,7 @@ namespace MagicSurvivalCoop
         private double _lastPumpSec;
         private string _pauseWhy;
 
-        private bool SharedPauseOn => _ctx.Setting("sharedPause") > 0;
+        private bool SharedPauseOn => Rule("sharedPause") > 0;
         internal static Func<ModContext, bool> OwnPauseOverride;
 
         // Флаги игры не годятся: Ability_SelectON остаётся True и после закрытия окна, а сундук флагов не ставит.

@@ -8,7 +8,7 @@ namespace MagicSurvivalCoop
     internal sealed partial class Session
     {
         private const double GatherBackSec = 2;
-        private bool GatherOn => _ctx.Setting("bossGather") > 0;
+        private bool GatherOn => Rule("bossGather") > 0;
         private enum Gather { Idle, AtHost, Leaving }
         private Gather _gather;
         private double _gatherAt, _gatherRelX, _gatherRelY, _gatherX, _gatherY;

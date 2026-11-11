@@ -600,13 +600,14 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
         Check(bm.SpawnStarts == 1, $"остановленный игрой спавн запущен снова — один раз: {bm.SpawnStarts}");
         Frames(40);
         Check(bm.SpawnStarts == 1, "идущий спавн второй раз не запускается");
-        B.Ctx.Set["bossGather"] = 0;
+        A.Ctx.Set["bossGather"] = 0;                                         // правило хоста
+        Frames(20);                                                           // правило доходит гостю с обновлением хоста
         bm.Battle_ClearWaveON = 1; Frames(20);                                // босс-волна у гостя: её мобов мод прятал бы как «своего босса»
         Check(bm.EnemyCreateNum == 0 && (bool)B.Get("_away") && !(bool)B.Get("_ownSpawn"), $"вдали от хоста в босс-волну свой спавн погашен: {bm.EnemyCreateNum}");
         bm.Battle_ClearWaveON = 0; Frames(20);
         Check(bm.EnemyCreateNum == 5 && (bool)B.Get("_ownSpawn"), $"босс-волна кончилась — свой спавн вдали снова включён: {bm.EnemyCreateNum}");
         {   // Сбор на босса — гость вдали переносится к хосту (арена — как у хоста), после волны обратно
-            B.Ctx.Set["bossGather"] = 1;
+            A.Ctx.Set["bossGather"] = 1; Frames(20);
             void For(double sec) { var w = System.Diagnostics.Stopwatch.StartNew(); while (w.Elapsed.TotalSeconds < sec) Frames(1); }
             var away = B.Combat.Pos; var hostPos = A.Combat.Pos;
             am.ApplyBossGround_Size = 145; am.ApplyBossGround_X = hostPos.x + 0.5f; am.ApplyBossGround_Y = hostPos.y - 0.5f; am.Battle_ClearWaveON = 1;
@@ -636,8 +637,8 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
         Check(near.DestroyedSimple, "новый свой враг рядом с хостом убран, как раньше");
         mine.Unit_IsLive = false; B.Combat.Enemies.Remove(mine);
     }
-    B.Ctx.Set["world"] = 0;
-    Frames(10);
+    A.Ctx.Set["world"] = 0;                                                  // правило хоста: выключает и у гостя
+    Frames(30);
     Check(!B.Combat.Enemies.OfType<FakeEnemy>().Any(e => e.Puppet && e.Unit_IsLive), "общие враги выключены — копии убраны");
     Check(walls.activeSelf, "и стены DestroyArea включены");
     findAll.SetValue(null, null);
@@ -897,6 +898,45 @@ Console.WriteLine("5б. версии мода: разные — предупре
     G.Set("_version", mine);
     Both(3000);
     Check(!Players(G).Contains("версия") && !Players(H).Contains("версия"), "версии снова одинаковые — строки в окне нет");
+    H.Disable(); G.Disable();
+}
+
+Console.WriteLine("5в. правила боя и множители врагов: задаёт хост, гость берёт его значения");
+{
+    var H = new Player("ХостМ"); var G = new Player("ГостьМ");
+    foreach (var p in new[] { H, G }) p.Ctx.Set["port"] = 28840;
+    H.Ctx.Set["mobHp"] = 2.5; H.Ctx.Set["mobDmg"] = 3;
+    G.Ctx.Set["mobHp"] = 7; G.Ctx.Set["mobDmg"] = 0.5;
+    H.Ctx.Set["healPct"] = 40; H.Ctx.Set["mirrorDmg"] = 150; H.Ctx.Set["sharedPause"] = 1; H.Ctx.Set["sendHz"] = 15;
+    G.Ctx.Set["healPct"] = 10; G.Ctx.Set["mirrorDmg"] = 50; G.Ctx.Set["sharedPause"] = 0; G.Ctx.Set["sendHz"] = 5;
+    double Rule(Player p, string k) => (double)p.Session.GetType().GetMethod("Rule", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(p.Session, new object[] { k });
+    void Both(int ms) { for (int t = 0; t < ms / 50; t++) { H.Tick(); G.Tick(); Thread.Sleep(50); } }
+    H.Call("Host"); Both(500); G.Call("Join"); Both(3000);
+    Check(H.Partners().Count == 1 && G.Partners().Count == 1, "хост и гость на связи");
+    Check((double)H.Get("_mobHpMul") == 2.5 && (double)H.Get("_mobDmgMul") == 3, $"у хоста свои множители: {H.Get("_mobHpMul")}, {H.Get("_mobDmgMul")}");
+    Check((double)G.Get("_mobHpMul") == 2.5 && (double)G.Get("_mobDmgMul") == 3, $"у гостя множители хоста, а не свои 7 и 0,5: {G.Get("_mobHpMul")}, {G.Get("_mobDmgMul")}");
+    Check(Rule(G, "healPct") == 40 && Rule(G, "mirrorDmg") == 150 && Rule(G, "sharedPause") == 1,
+          $"у гостя лечение, урон магии друга и общая пауза хоста: {Rule(G, "healPct")}, {Rule(G, "mirrorDmg")}, {Rule(G, "sharedPause")}");
+    Check(Rule(H, "healPct") == 40 && Rule(H, "sharedPause") == 1, "у хоста свои правила");
+    Check(G.Ctx.Setting("sendHz") == 5, "личная настройка гостя (обновлений в секунду) своя");
+    var gText = (string)G.Session.GetType().GetMethod("PlayersText", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(G.Session, null);
+    var hText = (string)H.Session.GetType().GetMethod("PlayersText", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(H.Session, null);
+    Check(gText.Contains("Правила боя от хоста:") && gText.Contains("лечение 40%") && !hText.Contains("Правила боя"), $"в окне «Кооп» гостя — правила хоста: «{gText.Replace("\n", " / ")}»");
+    H.Spells.InBattle = true; H.Emit("battleStart");
+    var en = new FakeEnemy(H, 3); H.Combat.Enemies.Add(en);
+    Both(300);
+    Check(en.UnitApply_HpMax == 50 && en.Unit_Hp == 50, $"здоровье врага ×2,5: 20 → {en.Unit_Hp}/{en.UnitApply_HpMax}");
+    Both(300);
+    Check(en.UnitApply_HpMax == 50, $"повторно не умножается: {en.UnitApply_HpMax}");
+    en.UnitApply_HpMax = 40; en.Unit_Hp = 40; Both(300);
+    Check(en.UnitApply_HpMax == 100 && en.Unit_Hp == 100, $"игра поставила новую силу (переход) — умножена она: {en.Unit_Hp}/{en.UnitApply_HpMax}");
+    en.Unit_Hp = 60; H.Ctx.Set["mobHp"] = 1; Both(300);
+    Check(en.UnitApply_HpMax == 40 && Math.Abs(en.Unit_Hp - 24) < 1e-3, $"хост вернул ×1 — у раненого врага та же доля здоровья: {en.Unit_Hp}/{en.UnitApply_HpMax}");
+    var ha = new object[] { 10f, 0f, 0 };
+    G.Ctx.Fire("Before C_Battle_AllyUnit.Unit_Damage/3", new object(), ha);
+    Check(Math.Abs((float)ha[0] - 30f) < 1e-3, $"урон по герою гостя ×3: 10 → {ha[0]}");
+    H.Ctx.Set["mobDmg"] = 1.5; Both(3000);
+    Check((double)G.Get("_mobDmgMul") == 1.5, $"хост сменил урон — гость получил новое значение: {G.Get("_mobDmgMul")}");
     H.Disable(); G.Disable();
 }
 
@@ -1323,7 +1363,7 @@ class FakeEnemy : MonoBehaviour, IEnemy
     public int UnitID; public bool Unit_IsLive = true, Puppet, DestroyedSimple;
     public Transform Transform_ObjUnit = new Transform();
     public Rigidbody Rigidbody_ObjUnit = new Rigidbody();
-    public float UnitBase_MoveSpeed = 0.064f, UnitApply_MoveSpeed = 0.064f, UnitApply_UnitSize = 1.25f, Unit_Hp = 20;
+    public float UnitBase_MoveSpeed = 0.064f, UnitApply_MoveSpeed = 0.064f, UnitApply_UnitSize = 1.25f, Unit_Hp = 20, UnitApply_HpMax = 20;
     public double DamageTaken;
     public Transform Transform_ObjUnitSprite = new Transform { localScale = new Vector3(1, 1, 1) };
     public void Unit_Destroy_Simple() { DestroyedSimple = true; Unit_IsLive = false; _p.Combat.Enemies.Remove(this); }

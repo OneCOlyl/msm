@@ -71,7 +71,7 @@ The host picks the area, difficulty and mode (normal or Infinite Mode). Each pla
 - When an ally goes off screen, an **arrow pointing towards it** appears at the screen edge, with a name plate filled
   green by its health. Markers are hidden while paused.
 - When a friend has less than 70% health, a **«Лечить»** (Heal) button appears. It restores 25% of their max health
-  (the healer's «Лечение друга, %» setting), with a 40-second cooldown. If several friends are wounded, the one with the
+  (the host's «Лечение друга, %» setting), with a 40-second cooldown. If several friends are wounded, the one with the
   lowest health share is healed.
 - When you have less than 25% health, friends get a **«нужна помощь!»** (need help!) signal, at most once every 20 seconds.
 - On-screen labels: «присоединился» (joined), «начал бой — заходите!» (started a battle, come in!), «погиб!» (died!),
@@ -91,13 +91,13 @@ The host picks the area, difficulty and mode (normal or Infinite Mode). Each pla
   stronger, so the wave starts for everyone at almost the same time. The game slows time down by itself when the phone
   can't render frames fast enough, which is why clocks on a weak phone fall behind; the mod lifts this slowdown while
   catching up.
-- Works for players who have the «Общая пауза» (Shared pause) setting on: turn it off and your battle won't pause
-  because of friends.
+- Turned on by the host's «Общая пауза» (Shared pause) setting. If the host turns it off, every player has their own
+  pause.
 
 ### Shared enemies (experimental)
 
-The «Общие враги» (Shared enemies) setting, on by default. When updating from 1.6 the mod turns it on once; after
-that the player's choice is kept. **It must be on for every player.**
+The «Общие враги» (Shared enemies) setting, on by default. The host turns the mode on: guests use the host's value.
+When updating from 1.6 the mod turns the setting on once; after that the player's choice is kept.
 
 - Guests don't get their own enemies: instead they have copies of the host's enemies in the same places. An enemy killed
   at the host is killed at the guest too, with experience. A guest's damage to enemies counts at the host.
@@ -134,6 +134,7 @@ that the player's choice is kept. **It must be on for every player.**
 | Armageddon | A separate event |
 | Shared chests | The host's chests (kind and offset from the start point) in the host's updates, twice a second; a guest's request for a chest, the host's answer and a chest for the guest's choice as events |
 | Heal and "need help" | Separate events |
+| Enemy health and damage multipliers | In the host's updates, every 2 s and right after a change |
 | Host's enemies (Shared enemies mode) | Positions and health of the host's enemies in the host's updates; the guest's damage as an event to the host |
 
 **Not synced:** hero level and chosen skills, spell levels, artifacts, items and gold, experience (except kills in
@@ -142,8 +143,13 @@ location in their own game.
 
 ## Settings
 
-Settings are in the «Моды» (Mods) window → the «Кооператив» card. They apply to your phone. Where the range is 0–1,
-1 means on and 0 means off.
+Settings are in the «Моды» (Mods) window → the «Кооператив» card. Where the range is 0–1, 1 means on and 0 means off.
+
+**The host sets the battle rules:** «Лечение друга, %», «Перезарядка лечения», «Урон магии друга», «Общая пауза», «Общие
+враги», «Зона общих врагов», «Сбор на босса», «ХП врагов» and «Урон врагов». A guest plays with the host's values; the
+guest's own values for these settings apply once that player creates a game. The guest's «Кооп» window has a line
+«Правила боя от хоста» (Battle rules from the host) with these values. The other settings («Дальность призрака»,
+«Щит и спутники друга», «Обновлений в секунду») are personal and apply only to your phone.
 
 | Setting | Default | Range | What it changes |
 |---|---|---|---|
@@ -153,12 +159,15 @@ Settings are in the «Моды» (Mods) window → the «Кооператив» 
 | «Урон магии друга» (Friend's magic damage) | 100 | 0–200 | Strength of the friend's repeated spells in your battle, %. 0 means effect only, no damage. |
 | «Щит и спутники друга» (Friend's shield and satellites) | 1 | 0–1 | 1 shows the friend's Shield, Satellites and Spirits around the ally, 0 doesn't. |
 | «Общая пауза» (Shared pause) | 1 | 0–1 | 1: your battle pauses while a friend picks a skill and waits for friends at the start; 0: you have your own pause. |
-| «Общие враги» (Shared enemies) | 1 | 0–1 | 1: every player fights the host's enemies (experimental). Turn it on for every player. |
-| «Зона общих врагов» (Shared enemies zone) | 15 | 0–40 | Applies at the guest. Beyond this distance from the host the guest's own enemies spawn and go for the guest; 0 means never. |
-| «Сбор на босса» (Boss gathering) | 1 | 0–1 | Applies at the guest. 1: moved to the host for the boss wave, after the wave mana is pulled in and the guest goes back; 0: stays put. |
+| «Общие враги» (Shared enemies) | 1 | 0–1 | Host rule. 1: every player fights the host's enemies (experimental). |
+| «Зона общих врагов» (Shared enemies zone) | 15 | 0–40 | Host rule. Beyond this distance from the host the guest's own enemies spawn and go for the guest; 0 means never. |
+| «Сбор на босса» (Boss gathering) | 1 | 0–1 | Host rule. 1: moved to the host for the boss wave, after the wave mana is pulled in and the guest goes back; 0: stays put. |
+| «ХП врагов, ×» (Enemy health) | 1 | 0.5–10 | Host rule. 2: enemies take twice as long to kill, 0.5: half as long. A change mid-battle recalculates living enemies, keeping their share of health. |
+| «Урон врагов, ×» (Enemy damage) | 1 | 0.5–10 | Host rule. 2: enemies take twice as much from the hero. |
 | «Обновлений в секунду» (Updates per second) | 15 | 5–30 | How often your phone tells friends where you are. Higher means allies repeat movement more precisely, but more traffic (about 3 KB/s at 15). 20–30 on a good connection, 10 on a weak one. |
 
 The host's IP address and port are set in the «Кооп» window and saved between launches.
+
 
 ## Version compatibility
 
@@ -179,6 +188,7 @@ The host's IP address and port are set in the «Кооп» window and saved betw
   | Friend's Armageddon | 1.4.8 |
   | Shared enemies | 1.5.0 |
   | Shared pause | 1.6.0 |
+  | Battle rules from the host, enemy health and damage | 1.10.0 |
 
   So install the same, latest version for every player.
 - **Version warning:** since 1.8 the mod also sends its own version. If a friend has a different one, a message appears
@@ -194,7 +204,7 @@ The host's IP address and port are set in the «Кооп» window and saved betw
 - **Minimized game.** Android suspends minimized apps. After 40 seconds without data the server disconnects the player;
   when they return to the game, the mod puts them back in the room with the same number.
 - **Shared pause has no time limit.** If a friend opened the pause menu and walked away from the phone, the others wait
-  until they come back or leave the battle (or turn off «Общая пауза» in your own game).
+  until they come back or leave the battle (or the host turns off «Общая пауза»).
 - **One game per host**, up to 4 players. Connection is by IP only; there's no game discovery on the network.
 - **Shared enemies** is still in progress: the guest's own boss is hidden until the host picks up the obelisk; enemy
   projectiles and some special enemies aren't fully transferred; the first frames of a battle may stutter at the guest

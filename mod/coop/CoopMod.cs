@@ -44,6 +44,8 @@ namespace MagicSurvivalCoop
                 new ModOption { Key = "clockSync", Label = "Общие враги: часы боя гостя по хосту (1 — да, 0 — нет)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
                 new ModOption { Key = "puppetAi", Label = "Копии врагов: анимация и атаки игры (1) или замершие (0)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
                 new ModOption { Key = "chests", Label = "Общие сундуки: кладёт хост, берёт кто первый (1 — да, 0 — нет; выбирает хост в лобби)", Default = 1, Min = 0, Max = 1, Step = 1, Hidden = true },
+                new ModOption { Key = "mobHp", Label = "ХП врагов, ×", Default = 1, Min = Session.MobMulMin, Max = Session.MobMulMax, Step = 0.5 },
+                new ModOption { Key = "mobDmg", Label = "Урон врагов, ×", Default = 1, Min = Session.MobMulMin, Max = Session.MobMulMax, Step = 0.5 },
                 new ModOption { Key = "sendHz", Label = "Обновлений в секунду", Default = 15, Min = 5, Max = 30, Step = 5 },
                 new ModOption { Key = "ip1", Label = "IP 1", Default = 10, Min = 0, Max = 255, Hidden = true },
                 new ModOption { Key = "ip2", Label = "IP 2", Default = 66, Min = 0, Max = 255, Hidden = true },
@@ -164,6 +166,7 @@ namespace MagicSurvivalCoop
             public int LobbyArea = -1, LobbyLevel, LobbyLoop = -1, LobbyButton = -1;
             public bool Ready;
             public bool LobbyChests;
+            public Dictionary<string, double> Rules;   // Друг — хост: его правила боя (HostRules)
             public string Version, VersionWarned;
             public bool VersionKnown;
         }
@@ -208,6 +211,7 @@ namespace MagicSurvivalCoop
             InstallMagicHook();
             InstallWorldHooks();
             InstallLobby();
+            InstallMobScale();
             try { ctx.Before("C_Battle_Manager", "Update", 0, Hook("кадр боя", (self, args) => { if (self != null) _battleMgr = self; FrameStep(); })); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
             ctx.Log($"кооператив {CoopMod.ModVersion} включён, имя «{_myName}»");
@@ -355,6 +359,8 @@ namespace MagicSurvivalCoop
             Safe("общая пауза", _pauseAction);
 
             MaybeSend();
+            UpdateRuleHost();
+            UpdateMobScale();
 
             _ctx.Guard("союзники", UpdateGhosts);
             if (!_inRun) { Safe("стрелка из меню", _arrowAction); Safe("лобби", _lobbyAction); }
@@ -623,6 +629,7 @@ namespace MagicSurvivalCoop
             _entryWaitDone = false; _battleStartSec = Clock.Elapsed.TotalSeconds;
             ResetClock();
             ResetChests();
+            ResetMobScale();
             ResetFrameProfile();
             ResetMarkers();
             _hookErrors.Clear();
@@ -637,6 +644,7 @@ namespace MagicSurvivalCoop
             _ctx.Guard("итог магии", LogMagicSummary);
             _ctx.Guard("итог общих врагов", LogWorldSummary);
             _ctx.Guard("итог кадра", LogFrameProfile);
+            _ctx.Guard("итог множителей врагов", LogMobScale);
             LogHookErrors();
             RestoreGame("конец боя", battleOver: true);
             ResetChests();
@@ -771,7 +779,7 @@ namespace MagicSurvivalCoop
         private const double RareRefreshSec = 2;
         private int _rareLeft = RareSends;
         private double _rareAt = -100;
-        private (string, double, (int, int, int, int, bool, bool)) _rareSent;
+        private (string, double, (int, int, int, int, bool, bool, string)) _rareSent;
         private int _killsLeft, _killsSent = -1;
 
         // Новый игрок или переподключение: получатель мог не знать ни редких полей, ни вида врагов.
@@ -1091,7 +1099,7 @@ namespace MagicSurvivalCoop
 
         private void UpdateHealButton(bool battle)
         {
-            double pct = _ctx.Setting("healPct");
+            double pct = Rule("healPct");
             var target = HealTarget();
             bool show = battle && pct > 0 && target != null;
             if (!show) { if (_healBtn != null) _healBtn.SetVisible(false); return; }
@@ -1112,9 +1120,9 @@ namespace MagicSurvivalCoop
             if (_ctx.Timer.Now < _healReadyAt) return;
             var t = HealTarget();
             if (t == null || !_client.Connected) return;
-            double pct = _ctx.Setting("healPct");
+            double pct = Rule("healPct");
             _client.SendEvent(Protocol.Build(w => { w.WriteString("kind", "heal"); w.WriteString("to", t.Id); w.WriteNumber("pct", pct); }));
-            _healReadyAt = _ctx.Timer.Now + _ctx.Setting("healCd");
+            _healReadyAt = _ctx.Timer.Now + Rule("healCd");
             _ctx.Toast($"Лечение отправлено: {t.Name}", 2);
         }
 
@@ -1179,7 +1187,7 @@ namespace MagicSurvivalCoop
             _winPlayers = UiKit.Label(root, PlayersText(), 30, y, 660, 200, 24, 0);
             y += 210;
 
-            UiKit.Label(root, "Локацию и сложность выбирает хост, персонажа — каждый сам. Гость на экране локации ждёт, " +
+            UiKit.Label(root, "Локацию, сложность и правила боя выбирает хост, персонажа — каждый сам. Гость на экране локации ждёт, " +
                               "пока хост начнёт бой, и входит следом. Кнопка «Лечить» в бою появляется, когда другу плохо.", 30, y, 660, 110, 20, 0);
         }
 
@@ -1248,6 +1256,8 @@ namespace MagicSurvivalCoop
                 if (ver != null) lines.Add(ver);
             }
             if (_partners.Count == 0) lines.Add("Ждём друзей…");
+            var rules = RulesLine();
+            if (rules != null) lines.Add(rules);
             return string.Join("\n", lines);
         }
 
