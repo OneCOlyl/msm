@@ -61,10 +61,15 @@ Mark each one: ✅ works, ❌ doesn't work (what exactly), — not tested (why).
 | 16d | Shared enemies: Terra, special obelisk at battle start | The guest has no obelisk (`особый обелиск: у гостя убран`, special obelisk: removed at the guest), the host has it; the host picks it up: the guest gets the «Obelisk» artifact choice window, mana isn't pulled in |
 | 16e | Shared enemies: artifact merchant after a boss | The merchant appears at the guest together with the host, after the second boss too; the guest's log after the host's obelisk pickup has `Battle_ClearON 0 → 1` |
 | 16f | Shared enemies: spawning of all mob kinds (Terra, up to 5:00) | The guest sees the same mobs of every kind (normal, special, epic, transition) as the host; at 5:00 boss copies exist, no `тип … не создался` (type … not created) in the log |
+| 16g | Shared enemies: an enemy vanishes at the host without dying (pushed into the walls around the host's hero) | The guest's copy disappears without a kill, mana or drops; the host's battle summary counts it in `пропало без смерти` (gone without dying) |
+| 16h | Shared enemies: boss wave, then the merchant | The guest's clock stays no more than 1 s ahead of the host's (`часы: впереди «Имя»`, clock: ahead of "Name", in the guest's log); after an artifact from the merchant the mana is pulled in at the guest too (`мана: хост притянул свою`, mana: the host pulled its own) |
+| 16i | Battle rules from the host: the guest sets other values for shared enemies, pause, heal, friend's magic damage, enemy health and damage | The host's values apply at the guest; the guest's «Кооп» window shows «Правила боя от хоста: …» (Battle rules from the host) |
+| 16j | «ХП врагов, ×» and «Урон врагов, ×» at 2 at the host, then back to 1 | Enemies at the host have twice the health (living ones recalculated at once) and hit both heroes twice as hard; at 1 everything is as before |
 | 17 | Ally health | Under the ally, a health bar like your own hero's; an ally off screen has an arrow in its color pointing at it and a name plate whose green fill shrinks with damage; «погиб» (died) when the friend dies |
 | 18 | Heal | «Лечить» (Heal) button when a friend has less than 70% health, heals 25%, 40 s cooldown |
 | 19 | Friend's magic | Projectiles, Shield, Satellites, Spirits, Electric Zone, Magic Circle and Armageddon of the friend are visible at their ally |
 | 20 | Different screens | The «Кооп», «Лечить» buttons, ally arrows and plates don't cover the game UI on at least two different resolutions |
+| 21 | «Ваше имя» (Your name) field in the «Кооп» window, changed while connected | Friends see the new name right away in their labels and in the «Кооп» window |
 
 ## Logs: what to collect
 

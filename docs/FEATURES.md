@@ -2,7 +2,7 @@
 
 English | [Русский](FEATURES.ru.md)
 
-This description matches mod version **1.7.0**. Changes in each version are in the [release notes](../.github/release_notes.md)
+This description matches mod version **1.10.0** and the unreleased changes. Changes in each version are in the [release notes](../.github/release_notes.md)
 and on the [releases page](https://github.com/OneCOlyl/msm/releases).
 
 ## Contents
@@ -100,7 +100,11 @@ The «Общие враги» (Shared enemies) setting, on by default. The host 
 When updating from 1.6 the mod turns the setting on once; after that the player's choice is kept.
 
 - Guests don't get their own enemies: instead they have copies of the host's enemies in the same places. An enemy killed
-  at the host is killed at the guest too, with experience. A guest's damage to enemies counts at the host.
+  at the host is killed at the guest too, with experience. An enemy that vanished at the host without dying (for
+  example, pushed into the walls around the host's hero) is removed at the guest without a kill, mana or drops. A
+  guest's damage to enemies counts at the host.
+- The guest's battle clock runs no more than 1 second ahead of the host's: during a boss wave the host's clock stops,
+  and the guest's clock waits with it.
 - A guest who moves further from the host than the «Зона общих врагов» (Shared enemies zone)
   setting (15 by default) gets their own enemies: the guest's game spawns them again,
   and they go for the guest. The host doesn't see these enemies; the guest finishes them off alone. When the guest comes
@@ -115,7 +119,8 @@ When updating from 1.6 the mod turns the setting on once; after that the player'
   limit.
 - The boss and obelisk follow the host: when the host picks up the obelisk, the guests' boss wave ends, their clocks align
   with the host, and the guest gets what a pickup would give: a legendary artifact choice and pulled-in mana. After the
-  boss the guest's battle progresses like the host's: enemies get stronger, the artifact merchant appears.
+  boss the guest's battle progresses like the host's: enemies get stronger, the artifact merchant appears. When an
+  artifact from the merchant pulls in all mana at the host, it is pulled in at the guest too.
 - The special obelisk at the start of a battle on Terra exists only at the host. When the host picks it up, the guest
   gets what a pickup would give: an artifact choice and an area change.
 - The host's bosses (for example, the three big bosses on Terra at 5:00) appear at the guest too.
@@ -202,7 +207,8 @@ The host's IP address and port are set in the «Кооп» window and saved betw
 - **No host, no game.** The server runs inside the host's game: if the host closes or minimizes it, everyone else loses
   the connection. The mod reconnects by itself when the host comes back.
 - **Minimized game.** Android suspends minimized apps. After 40 seconds without data the server disconnects the player;
-  when they return to the game, the mod puts them back in the room with the same number.
+  when they return to the game, the mod puts them back in the room with the same number. A shorter network freeze (a
+  tunnel, a hotspot) doesn't disconnect: the server skips outdated player states for that time and keeps sending events.
 - **Shared pause has no time limit.** If a friend opened the pause menu and walked away from the phone, the others wait
   until they come back or leave the battle (or the host turns off «Общая пауза»).
 - **One game per host**, up to 4 players. Connection is by IP only; there's no game discovery on the network.
@@ -231,12 +237,13 @@ encryption.
 
 ## What has been tested
 
-**On two phones** (Android 16 and Android 12, Anywherelan, host and guest), 22.10–01.11.2026: joining by IP, the ally
-and its smooth movement, repeating the friend's magic, Shield, Satellites, Spirits and Electric Zone, the friend's
-Armageddon, shared pause (including a long skill choice), shared battle start, clock catch-up by speeding up, shared
+**On two phones** (Android 16 and Android 12, Anywherelan, host and guest), 22.10–11.11.2026: joining by IP, the ally
+and its smooth movement, repeating the friend's magic (spells, traits, combinations and ultimates both ways), Shield,
+Satellites, Spirits, Electric Zone and doppelgangers, the friend's Armageddon, shared pause (including a long skill choice), shared battle start, clock catch-up by speeding up, shared
 enemies in a battle up to 7:00 with two boss waves, special mobs, the Terra special obelisk, the artifact merchant after
 a boss, 5:00 bosses at the guest, network loss at the guest, VPN switching from Wi-Fi to mobile data and back, the guest
-minimizing the game. Per-version details are in [docs/device-tests/](device-tests/).
+minimizing the game, the player's name, shared chests and the merchant, the version warning, battle rules from the
+host, enemy health and damage. Per-version details are in [docs/device-tests/](device-tests/).
 
 **PC autotests only:** 3 and 4 players, rejecting a fifth, the same player rejoining, turning the mod off mid-battle,
 server limits, client queue overflow, the standalone `coop_server.py` server.

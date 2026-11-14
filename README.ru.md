@@ -106,6 +106,7 @@ bash build.sh
 | [docs/TOOLS.md](docs/TOOLS.ru.md) | Инструменты разработчика: отладочная консоль, чит и полигон (релизы `tools-*`) |
 | [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.ru.md) | Чек-лист проверки релиза на телефонах |
 | [docs/ENEMY_SYNC.md](docs/ENEMY_SYNC.ru.md), [docs/ORBITALS.md](docs/ORBITALS.ru.md), [docs/ARMAGEDDON.md](docs/ARMAGEDDON.ru.md) | Исследования устройства игры |
+| [docs/MAGIC_REPLAY.md](docs/MAGIC_REPLAY.ru.md), [docs/MAGIC_LIST.md](docs/MAGIC_LIST.ru.md) | Как повторяется магия друга; таблицы заклинаний, особенностей, комбинаций и ультимейтов |
 | [.github/release_notes.md](.github/release_notes.md) | Изменения по версиям |
 
 ## Обратная связь

@@ -76,7 +76,7 @@ class Conn:
         if self.closed or self.ending:
             return
         try:
-            # медленный клиент: как очередь на 512 сообщений во встроенном сервере — не копим бесконечно, отключаем
+            # медленный клиент: не копим бесконечно, отключаем. Встроенный сервер сначала пропускает состояния, здесь этого нет
             if self.writer.transport.get_write_buffer_size() > MAX_PENDING_BYTES:
                 self.close()
                 return

@@ -112,6 +112,7 @@ Tested on two phones (host and guest) over Anywherelan. Not yet tested on phones
 | [docs/TOOLS.md](docs/TOOLS.md) | Developer tools: debug console, cheat and test arena (`tools-*` releases) |
 | [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) | Release checklist for testing on phones |
 | [docs/ENEMY_SYNC.md](docs/ENEMY_SYNC.md), [docs/ORBITALS.md](docs/ORBITALS.md), [docs/ARMAGEDDON.md](docs/ARMAGEDDON.md) | Research into the game's internals |
+| [docs/MAGIC_REPLAY.md](docs/MAGIC_REPLAY.md), [docs/MAGIC_LIST.md](docs/MAGIC_LIST.md) | How the friend's spells are repeated; tables of spells, traits, combinations and ultimates |
 | [.github/release_notes.md](.github/release_notes.md) | Changes by version |
 
 ## Feedback

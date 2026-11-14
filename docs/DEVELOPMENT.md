@@ -9,6 +9,7 @@ document: [installation](INSTALL.md) and [connecting](CONNECT.md) are enough for
 
 - [Repository layout](#repository-layout)
 - [Build and tests](#build-and-tests)
+- [Static analysis](#static-analysis)
 - [Testing on a phone](#testing-on-a-phone)
 - [Protocol v2](#protocol-v2)
 - [Publishing a new version](#publishing-a-new-version)
@@ -162,8 +163,8 @@ python tools/lab.py --json r.json perf               # load: 200 enemies, all sp
   different largest scale is marked `ИНФО`: fire and explosions grow during the animation. The host's own spell and the
   guest's own spell must look the same; a projectile kind that appeared at only one of them during the item (a meteor,
   for example) is marked `ИНФО`. The friend's orbit copies (Satellites, Spirits, doppelgangers; `Orbs`) are compared with the caster's objects: count, sprite, size, radius. Shield, Electric Zone, Magic Circle, Armageddon and
-  exceptions in the game log are checked too. There are no enemies, so spells that need a target stay silent (`ИНФО`).
-  `--targets N` puts N standing unkillable enemies at the host for every item. `--place`: after the screenshots the
+  exceptions in the game log are checked too. For every item the host gets standing unkillable enemies (`--targets N`, 3
+  by default); with `--targets 0` spells that need a target stay silent (`ИНФО`). `--place`: after the screenshots the
   friend steps 7 units away and the place is measured: at the friend the projectile must be at the ally, not at the
   friend's hero (at 2 units it is about equally close to both). Also `--kinds` (spells, traits, combos, ults), `--items`
   (numbers separated by commas), `--caster`, `--wait` (how long to wait for the spell), `--after` (how long to watch
@@ -189,7 +190,8 @@ Screenshots of both phones are taken when the magic, the mobs and the chest appe
 the host cast and what the guest saw, and the other way round; which mobs the host and the guest had and when they died)
 go to `dist/lab/<time>/`; `--dir` sets the folder. Before the checks the scenario makes both heroes immortal, turns
 experience off and removes spells. `perf` gives both of them all spells at max, keeps 200 enemies at the
-host for 60 s and prints a table of frame and network numbers for the host and the guest (`--perf-sec`, `--perf-enemies`).
+host for 60 s and prints a table of frame and network numbers for the host and the guest (`--perf-sec`, `--perf-enemies`,
+`--perf-type`).
 
 `lab.py` exits with code 1 on any failure, including no phones or no adb. adb is taken from the `ADB` variable, then from
 `PATH`, then from `%LOCALAPPDATA%\Android\Sdk\platform-tools`. `--json <file>` writes the result of every scenario:
@@ -233,6 +235,10 @@ Error codes: `room_full`, `room_not_found`, `protocol_mismatch`, `server_busy` (
 Embedded server limits: 32 connections, 8 per address, 16 rooms, 60 room joins per minute per address, 30 s to join a
 room after connecting, disconnect after 40 s without data.
 
+A slow client: once 96 lines are queued for it, the embedded server skips new player states and keeps sending events;
+it disconnects the client only when the 512-line queue overflows anyway. `coop_server.py` doesn't skip states and
+disconnects the client when 512 KB are queued.
+
 ## Publishing a new version
 
 Changes between releases go into the `## Не выпущено` (unreleased) section at the top of `.github/release_notes.md`:
@@ -263,3 +269,5 @@ Probe logs and findings about Magic Survival's internals:
 - [ENEMY_SYNC.md](ENEMY_SYNC.md): enemies, spawning, Shared enemies mode.
 - [ORBITALS.md](ORBITALS.md): Shield, Satellites, Spirits (spells without projectiles).
 - [ARMAGEDDON.md](ARMAGEDDON.md): Armageddon.
+- [MAGIC_REPLAY.md](MAGIC_REPLAY.md): how the friend's game repeats spells and which hero fields their look depends on.
+- [MAGIC_LIST.md](MAGIC_LIST.md): tables of spells, traits, combinations and ultimates.
