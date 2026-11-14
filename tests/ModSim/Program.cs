@@ -401,9 +401,22 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     Frames(30);
     Check(Math.Abs(e6.DamageTaken - 7) < 0.01 && e6.Unit_IsLive, $"урон гостя по копии дошёл до врага хоста: {e6.DamageTaken:0.##}");
     Check(P6().Unit_Hp >= 1e5, "здоровье копии снова полное");
-    A.Combat.Enemies.Remove(e6);
+    e6.Unit_Hp = 0; e6.Unit_Death();
     Frames(40);
-    Check(B.Combat.Kills == 1 && !P6().DestroyedSimple && !P6().Unit_IsLive, "враг пропал у хоста — копия убита Unit_Death (гостю — убийство)");
+    Check(B.Combat.Kills == 1 && !P6().DestroyedSimple && !P6().Unit_IsLive, "враг погиб у хоста — копия убита Unit_Death (гостю — убийство)");
+    {
+        var e8 = new FakeEnemy(A, 8); e8.Transform_ObjUnit.position = new Vector3((float)asx + 2, (float)asy + 2, 0);
+        A.Combat.Enemies.Add(e8);
+        FakeEnemy P8() => B.Combat.Enemies.OfType<FakeEnemy>().FirstOrDefault(e => e.Puppet && e.UnitID == 8);
+        var w8 = System.Diagnostics.Stopwatch.StartNew();
+        while (w8.Elapsed.TotalSeconds < 3 && P8() == null) Frames(1);
+        var c8 = P8();
+        int kills8 = B.Combat.Kills;
+        e8.EmitDeath();                                                  // игра зовёт Unit_Death и по живому врагу
+        A.Combat.Enemies.Remove(e8);                                     // как стена DestroyArea: без смерти
+        Frames(40);
+        Check(c8 != null && c8.DestroyedSimple && B.Combat.Kills == kills8, "враг пропал у хоста без смерти — копия убрана без убийства (Unit_Destroy_Simple)");
+    }
     {
         var e7 = new FakeEnemy(A, 7); e7.Transform_ObjUnit.position = new Vector3((float)asx + 1, (float)asy - 2, 0);
         A.Combat.Enemies.Add(e7);
@@ -1249,7 +1262,7 @@ class Player
         _session = mod.GetType().GetField("_session", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(mod);
     }
     public void Tick() { Ctx.GameTime += 0.05; foreach (var f in Ctx.Ticks.ToArray()) Ctx.Guard("tick", f); }
-    public void Emit(string ev) { if (Ctx.Handlers.TryGetValue(ev, out var l)) foreach (var h in l) h(null); }
+    public void Emit(string ev, object payload = null) { if (Ctx.Handlers.TryGetValue(ev, out var l)) foreach (var h in l) h(payload); }
     public void Call(string method)
     {
         if (method == "SafeActionHostNoWindow") { Call("Host"); return; }
@@ -1350,7 +1363,7 @@ class FakeCombat : IEnemies, ICombat
     {
         if (!(e is FakeEnemy fe) || !fe.Unit_IsLive) return false;
         fe.DamageTaken += amount; fe.Unit_Hp -= (float)amount;
-        if (fe.Unit_Hp <= 0) { fe.Unit_IsLive = false; Enemies.Remove(e); Kills++; }
+        if (fe.Unit_Hp <= 0) { fe.Unit_IsLive = false; Enemies.Remove(e); Kills++; fe.EmitDeath(); }
         return true;
     }
     public bool Freeze(IEnemy e, double seconds) => false; public bool Stun(IEnemy e, double seconds) => false;
@@ -1367,7 +1380,8 @@ class FakeEnemy : MonoBehaviour, IEnemy
     public double DamageTaken;
     public Transform Transform_ObjUnitSprite = new Transform { localScale = new Vector3(1, 1, 1) };
     public void Unit_Destroy_Simple() { DestroyedSimple = true; Unit_IsLive = false; _p.Combat.Enemies.Remove(this); }
-    public void Unit_Death() { if (Unit_Hp > 0 || !Unit_IsLive) return; Unit_IsLive = false; _p.Combat.Enemies.Remove(this); _p.Combat.Kills++; }   // как в игре
+    public void Unit_Death() { if (Unit_Hp > 0 || !Unit_IsLive) return; Unit_IsLive = false; _p.Combat.Enemies.Remove(this); _p.Combat.Kills++; EmitDeath(); }   // как в игре
+    public void EmitDeath() => _p.Emit("enemyDeath", this);             // как событие ModKit от хука Unit_Death
     public void Fire(float a = 0, float b = 0) => _p.Ctx.Fire("After C_Battle_EnemyUnit.Start_Unit/3", this, new object[] { UnitID, a, b });   // как хук Harmony
     public float VarA, VarB;
     public int UnitCreateID = 1, ApplyCreateEffectID; public float LineColorR, LineColorG, LineColorB;
@@ -1513,7 +1527,7 @@ class FakeManager
     // как в игре: статические пулы; Create_UnitEnemyBoss берёт из пула боссов (маленький; при 1 заготовке уже не создаёт),
     // погибшие уходят в обычный пул
     public static List<object> List_BattleUnitEnemyBoss_Empty { get; set; } = new() { new object(), new object(), new object() };
-    public static List<object> List_BattleUnitEnemy_Empty { get; set; } = Enumerable.Range(0, 30).Select(_ => new object()).ToList();
+    public static List<object> List_BattleUnitEnemy_Empty { get; set; } = Enumerable.Range(0, 31).Select(_ => new object()).ToList();
     public void Create_UnitEnemyBoss(int id, int num)
     {
         ApplyBossNum++;

@@ -1,4 +1,4 @@
-vjc# Magic Survival — Co-op
+# Magic Survival — Co-op
 
 English | [Русский](README.ru.md)
 

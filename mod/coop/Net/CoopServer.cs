@@ -115,6 +115,8 @@ namespace MagicSurvivalCoop.Net
             public readonly List<Conn> Players = new List<Conn>();
         }
 
+        private const int StateBacklog = 96;
+
         private sealed class Conn
         {
             public string Id;
@@ -134,16 +136,39 @@ namespace MagicSurvivalCoop.Net
             public volatile bool Closed;
             private volatile bool _ending;
 
+            public string CloseReason;
+            public Action<string> Log;
+            private int _statesDropped;
+            private bool _lagging;
+
             public void Send(string line) => Send(Bytes(line));
 
             // Массив может уйти нескольким получателям, его не меняют.
-            public void Send(byte[] bytes)
+            // Сеть замирает на 10 с и дольше (туннель, точка доступа), и очередь на 512 строк переполнялась: игрока отключало.
+            // Состояние каждого игрока заменяет предыдущее, поэтому при длинной очереди новые состояния пропускаются, а события
+            // идут дальше. После затора клиент получит не больше StateBacklog старых состояний
+            public void Send(byte[] bytes, bool state = false)
             {
                 if (Closed || _ending) return;
                 if (Local != null) { Local(bytes); return; }
+                if (state)
+                {
+                    int queued = Out.Count;
+                    if (queued >= StateBacklog)
+                    {
+                        if (_statesDropped++ == 0) _lagging = true;
+                        return;
+                    }
+                    if (_lagging && queued <= StateBacklog / 8)
+                    {
+                        _lagging = false;
+                        Log?.Invoke($"{Id}: затор отправки прошёл, пропущено состояний {_statesDropped}");
+                        _statesDropped = 0;
+                    }
+                }
                 bool ok;
                 try { ok = Out.TryAdd(bytes); } catch (InvalidOperationException) { return; }
-                if (!ok) Close();      // Клиент не успевает читать: отключаем, а не копим память
+                if (!ok) { CloseReason = "не успевает принимать: очередь отправки переполнена"; Close(); }   // Не копим память
             }
 
             public void SendAndClose(string line)
@@ -175,7 +200,7 @@ namespace MagicSurvivalCoop.Net
                 {
                     tcp.NoDelay = true;
                     var ip = (tcp.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "";
-                    var c = new Conn { Id = "p" + Interlocked.Increment(ref _nextId), Tcp = tcp, Stream = tcp.GetStream(), Ip = ip };
+                    var c = new Conn { Id = "p" + Interlocked.Increment(ref _nextId), Tcp = tcp, Stream = tcp.GetStream(), Ip = ip, Log = m => Log(m) };
                     string busy = null;
                     lock (_lock)
                     {
@@ -231,12 +256,12 @@ namespace MagicSurvivalCoop.Net
                 while (_running && !c.Closed && reader.ReadLineBytes(out var buf, out int len)) Process(c, buf, len);
             }
             catch (IOException e) when (e.Message.Contains("строка")) { SendError(c, "message_too_large", "Сообщение слишком большое."); }
-            catch { }
+            catch (Exception e) { c.CloseReason ??= e.Message; }
             finally
             {
                 lock (_lock) { LeaveRoomLocked(c); _conns.Remove(c); }
                 c.Close();
-                Log($"отключение {c.Id}");
+                Log($"отключение {c.Id}{(c.CloseReason != null ? " (" + c.CloseReason + ")" : "")}");
             }
         }
 
@@ -323,7 +348,7 @@ namespace MagicSurvivalCoop.Net
             payload.CopyTo(bytes.AsSpan(prefix.Length + head.Length));
             bytes[bytes.Length - 2] = (byte)'}';
             bytes[bytes.Length - 1] = (byte)'\n';
-            foreach (var p in targets) p.Send(bytes);
+            foreach (var p in targets) p.Send(bytes, isState);
         }
 
         private void ReapLoop()

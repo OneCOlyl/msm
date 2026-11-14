@@ -212,6 +212,7 @@ namespace MagicSurvivalCoop
             InstallWorldHooks();
             InstallLobby();
             InstallMobScale();
+            InstallManaPull();
             try { ctx.Before("C_Battle_Manager", "Update", 0, Hook("кадр боя", (self, args) => { if (self != null) _battleMgr = self; FrameStep(); })); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
             ctx.Log($"кооператив {CoopMod.ModVersion} включён, имя «{_myName}»");
@@ -893,6 +894,7 @@ namespace MagicSurvivalCoop
         private int _slowLogged;
         private double _profileSince;
 
+        private readonly Laps _create = new Laps("заготовка", "вызов игры", "настройка");
         private void FrameLapStart() { _frame.NewFrame(); _send.NewFrame(); _world.NewFrame(); _frame.Start(); }
         private void Lap(int i) => _frame.Lap(i);
 
@@ -915,7 +917,7 @@ namespace MagicSurvivalCoop
 
         private void ResetFrameProfile()
         {
-            _frame.Reset(); _send.Reset(); _world.Reset();
+            _frame.Reset(); _send.Reset(); _world.Reset(); _create.Reset();
             Array.Clear(_partSlow, 0, _partSlow.Length);
             _slowLogged = 0; _slowFrames = 0; _slowFramesCasts = 0; _frameMaxMs = 0;
             _profileSince = Clock.Elapsed.TotalSeconds;
@@ -938,6 +940,7 @@ namespace MagicSurvivalCoop
                      (_partSlow.Sum() > 0 ? "; медленных кадров по частям: " + string.Join(", ", _frame.Names.Select((n, i) => (n, c: _partSlow[i])).Where(x => x.c > 0).Select(x => $"{x.n} {x.c}")) : ""));
             if (_send.Count > 0) _ctx.Log($"отправка за бой ({_send.Count} раз), на одну отправку {_send.Summary()}");
             if (_world.Count > 0) _ctx.Log($"общие враги за бой по частям ({_world.Count} шагов), на шаг {_world.Summary()}");
+            if (_create.Count > 0) _ctx.Log($"создание копии по частям ({_create.Count} копий), на копию {_create.Summary()}");
             if (_client.Connected || _partners.Count > 0) _ctx.Log(_client.Net.Take().Line());
         }
 

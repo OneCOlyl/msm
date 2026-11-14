@@ -137,6 +137,14 @@ A guest's lethal hit: the guest reads a copy's health every 2 frames and sends t
 host's enemy dies from it, its id goes in `eg` of the host's next state, even one without `en`. A copy used to vanish
 0.3–0.6 s after the hit (health every 6 frames, damage every 0.1 s, the dead only in the next enemy send), now in about
 0.15–0.25 s.
+Gone without dying (12.11.2026): `eg` lists every enemy that left the host's alive list, and the guest used to kill each
+copy with `Unit_Death` (kill, mana, drops). In `lab.py perf` the host's game counted 1 kill while the guest counted 2071,
+and one such kill took about 3.8 ms of the guest's frame. The host now also sends `ex`: the ids from `eg` that went
+without a death. The guest removes these copies with `Unit_Destroy_Simple`, and falls back to `Unit_Death` if the copy
+survives it. ModKit's `enemyDeath` event can't be used as is: it fires on every `Unit_Death` call, and the game calls it
+for living enemies too (48,817 events against 2 kills in one run), so the host counts a death only when `Unit_Hp <= 0`
+at the event. Until the first such death in a battle the host sends no `ex`. A copy missing from a full snapshot without
+`eg` is still killed the old way.
 An epic mob (type 6 in the test) is field-wise a normal mob of its type (`UnitCreateID 1`, no outline, varA/varB 0): it is
 special because it spawns in a batch on a circle; the copy at the guest is a normal copy of that type.
 1.6.67: the game also sets a transition mob's strength after `Start_Unit` (type 16: `UnitApply_HpMax_Bonus` 10000,

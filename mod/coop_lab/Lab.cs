@@ -166,6 +166,9 @@ namespace MagicSurvivalLab
             {
                 try { Hooks.AddReplace(_ctx.Id, "C_Battle_AllyUnit", "Unit_Death", 0, (self, args) => null, _immortalHooks); }
                 catch (Exception e) { return "бессмертие: " + Inner(e).Message; }
+                // Без урона здоровье не доходит до 0: при пропуске одной Unit_Death герой до следующего лечения считался погибшим
+                try { Hooks.AddBefore(_ctx.Id, "C_Battle_AllyUnit", "Unit_Damage", 3, (self, args) => NoDamage(args), _immortalHooks); }
+                catch (Exception e) { _ctx.Log("полигон: бессмертие без хука урона: " + Inner(e).Message); }
             }
             else
             {
@@ -174,6 +177,12 @@ namespace MagicSurvivalLab
             }
             _immortal = on;
             return on ? "бессмертие включено" : "бессмертие выключено";
+        }
+
+        private static void NoDamage(object[] a)
+        {
+            if (a == null || a.Length < 1) return;
+            if (a[0] is float) a[0] = 0f; else if (a[0] is double) a[0] = 0d;
         }
 
         private readonly List<Action> _manaHooks = new List<Action>();

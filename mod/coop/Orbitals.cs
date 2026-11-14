@@ -317,6 +317,10 @@ namespace MagicSurvivalCoop
         private static object ItemAt(object coll, int i)
         {
             if (coll == null || i >= Count(coll)) return null;
+            return ItemAtUnchecked(coll, i);
+        }
+        private static object ItemAtUnchecked(object coll, int i)
+        {
             var t = coll.GetType();
             MethodInfo m;
             lock (ItemGetters)

@@ -257,6 +257,30 @@ namespace MagicSurvivalCoop
             catch (Exception e) { _ctx.Log("обелиск: окно артефакта: " + Inner(e).Message); return false; }
         }
 
+        // Выбор артефакта (Button_Artifact_Select) зовёт Start_Rune_Obtain, когда Z_Database.ArtifactType 10 или 11: после
+        // обелиска босса и при покупке у торговца, если с обелиска не подбирали сундук. Сундуки у гостя меняют его
+        // ArtifactType, и после торговца мана тянулась только у хоста. Хост считает такие притягивания, гость повторяет
+        private int _manaPulls, _hostManaPulls = -1;
+        private bool _manaPullWanted;
+        private void InstallManaPull()
+        {
+            try { _ctx.After("C_Battle_AllyUnit", "Start_Rune_Obtain", 0, Hook("мана хоста", (self, a) => NoteManaPull())); }
+            catch (Exception e) { _ctx.Log("притягивание маны хоста не отслеживается: " + e.Message); }
+        }
+        private void NoteManaPull()
+        {
+            if (!_hosting || !_inRun) return;
+            int type = -1;
+            try
+            {
+                var t = TypeOverride?.Invoke("Z_Database") ?? Hooks.FindType("Z_Database");
+                var m = t == null ? null : FindAny(t, "ArtifactType");
+                if (m != null) type = Convert.ToInt32(m.Prop != null ? m.Prop.GetValue(null) : m.Field.GetValue(null));
+            }
+            catch { }
+            if (type == ObeliskItemId || type == ObeliskItemId + 1) _manaPulls++;   // Руну подбора и смерть врага с руной не повторяем
+        }
+
         // Сам обелиск не трогаем: притянутый, он подберётся и даст второй выбор артефакта.
         private double _pulledAt = -100;
         private int PullItems()
