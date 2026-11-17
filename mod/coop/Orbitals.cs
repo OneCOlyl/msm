@@ -34,6 +34,7 @@ namespace MagicSurvivalCoop
             public double[] DopOff;                                   // Двойники друга тройками: x, y от его героя и прозрачность
             public bool Zone, ZoneOn;
             public string ImgZone; public bool ZoneEn = true; public double ZoneA = double.NaN;
+            public int ZoneKids = -1; public string ImgZoneGround;
             public double ShieldDx, ShieldDy = 0.03, ShieldSx = 1, ShieldSy = 1;
             public double ZoneSx = 1, ZoneSy = 1;
             public bool Mc, McOn; public double McS = 1;
@@ -63,6 +64,8 @@ namespace MagicSurvivalCoop
             public bool ZoneScaleFailed;
             public double ZoneSx = double.NaN, ZoneSy = double.NaN;
             public bool? ZoneEnSet; public double ZoneASet = double.NaN;
+            public object[] ZoneKidGos; public int ZoneKidsSet = -1;
+            public readonly List<OrbClone> ZoneGround = new List<OrbClone>();
             public (int, int, int, bool, bool) LastKey;
             public bool HasKey, Hidden, ShieldFailed;
             public double ShieldSx = double.NaN, ShieldSy = double.NaN;
@@ -103,6 +106,15 @@ namespace MagicSurvivalCoop
         private string _myZoneImg; private bool? _myZoneEn; private float _myZoneA = float.NaN;
         private double _myZoneSx = 1, _myZoneSy = 1;
         private double _zoneLookAt;
+        // Особенности зоны включают её дочерние объекты: у Frozen Heart и Fire Aura — «землю» SpecialGround с 6 картинками.
+        // Копию зоны друга игра строит из своей зоны, где они выключены, поэтому включение и картинку земли шлём
+        private static readonly string[] ZoneKidNames = { "ElectricZone_Add01", "ElectricZone_Add02", "ElectricZone_Add03", "ElectricZone_SpecialGround" };
+        private const int ZoneGroundKid = 3;
+        private object _myZoneKidsOf;
+        private object[] _myZoneKids;
+        private object _myZoneGroundSr;
+        private int _myZoneKidMask;
+        private string _myZoneGroundImg;
 
         // Угол спутников идёт с временем «t» того же сообщения. Остальное реже: чтение массивов героя через рефлексию.
         private void RefreshMyOrbits()
@@ -131,6 +143,7 @@ namespace MagicSurvivalCoop
                     var zc = ColorOf(zsr); _myZoneA = zc != null ? zc[3] : float.NaN;
                 }
                 catch { _myZoneImg = null; _myZoneEn = null; _myZoneA = float.NaN; }
+                try { RefreshZoneKids(); } catch { _myZoneKidMask = 0; _myZoneGroundImg = null; }
             }
             try { RefreshMyCircle(); } catch { _myMc = false; }
             _mySpiritOff.Clear();
@@ -185,8 +198,8 @@ namespace MagicSurvivalCoop
             catch (Exception e) { _myDopTr.Clear(); if (++_orbFails <= 6) _ctx.Log("орбиты: двойники: " + Inner(e).Message); }
             try
             {
-                _myOrbSatA = CountTrue(GetMember(hero, "Array_IsSatelliteA_P"), 0);
-                _myOrbSatB = CountTrue(GetMember(hero, "Array_IsSatelliteB_P"), 0);
+                _myOrbSatA = CountShown(GetMember(hero, "Array_IsSatelliteA_P"), GetMember(hero, "Array_Transform_ObjSatellitesA"));
+                _myOrbSatB = CountShown(GetMember(hero, "Array_IsSatelliteB_P"), GetMember(hero, "Array_Transform_ObjSatellitesB"));
                 // Дух считается, если включён флагом и его объект активен
                 _mySpiritTr.Clear();
                 var flags = GetMember(hero, "List_IsSpirit_P");
@@ -250,7 +263,7 @@ namespace MagicSurvivalCoop
             bool none = _myOrbSatA + _myOrbSatB + _myOrbSpirits + _myDopTr.Count == 0 && !_myOrbShield && !_myZone && !_myMc;
             int sig = none ? 0 : HashCode.Combine(
                 HashCode.Combine(_myOrbSatA, _myOrbSatB, _myOrbSpirits, _myOrbShield, _myImgShield, _myImgSatA, _myImgSatB, _myImgSpirit),
-                HashCode.Combine(_myZone, _myZoneOn, _myZoneImg, _myZoneEn, Math.Round(_myZoneA, 2)), CircleSig(), _myDopTr.Count);
+                HashCode.Combine(_myZone, _myZoneOn, _myZoneImg, _myZoneEn, Math.Round(_myZoneA, 2), _myZoneKidMask, _myZoneGroundImg), CircleSig(), _myDopTr.Count);
             double now = Clock.Elapsed.TotalSeconds;
             if (sig == _orbSig && now - _orbSentAt < (none ? NoOrbSendSec : OrbSendSec)) return;
             _orbSig = sig; _orbSentAt = now;
@@ -287,6 +300,8 @@ namespace MagicSurvivalCoop
                 if (_myZoneImg != null) w.WriteString("ezi", _myZoneImg);
                 if (_myZoneEn.HasValue) w.WriteNumber("eze", _myZoneEn.Value ? 1 : 0);
                 if (!float.IsNaN(_myZoneA)) w.WriteNumber("ezc", Math.Round(_myZoneA, 2));
+                w.WriteNumber("ezk", _myZoneKidMask);
+                if (_myZoneGroundImg != null) w.WriteString("ezg", _myZoneGroundImg);
             }
             WriteMyCircle(w);
             w.WriteEndObject();
@@ -334,6 +349,19 @@ namespace MagicSurvivalCoop
             for (int i = from; i < n; i++) if (ItemAt(coll, i) is bool b && b) k++;
             return k;
         }
+        // Комбинация (Frenzy после Nuclear Fusion) выключает родителя спутников, а флаги Array_IsSatellite*_P остаются True
+        private static int CountShown(object flags, object trs)
+        {
+            int n = Count(flags), k = 0;
+            for (int i = 0; i < n; i++)
+            {
+                if (!(ItemAt(flags, i) is bool b && b)) continue;
+                if (trs != null && i < Count(trs) && ItemAt(trs, i) is Transform tr && GetMember(tr.gameObject, "activeInHierarchy") is bool on && !on) continue;
+                k++;
+            }
+            return k;
+        }
+
         private static double FirstAngle(object coll, double hx, double hy, out double radius, out double scale)
         {
             radius = SatRadius; scale = double.NaN;
@@ -673,6 +701,7 @@ namespace MagicSurvivalCoop
             {
                 st.ZoneSx = Protocol.Num(o, "ezx", 1); st.ZoneSy = Protocol.Num(o, "ezy", 1);
                 st.ImgZone = Protocol.Str(o, "ezi"); st.ZoneEn = Protocol.Num(o, "eze", 1) != 0; st.ZoneA = Protocol.Num(o, "ezc", double.NaN);
+                st.ZoneKids = (int)Protocol.Num(o, "ezk", -1); st.ImgZoneGround = Protocol.Str(o, "ezg");
             }
             if (o.TryGetProperty("so", out var so) && so.ValueKind == JsonValueKind.Array)
             {
@@ -775,6 +804,72 @@ namespace MagicSurvivalCoop
         }
 
         // Копия только для вида, поэтому коллайдер зоны выключаем.
+        private static object[] ChildGos(object tr, string[] names)
+        {
+            var res = new object[names.Length];
+            if (tr == null) return res;
+            var getChild = tr.GetType().GetMethod("GetChild", new[] { typeof(int) });
+            int n = Convert.ToInt32(GetMember(tr, "childCount") ?? 0);
+            for (int i = 0; i < n && getChild != null; i++)
+            {
+                var cgo = GetMember(getChild.Invoke(tr, new object[] { i }), "gameObject");
+                int k = Array.IndexOf(names, NameOf(cgo));
+                if (k >= 0) res[k] = cgo;
+            }
+            return res;
+        }
+
+        private static List<object> ChildList(object go)
+        {
+            var res = new List<object>();
+            var tr = GetMember(go, "transform");
+            if (tr == null) return res;
+            var getChild = tr.GetType().GetMethod("GetChild", new[] { typeof(int) });
+            int n = Convert.ToInt32(GetMember(tr, "childCount") ?? 0);
+            for (int i = 0; i < n && getChild != null; i++) res.Add(GetMember(getChild.Invoke(tr, new object[] { i }), "gameObject"));
+            return res;
+        }
+
+        private void RefreshZoneKids()
+        {
+            if (!ReferenceEquals(_myZoneKidsOf, _myZoneObj))
+            {
+                _myZoneKidsOf = _myZoneObj;
+                _myZoneKids = ChildGos(GetMember(_myZoneObj, "transform"), ZoneKidNames);
+                var g = _myZoneKids[ZoneGroundKid];
+                var first = g == null ? null : ChildList(g).FirstOrDefault();
+                _myZoneGroundSr = first == null ? null : RendererOf(first);
+            }
+            int mask = 0;
+            for (int i = 0; i < _myZoneKids.Length; i++)
+                if (_myZoneKids[i] != null && Convert.ToBoolean(GetMember(_myZoneKids[i], "activeSelf") ?? false)) mask |= 1 << i;
+            _myZoneKidMask = mask;
+            _myZoneGroundImg = (mask & (1 << ZoneGroundKid)) != 0 && _myZoneGroundSr != null ? NameOf(SpriteOf(_myZoneGroundSr)) : null;
+        }
+
+        private void ApplyZoneKids(OrbVisuals v, OrbState st, double now)
+        {
+            if (st.ZoneKids < 0) return;
+            try
+            {
+                if (v.ZoneKidGos == null)
+                {
+                    v.ZoneKidGos = ChildGos(v.Zone.Tr, ZoneKidNames);
+                    var g = v.ZoneKidGos[ZoneGroundKid];
+                    if (g != null) foreach (var c in ChildList(g)) v.ZoneGround.Add(new OrbClone { Go = c, Tr = GetMember(c, "transform") as Transform });
+                }
+                if (v.ZoneKidsSet != st.ZoneKids)
+                {
+                    v.ZoneKidsSet = st.ZoneKids;
+                    for (int i = 0; i < v.ZoneKidGos.Length; i++)
+                        if (v.ZoneKidGos[i] != null) SetActive(v.ZoneKidGos[i], (st.ZoneKids & (1 << i)) != 0);
+                }
+                if ((st.ZoneKids & (1 << ZoneGroundKid)) != 0)
+                    foreach (var c in v.ZoneGround) ApplyImage(c, st.ImgZoneGround, now, "земля электрозоны");
+            }
+            catch (Exception e) { if (++_orbFails <= 6) _ctx.Log("орбиты: части электрозоны: " + Inner(e).Message); }
+        }
+
         private void DisableChild(OrbClone c, string name)
         {
             try
@@ -892,6 +987,7 @@ namespace MagicSurvivalCoop
                         var c = ColorOf(v.Zone.Sr);
                         if (c != null) { c[3] = (float)st.ZoneA; SetColor(v.Zone.Sr, c); }
                     }
+                    ApplyZoneKids(v, st, now);
                 }
                 UpdateDoppels(p, v, st, hero, now);
                 UpdateCircleCopy(p, v, st, hero, now);

@@ -9,6 +9,7 @@ namespace MagicSurvivalCoop
     {
         private int _hostClock = -1, _hostBossWave, _hostBwPrev;
         private int _hostAreaChange = -1;                // AreaChangeNum хоста, растёт после каждого его босса
+        private int _hostObeliskType = 10;              // ArtifactType хоста при подъёме обелиска: 11 у сломанного
         private int _hostObelisk = -1, _hostObPrev = -1; // ApplyObeliskON хоста: 1 → 0 значит, что хост поднял обелиск
         private bool _hostHadBoss;
         private bool _hostPicked;                        // Гость должен получить то же, что хост за подбор (ObeliskSync.cs)
@@ -19,9 +20,9 @@ namespace MagicSurvivalCoop
         {
             _hostClock = -1; _hostBossWave = 0; _hostClockAt = -100; _hostBwPrev = 0;
             _clockCheckAt = 0; _clockHeld = 0;
-            _manaPulls = 0; _hostManaPulls = -1; _manaPullWanted = false;
+            _manaPulls = 0; _partnerManaPulls.Clear(); _manaPullWanted = false;
             _clockSent = (-1, -1, -1, -1); _clockSentAt = -100;
-            _hostObelisk = _hostObPrev = -1; _hostPicked = false; _bossHold = false; _clockColor = null;
+            _hostObelisk = _hostObPrev = -1; _hostObeliskType = ObeliskItemId; _hostPicked = false; _bossHold = false; _clockColor = null;
             _treasureScanAt = 0; _treasureGone.Clear(); _hostHadBoss = false; _treasureRewards = 0;
         }
 
@@ -50,16 +51,21 @@ namespace MagicSurvivalCoop
             if ((c, bw, ob, ac).Equals(_clockSent) && now - _clockSentAt < ClockSendSec) return;
             _clockSent = (c, bw, ob, ac); _clockSentAt = now;
             w.WriteNumber("tm", c);
-            if (_hosting && _manaPulls > 0) w.WriteNumber("mp", _manaPulls);
+            if (_manaPulls > 0) w.WriteNumber("mp", _manaPulls);
             w.WriteNumber("bw", bw);
             if (ob >= 0) w.WriteNumber("ob", ob);
             if (ac >= 0) w.WriteNumber("ac", ac);
+            if (_hosting) { int at = ArtifactTypeNow(); if (at == ObeliskItemId || at == BrokenObeliskType) w.WriteNumber("at", at); }
             if (_hosting) WriteBossGround(w);
         }
 
         private void ReadClock(Partner p, JsonElement s)
         {
-            if (_hosting || !s.TryGetProperty("tm", out _)) return;
+            if (!s.TryGetProperty("tm", out _)) return;
+            int mp = (int)Protocol.Num(s, "mp", 0);
+            if (_partnerManaPulls.TryGetValue(p, out var mp0) && mp > mp0) _manaPullWanted = true;
+            _partnerManaPulls[p] = mp;
+            if (_hosting) return;
             if (_worldHost != null && p != _worldHost) return;
             _hostClock = (int)Protocol.Num(s, "tm", -1);
             _hostBossWave = (int)Protocol.Num(s, "bw", 0);
@@ -69,11 +75,8 @@ namespace MagicSurvivalCoop
             _hostBwPrev = _hostBossWave;
             _hostAreaChange = (int)Protocol.Num(s, "ac", -1);
             _hostObelisk = (int)Protocol.Num(s, "ob", -1);
-            if (_hostObPrev == 1 && _hostObelisk == 0) _hostPicked = true;
+            if (_hostObPrev == 1 && _hostObelisk == 0) { _hostPicked = true; _hostObeliskType = (int)Protocol.Num(s, "at", ObeliskItemId); }
             _hostObPrev = _hostObelisk;
-            int mp = (int)Protocol.Num(s, "mp", 0);
-            if (_hostManaPulls >= 0 && mp > _hostManaPulls) _manaPullWanted = true;
-            _hostManaPulls = mp;
             ReadBossGround(s);
         }
 
@@ -83,14 +86,14 @@ namespace MagicSurvivalCoop
             _clockCheckAt = now + 0.25;
             if (MyClock() < 0) return;
             TreasureStep(now);
-            if (_hosting || !_worldActive || _ctx.Setting("clockSync") <= 0 || _hostClock < 0 || now - _hostClockAt > 1.5) return;
-            GuestBossStep();
-            HoldClockBehindHost();
             if (_manaPullWanted && !OwnPause())
             {
                 _manaPullWanted = false;
-                if (now - _pulledAt > 3) _ctx.Log($"мана: хост притянул свою — притягиваю у себя ({PullItems()} предметов)");
+                if (now - _pulledAt > 3) _ctx.Log($"мана: друг притянул свою — притягиваю у себя ({PullItems()} предметов)");
             }
+            if (_hosting || !_worldActive || _ctx.Setting("clockSync") <= 0 || _hostClock < 0 || now - _hostClockAt > 1.5) return;
+            GuestBossStep();
+            HoldClockBehindHost();
         }
 
         // На босс-волне часы хоста стоят, а у гостя своей волны нет, и его часы уходили вперёд на 20–25 с. Секунда запаса

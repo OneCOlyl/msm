@@ -54,7 +54,7 @@ namespace MagicSurvivalCoop
             {
                 var obj = e.Raw;
                 var key = obj == null ? null : KeyOf(obj);
-                if (key == null || _puppetKeys.Contains(key) || _forwardKeys.Contains(key)) continue;
+                if (key == null || IsPuppetKey(key) || _forwardKeys.Contains(key)) continue;
                 float hm = UnitFloat(obj, key, "UnitApply_HpMax") ?? 0f;
                 if (hm <= 0) continue;
                 bool known = _hpSet.TryGetValue(key, out var set);

@@ -10,6 +10,7 @@ namespace MagicSurvivalCoop
     internal sealed partial class Session
     {
         private const int ObeliskItemId = 10;            // Z_Database.ArtifactType легендарных артефактов после обелиска
+        private const int BrokenObeliskType = 11;        // ArtifactType сломанного обелиска
         private const int ObeliskObjType = 4;            // Type_ObjItem обелиска
         private const string ObeliskName = "18";
         private static MethodInfo _findObjectsOfType, _il2cppTypeOf;
@@ -158,11 +159,14 @@ namespace MagicSurvivalCoop
             // Особый обелиск Terra лежит с начала боя: артефакты вида 9, смена области, ману не притягивает. Особый только первый,
             // пока у хоста не было босс-волны. По часам нельзя: на Terra босс в 2:30
             bool special = reward && !_hostHadBoss && _treasureRewards == 0;
-            bool artifact = false, legend = false;
+            bool artifact = false, legend = false, broken = false;
             if (reward)
             {
                 if (special) _treasureRewards++;
-                artifact = GiveArtifactChoice(special ? TreasureType : ObeliskItemId, out legend);
+                // Сломанный обелиск даёт окно вида 11, обычный — 10; Create_Artifact меняет область при обоих
+                int type = special ? TreasureType : _hostObeliskType == BrokenObeliskType ? BrokenObeliskType : ObeliskItemId;
+                artifact = GiveArtifactChoice(type, out legend);
+                broken = type == BrokenObeliskType;
             }
             bool area = artifact && legend;
             if (!area)
@@ -195,7 +199,7 @@ namespace MagicSurvivalCoop
             }
             int pulled = special ? 0 : PullItems();
             _ctx.Log($"{(special ? "особый " : "")}обелиск: хост поднял свой — у меня {(wave ? "босс-волна снята" : "босс-волны не было")}, часы {before / 60}:{before % 60:00} → {target / 60}:{target % 60:00} (у хоста {_hostClock / 60}:{_hostClock % 60:00}), " +
-                     $"смена области {(area ? $"{acBefore} → {MyAreaChange()}" : "не вышла")}, {(artifact ? "выбор артефакта" + (legend ? (special ? " (вид 9)" : " (легендарные)") : "") : "окна артефакта нет")}, " +
+                     $"смена области {(area ? $"{acBefore} → {MyAreaChange()}" : "не вышла")}, {(artifact ? "выбор артефакта" + (legend ? (special ? " (вид 9)" : broken ? " (сломанный обелиск, вид 11)" : " (легендарные)") : "") : "окна артефакта нет")}, " +
                      $"притянуто предметов {pulled}, вступление {MyEnforce():0.00}");
         }
 
@@ -241,8 +245,17 @@ namespace MagicSurvivalCoop
         private void KillHeldQuietly()
         {
             _heldNew.Clear();
-            foreach (var e in _held) DestroySimple(e, false);
-            if (_held.Count > 0) _ctx.Log($"обелиск: свой спрятанный босс гостя убран без смерти ({_held.Count})");
+            int peace = 0;
+            foreach (var e in _held)
+            {
+                try { SetActive(GetMember(e, "Obj_EnemyPos"), true); } catch { }   // Объект пула станет другим врагом
+                DestroySimple(e, false);
+                // Боссов Unit_Destroy_Simple не берёт: они оставались спрятанными до конца боя и держали заготовки боссов
+                if (!UnitAlive(e, KeyOf(e))) continue;
+                try { CallMethod(e, "Unit_Disappear_Peace"); peace++; }
+                catch (Exception ex) { _ctx.Log("обелиск: убрать своего босса: " + Inner(ex).Message); }
+            }
+            if (_held.Count > 0) _ctx.Log($"обелиск: свой спрятанный босс гостя убран без смерти ({_held.Count}, из них Unit_Disappear_Peace {peace})");
             _held.Clear(); _heldKeys.Clear();
         }
 
@@ -258,27 +271,33 @@ namespace MagicSurvivalCoop
         }
 
         // Выбор артефакта (Button_Artifact_Select) зовёт Start_Rune_Obtain, когда Z_Database.ArtifactType 10 или 11: после
-        // обелиска босса и при покупке у торговца, если с обелиска не подбирали сундук. Сундуки у гостя меняют его
-        // ArtifactType, и после торговца мана тянулась только у хоста. Хост считает такие притягивания, гость повторяет
-        private int _manaPulls, _hostManaPulls = -1;
+        // обелиска босса и при покупке у торговца, если с обелиска не подбирали сундук. Подобранный сундук меняет
+        // ArtifactType, и после торговца мана тянулась только у одного. Каждый считает свои притягивания, друзья повторяют
+        private int _manaPulls;
+        private readonly Dictionary<Partner, int> _partnerManaPulls = new Dictionary<Partner, int>();
         private bool _manaPullWanted;
         private void InstallManaPull()
         {
             try { _ctx.After("C_Battle_AllyUnit", "Start_Rune_Obtain", 0, Hook("мана хоста", (self, a) => NoteManaPull())); }
             catch (Exception e) { _ctx.Log("притягивание маны хоста не отслеживается: " + e.Message); }
         }
-        private void NoteManaPull()
+        private int ArtifactTypeNow()
         {
-            if (!_hosting || !_inRun) return;
-            int type = -1;
             try
             {
                 var t = TypeOverride?.Invoke("Z_Database") ?? Hooks.FindType("Z_Database");
                 var m = t == null ? null : FindAny(t, "ArtifactType");
-                if (m != null) type = Convert.ToInt32(m.Prop != null ? m.Prop.GetValue(null) : m.Field.GetValue(null));
+                if (m != null) return Convert.ToInt32(m.Prop != null ? m.Prop.GetValue(null) : m.Field.GetValue(null));
             }
             catch { }
-            if (type == ObeliskItemId || type == ObeliskItemId + 1) _manaPulls++;   // Руну подбора и смерть врага с руной не повторяем
+            return -1;
+        }
+
+        private void NoteManaPull()
+        {
+            if (!_inRun) return;
+            int type = ArtifactTypeNow();
+            if (type == ObeliskItemId || type == ObeliskItemId + 1) { _manaPulls++; _pulledAt = Clock.Elapsed.TotalSeconds; }   // Руну подбора и смерть врага с руной не повторяем
         }
 
         // Сам обелиск не трогаем: притянутый, он подберётся и даст второй выбор артефакта.

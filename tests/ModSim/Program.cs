@@ -582,9 +582,12 @@ Console.WriteLine("2з. общие враги: у гостя — копии вр
     {   // своя босс-волна гостя: его босс прячется (без ИИ, далеко); хост победил своего — босс гостя не убит
         am.Battle_ClearWaveON = 1; bm.Battle_ClearWaveON = 1;
         Frames(15);
+        B.Emit("bossSpawn", new ModKit.EventData { ["unitId"] = 50 });
         var boss = new FakeEnemy(B, 50); boss.Transform_ObjUnit.position = B.Combat.Pos; B.Combat.Enemies.Add(boss); boss.Fire();
+        var waveMob = new FakeEnemy(B, 19); waveMob.Transform_ObjUnit.position = B.Combat.Pos; B.Combat.Enemies.Add(waveMob); waveMob.Fire();
         Frames(20);
         Check(!boss.DestroyedSimple && boss.Unit_IsLive && boss.CoroutinesStopped, "свой босс гостя не убран, а спрятан (без ИИ)");
+        Check(waveMob.DestroyedSimple && !waveMob.CoroutinesStopped, "моб своей босс-волны не прячется, а убран без смерти (держал бы заготовку босса)");
         Check(Math.Abs(boss.Transform_ObjUnit.position.x - B.Combat.Pos.x) > 100, "и стоит далеко от героя");
         am.Battle_ClearWaveON = 0;                                          // хост победил своего босса
         Frames(30);
@@ -1087,6 +1090,15 @@ Console.WriteLine("7. выключение мода посреди боя (об�
               $"обычный обелиск — у гостя EnemyLevelUp перезапущена один раз (стоп {gm.Stopped.Count(n => n == "EnemyLevelUp")}, старт {gm.Coroutines.Count(n => n == "EnemyLevelUp")}): без неё EnemyLevelNum стоит и продавца нет");
         Check(gam.Created == 2 && Z_Database.ArtifactType == 10 && mana.Pulled == 1,
               $"второй обелиск (после босса в 2:30) — обычный: артефакты вида {Z_Database.ArtifactType}, мана притянута {mana.Pulled} раз");
+        // третий — сломанный: у хоста окно вида 11, у гостя тоже. Z_Database в имитации один на двоих, поэтому сверяем и тип,
+        // который гость запомнил от хоста
+        hm.Time_Min = gm.Time_Min = 5; hm.Time_Sec = gm.Time_Sec = 0;
+        hm.Battle_ClearWaveON = gm.Battle_ClearWaveON = 1; Run(1);
+        hm.Battle_ClearWaveON = 0; hm.ApplyObeliskON = gm.ApplyObeliskON = 1; Until(() => (int)G.Get("_hostObelisk") == 1);
+        Z_Database.ArtifactType = 11; hm.ApplyObeliskON = 0; hm.Time_Sec = 1;   // хост поднял сломанный обелиск
+        Until(() => gam.Created == 3);
+        Check(gam.Created == 3 && (int)G.Get("_hostObeliskType") == 11 && Z_Database.ArtifactType == 11,
+              $"хост поднял сломанный обелиск — у гостя окно вида 11 (окон {gam.Created}, тип от хоста {G.Get("_hostObeliskType")}, ArtifactType {Z_Database.ArtifactType})");
         sess.GetField("FindAllOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
         sess.GetField("TypeOverride", BindingFlags.NonPublic | BindingFlags.Static).SetValue(null, null);
     }
