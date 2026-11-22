@@ -114,7 +114,7 @@ namespace MagicSurvivalCoop
         private bool _directWrite = true;
         private int _writeFails;
         private Type _compType;
-        private FieldInfo _compTr;
+        private FieldInfo _compTr, _compSr;
         private Transform _heroTr;
         private bool _heroTrTried;
         private double _heroTrRetryAt;
@@ -159,6 +159,7 @@ namespace MagicSurvivalCoop
             public OrbVisuals OrbVis;
             public ICompanion Ghost;
             public SpriteRenderer GhostSr;
+            public int Skin = -1;              // AUnit<N>: вид героя друга
             public int GhostSpell = -1;
             public double NextSpawn;
             public Marker Mk;
@@ -217,7 +218,7 @@ namespace MagicSurvivalCoop
             InstallManaPull();
             try { ctx.Before("C_Battle_Manager", "Update", 0, Hook("кадр боя", (self, args) => { if (self != null) _battleMgr = self; FrameStep(); })); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
-            try { ctx.After("C_Battle_Manager", "Update", 0, Hook("кадр боя: слежение", (self, args) => SpectateVisualStep())); _specAfterHook = true; }
+            try { ctx.After("C_Battle_Manager", "Update", 0, Hook("кадр боя: слежение", (self, args) => { SpectateVisualStep(); ApplyAllySkins(); })); _specAfterHook = true; }
             catch (Exception e) { ctx.Log("слежение: хук вида после кадра недоступен: " + e.Message); }
             ctx.Log($"кооператив {CoopMod.ModVersion} включён, имя «{_myName}»");
             ctx.Guard("кнопка в меню", ShowMenuButton);   // Мод могли включить прямо в главном меню
@@ -719,6 +720,10 @@ namespace MagicSurvivalCoop
             if (!rare.Equals(_rareSent)) { _rareSent = rare; _rareLeft = RareSends; }
             bool writeRare = _rareLeft > 0 || nowS - _rareAt >= RareRefreshSec;
             if (writeRare) { if (_rareLeft > 0) _rareLeft--; _rareAt = nowS; }
+            int skin = battle ? MySkin() : _mySkin;
+            if (skin != _skinSent) { _skinSent = skin; _skinLeft = RareSends; }
+            bool writeSkin = writeRare || _skinLeft > 0;
+            if (_skinLeft > 0) _skinLeft--;
             if (_kills != _killsSent) { _killsSent = _kills; _killsLeft = RareSends; }
             bool writeKills = writeRare || _killsLeft > 0;
             if (_killsLeft > 0) _killsLeft--;
@@ -731,6 +736,7 @@ namespace MagicSurvivalCoop
             w.WriteStartObject("state");
             {
                 if (writeRare) { w.WriteString("name", _myName); w.WriteString("ver", _version); }
+                if (writeSkin) WriteSkin(w, skin);
                 w.WriteNumber("run", _inRun ? 1 : 0);
                 w.WriteNumber("battle", battle ? 1 : 0);
                 w.WriteNumber("paused", _spells.Paused ? 1 : 0);
@@ -844,6 +850,7 @@ namespace MagicSurvivalCoop
                     if (hp.HasValue) PlaceGhost(p, 0.05, hp.Value.x, hp.Value.y, hp.Value.z, false);
                 }
             }
+            ApplyAllySkins();
         }
 
         private void FrameStep()
@@ -1078,7 +1085,7 @@ namespace MagicSurvivalCoop
             try
             {
                 var t = p.Ghost.GetType();
-                if (t != _compType) { _compType = t; _compTr = t.GetField("Tr", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
+                if (t != _compType) { _compType = t; _compTr = t.GetField("Tr", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); _compSr = t.GetField("Sr", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
                 p.GhostTr = _compTr?.GetValue(p.Ghost) as Transform;
             }
             catch { p.GhostTr = null; }

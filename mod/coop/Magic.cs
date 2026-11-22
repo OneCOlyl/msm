@@ -145,6 +145,7 @@ namespace MagicSurvivalCoop
             ResetOrbits();
             _sentById.Clear(); _castsDone = 0; _castsDropped = 0; _levels.Clear();
             _lookAt = -1; _lookSentAt = -1; Array.Fill(_myLook, double.NaN); _lookHero = null;
+            _mySkin = -1; _skinSent = -1; _skinLeft = 0; _skinScanAt = -100; _skinRescans = 3; _skinMissAt.Clear();
             _castCost.Clear(); _frameMaxMs = 0; _slowFrames = 0; _slowFramesCasts = 0;
             foreach (var p in _partners.Values) p.Casts.Clear();
         }
@@ -420,6 +421,7 @@ namespace MagicSurvivalCoop
 
         private static void ReadLook(Partner p, JsonElement s)
         {
+            if (s.TryGetProperty("sk", out _)) p.Skin = (int)Protocol.Num(s, "sk", -1);
             if (!s.TryGetProperty("fx", out var a) || a.ValueKind != JsonValueKind.Array || a.GetArrayLength() < OldLookFields) return;
             var look = p.Look ??= new double[LookFields.Length];
             int i = 0;

@@ -662,7 +662,7 @@ namespace MagicSurvivalCoop
                     if (nm == null || _sprites.ContainsKey(nm)) continue;
                     if (nm.IndexOf("Shield", StringComparison.OrdinalIgnoreCase) < 0 && nm.IndexOf("Satellite", StringComparison.OrdinalIgnoreCase) < 0
                         && nm.IndexOf("Spirit", StringComparison.OrdinalIgnoreCase) < 0 && nm.IndexOf("ElectricZone", StringComparison.OrdinalIgnoreCase) < 0
-                        && nm.IndexOf("MagicCircle", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        && nm.IndexOf("MagicCircle", StringComparison.OrdinalIgnoreCase) < 0 && !nm.StartsWith(SkinPrefix, StringComparison.Ordinal)) continue;
                     if (sp is IntPtr pp) PinOnce(pp);
                     _sprites[nm] = sp; kept++;
                 }

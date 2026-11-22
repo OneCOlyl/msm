@@ -20,8 +20,8 @@ and on the [releases page](https://github.com/OneCOlyl/msm/releases).
 
 Each player plays in **their own** battle: their own enemies, level, spells, artifacts and experience. Enemies, damage
 and leveling are computed inside the game's closed code, so the mod doesn't make a fully shared battle. A friend comes
-to your battle as an **ally**: a colored copy of the hero that moves and casts the same way the friend does in their
-own game.
+to your battle as an **ally**: a copy of the friend's character that moves and casts the same way the friend does in
+their own game.
 
 The exception is the experimental [Shared enemies](#shared-enemies-experimental) mode: in it every player fights the
 host's enemies.
@@ -56,6 +56,8 @@ The host picks the area, difficulty and mode (normal or Infinite Mode). Each pla
 - Friends who are in a battle right now appear in your battle as allies. An ally follows the friend's path; movement is
   smooth because the mod fills in the path between updates.
 - An ally's color depends on the player number: 1 gold, 2 light blue, 3 green, 4 pink.
+- An ally looks like the friend's character. Characters with their own look (schools and subjects) keep it in your
+  battle; the animation frame is taken from your own hero, so the ally walks and turns with you.
 - An ally **repeats the friend's magic**: every projectile of the friend's hero (Fireball, Meteor, Lightning and most
   other spells) is fired from the ally in your game. Size, area, speed and number of projectiles come from the friend's
   hero, so their upgrades and combinations look the same as in their game. Damage of repeated spells is computed from
@@ -146,6 +148,7 @@ When updating from 1.6 the mod turns the setting on once; after that the player'
 |---|---|
 | Hero position | Offset from the battle start point, 15 times per second (the «Обновлений в секунду», Updates per second, setting), with a timestamp for smooth movement |
 | Health, death, kills | In every state update |
+| Character appearance | The character's appearance number in the state update; the ally uses it |
 | Battle entry, pause, skill choice window | In every state update; shared pause and shared battle start are built on this |
 | Battle clock | In every state update during a battle |
 | Spells | Fired projectiles, in batches of events; the friend's game repeats each one from the ally. The hero's projectile size, area, speed and number once a second in the state update |

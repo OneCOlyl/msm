@@ -7,3 +7,7 @@ stubs/out/
 __pycache__/
 .ruff_cache/
 coop_cheat_src/
+decompiled/
+/hero.cs
+/Z_Database.cs
+/A_MainMenuInformation.cs

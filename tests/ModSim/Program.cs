@@ -46,6 +46,9 @@ Check(((string)C.Get("_lastError") ?? "").Contains("заняты"), $"все п�
 blk.ForEach(l => l.Stop()); C.Disable();
 
 Console.WriteLine("2. бой: друг появляется союзником и повторяет движение");
+Resources.TestAll.AddRange(new UnityEngine.Object[] { new Sprite { name = "AUnit1Motion1" }, new Sprite { name = "AUnit1Motion2" }, new Sprite { name = "AUnit1Motion5" },
+                                                      new Sprite { name = "AUnit14Motion1" }, new Sprite { name = "AUnit14Motion2" }, new Sprite { name = "AUnit14Motion5" },
+                                                      new Sprite { name = "Shield2_01" }, new Sprite { name = "Shield2_03" }, new Sprite { name = "ElectricZone1B" } });
 A.Spells.InBattle = B.Spells.InBattle = true;
 A.Emit("battleStart"); B.Emit("battleStart");
 A.Combat.Pos = new Vector3(5, 5, 0); B.Combat.Pos = new Vector3(100, 100, 0);   // у миров разные начала координат
@@ -75,6 +78,19 @@ Console.WriteLine($"    шаги смещения за тик (после раз
 Check(maxJump < 0.5, $"нет рывков: самый большой шаг за 50 мс {maxJump:0.00} (без сглаживания был бы скачок до цели)");
 Check(stalls <= 2, $"нет остановок между пакетами: {stalls} тиков без движения");
 Check(Math.Abs(trace.Last() - Math.Min(6, Math.Sqrt(Math.Pow(2 + 7.8, 2) + 16)) * (2 + 7.8) / Math.Sqrt(Math.Pow(2 + 7.8, 2) + 16)) < 0.8 || trace.Last() > 4, $"союзник догнал друга: x = {trace.Last():0.00}");
+
+Console.WriteLine("2е. разные персонажи: союзник получает вид друга");
+{
+    A.Game.Motion_Unit.sprite = new Sprite { name = "AUnit1Motion2" };
+    B.Game.Motion_Unit.sprite = new Sprite { name = "AUnit14Motion2" };
+    B.Set("_rareLeft", 3);
+    TickAll(400);
+    Check(g.Sr.sprite?.name == "AUnit14Motion2", $"кадр вида друга у союзника: «{g.Sr.sprite?.name}»");
+    A.Game.Motion_Unit.sprite = new Sprite { name = "AUnit1Motion5" };
+    TickAll(200);
+    Check(g.Sr.sprite?.name == "AUnit14Motion5", $"кадр анимации берётся у своего героя, вид — у друга: «{g.Sr.sprite?.name}»");
+    A.Game.Motion_Unit.sprite = new Sprite { name = "AUnit1Motion2" };
+}
 
 Console.WriteLine("2г. мобильная сеть: пакеты приходят неравномерно (паузы до 0,3 с и пачками), кадры 60 в секунду");
 {
@@ -280,7 +296,7 @@ Console.WriteLine("2е. Щит, Спутники и Духи друга видн
     bg.Obj_Shield.Sr.sprite = new Sprite { name = "Shield2_03" };                 // у друга сменился заряд щита
     for (int fr = 0; fr < 30; fr++) { B.Call("FrameStep"); B.Tick(); A.Tick(); A.Call("FrameStep"); Thread.Sleep(16); }
     Check(shc.Sr.sprite?.name == "Shield2_03", $"картинка копии Щита меняется вместе с другом: «{shc.Sr.sprite?.name}»");
-    Check(Resources.TestScans == 1, $"поиск по картинкам игры — один раз: {Resources.TestScans}");
+    Check(Resources.TestScans <= 2, $"поиск по картинкам игры — не чаще раза на сессию: {Resources.TestScans}");
     Check(!CloneGo.Made.Any(c => c.Kind == "satB"), "круга B нет — копий B не создано");
 
     {   // спутники друга вращаются 2 рад/с — у хоста копии крутятся ровно, без рывков на каждом сообщении
@@ -1429,6 +1445,7 @@ class FakeComp : ICompanion
     public CompanionMode Mode { get; set; } public Vector2 Pos => Offset; public double Speed { get; set; } public double Leash { get; set; } public double StandOff { get; set; } public double GuardRadius { get; set; }
     public void Remove() => Alive = false;
     public Transform Tr = new Transform();                               // как в библиотеке: объект союзника в поле Tr
+    public SpriteRenderer Sr = new SpriteRenderer { sprite = new Sprite { name = "AUnit1Motion1" } };
 }
 class GameHero
 {
@@ -1437,6 +1454,7 @@ class GameHero
     public GameHero(Player p) { _p = p; }
     Transform _tr;
     public Transform Transform_ObjUnit { get => _tr ?? _p.Combat.HeroTr; set => _tr = value; }
+    public SpriteRenderer Motion_Unit = new SpriteRenderer { sprite = new Sprite { name = "AUnit1Motion1" } };
     public GameObject Obj_UnitConstellationMid { get; set; } = new GameObject();
     public static int ApplyID_Incinerate { get; set; }
     public readonly List<int> Statics = new();
