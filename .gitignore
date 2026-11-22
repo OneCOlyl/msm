@@ -6,6 +6,4 @@ stubs/out/
 *.user
 __pycache__/
 .ruff_cache/
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
 coop_cheat_src/

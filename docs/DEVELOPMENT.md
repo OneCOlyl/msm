@@ -196,7 +196,7 @@ host for 60 s and prints a table of frame and network numbers for the host and t
 `lab.py` exits with code 1 on any failure, including no phones or no adb. adb is taken from the `ADB` variable, then from
 `PATH`, then from `%LOCALAPPDATA%\Android\Sdk\platform-tools`. `--json <file>` writes the result of every scenario:
 name, passed, checks, numbers. The agent's checklist for phones is the `device-test` skill
-(`.claude/skills/device-test/SKILL.md`).
+(`.agents/skills/device-test/SKILL.md`).
 
 At the end of a battle `modkit.log` has the line `сеть за … с` (network over … s): bytes per second sent and received,
 the longest line sent and received, ping average, maximum and spread (standard deviation). `.CoopStatus` returns the
