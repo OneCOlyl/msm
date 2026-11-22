@@ -52,7 +52,8 @@ namespace MagicSurvivalCoop
                 {
                     if (p.Ghost == null || !p.Ghost.Alive || !p.HasWorldPos) { if (p.Mk != null) { SetOn(p.Mk.Bar, ref p.Mk.BarOn, false); SetOn(p.Mk.Arrow, ref p.Mk.ArrowOn, false); SetOn(p.Mk.Tag, ref p.Mk.TagOn, false); } continue; }
                     var m = p.Mk ??= NewMarker(p);
-                    var sp = cam.WorldToScreenPoint(new Vector3((float)p.WorldX, (float)p.WorldY, (float)p.WorldZ));
+                    var wp = p.GhostTr != null ? p.GhostTr.position : new Vector3((float)p.WorldX, (float)p.WorldY, (float)p.WorldZ);
+                    var sp = cam.WorldToScreenPoint(wp);
                     double x = sp.x * u, y = sp.y * u;
 
                     if (x >= 0 && x <= cw && y >= 0 && y <= ch)

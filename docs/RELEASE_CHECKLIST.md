@@ -70,6 +70,8 @@ Mark each one: ✅ works, ❌ doesn't work (what exactly), — not tested (why).
 | 19 | Friend's magic | Projectiles, Shield, Satellites, Spirits, Electric Zone, Magic Circle and Armageddon of the friend are visible at their ally |
 | 20 | Different screens | The «Кооп», «Лечить» buttons, ally arrows and plates don't cover the game UI on at least two different resolutions |
 | 21 | «Ваше имя» (Your name) field in the «Кооп» window, changed while connected | Friends see the new name right away in their labels and in the «Кооп» window |
+| 22 | Hero dies while a friend is alive: decline the offer to continue after an ad (or wait if there is no ad) | The battle does not end, the camera follows the friend's ally; «Следить: <name>» switches to the next living friend; «Выйти» shows the result |
+| 22а | Hero dies when the friend is dead too, or while playing alone | The battle ends as before |
 
 ## Logs: what to collect
 

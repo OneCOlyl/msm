@@ -36,6 +36,7 @@ translation next to them.
 - **Shared pause:** while someone picks a skill, the game is paused for everyone, and everyone starts the battle together.
 - An ally has a **health bar** under it, and when it goes off screen, an **arrow points towards it**.
 - A **«Лечить»** (Heal) button when a friend is in trouble, and a **«нужна помощь!»** (need help!) signal when you are.
+- **After death you can keep watching a living friend:** the camera follows their ally, and a «Следить» (Watch) button switches between friends. «Выйти» (Exit) ends the battle.
 - **Shared enemies** (experimental, on by default): every player fights the host's enemies.
 
 Details are in the [feature description](docs/FEATURES.md).

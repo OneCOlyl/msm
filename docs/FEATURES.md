@@ -77,6 +77,20 @@ The host picks the area, difficulty and mode (normal or Infinite Mode). Each pla
 - On-screen labels: «присоединился» (joined), «начал бой — заходите!» (started a battle, come in!), «погиб!» (died!),
   «вышел» (left).
 
+### After death
+
+- If a friend is in a battle when your hero dies, the battle does not end: you stay in your own world and watch the
+  living friend. The camera follows their ally, and their movement and magic stay visible.
+- A button «Следить: <name>» (Watch) switches to the next living friend; «Выйти» (Exit) ends the battle and shows the
+  result.
+- When no living friends are left, the battle ends on its own after 10 seconds. When you are alone, death works as
+  before.
+- The game's own offer to continue after an ad stays: if you decline it, you watch your friends instead of leaving the
+  battle. All players need the same mod version.
+- You watch the friend's ally in your own world, not their game screen: their own enemies and level are not shown.
+- A dead hero does not cast: its coroutines are stopped, and the mod only reports it as in battle for the friend-ally copies, so auto-cast spells stop.
+- The red damage vignette left after death is hidden while spectating.
+
 ### Shared pause
 
 - While someone picks a skill or is in the pause menu, the game is paused for everyone, and battle clocks don't drift

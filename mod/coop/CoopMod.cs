@@ -158,6 +158,7 @@ namespace MagicSurvivalCoop
             public OrbState Orb;
             public OrbVisuals OrbVis;
             public ICompanion Ghost;
+            public SpriteRenderer GhostSr;
             public int GhostSpell = -1;
             public double NextSpawn;
             public Marker Mk;
@@ -207,6 +208,7 @@ namespace MagicSurvivalCoop
             _clockAction = ClockStepNow;
             _chestAction = () => ChestStep(_frameNow);
             _arrowAction = CaptureMenuArrow;
+            InstallSpectate();
             ctx.Every(50, () => Safe("таймер", _tickAction));
             InstallMagicHook();
             InstallWorldHooks();
@@ -215,6 +217,8 @@ namespace MagicSurvivalCoop
             InstallManaPull();
             try { ctx.Before("C_Battle_Manager", "Update", 0, Hook("кадр боя", (self, args) => { if (self != null) _battleMgr = self; FrameStep(); })); }
             catch (Exception e) { ctx.Log("покадровый хук недоступен, союзники двигаются 20 раз в секунду: " + e.Message); }
+            try { ctx.After("C_Battle_Manager", "Update", 0, Hook("кадр боя: слежение", (self, args) => SpectateVisualStep())); _specAfterHook = true; }
+            catch (Exception e) { ctx.Log("слежение: хук вида после кадра недоступен: " + e.Message); }
             ctx.Log($"кооператив {CoopMod.ModVersion} включён, имя «{_myName}»");
             ctx.Guard("кнопка в меню", ShowMenuButton);   // Мод могли включить прямо в главном меню
         }
@@ -269,6 +273,8 @@ namespace MagicSurvivalCoop
             try { DestroyMarkers(); } catch { }
             DestroyBtn(ref _menuBtn);
             DestroyBtn(ref _healBtn);
+            StopSpectate();
+            RemoveSpectatePatch();
             _windowOpen = false;
         }
 
@@ -363,7 +369,9 @@ namespace MagicSurvivalCoop
             UpdateRuleHost();
             UpdateMobScale();
 
+            Safe("слежение", _spectateAction);
             _ctx.Guard("союзники", UpdateGhosts);
+            if (!_specAfterHook) SpectateCameraStep();   // без хука после кадра двигаем здесь
             if (!_inRun) { Safe("стрелка из меню", _arrowAction); Safe("лобби", _lobbyAction); }
 
             if (_clockMs >= _nextHud) { _nextHud = _clockMs + 250; UpdateHud(); }
@@ -492,6 +500,7 @@ namespace MagicSurvivalCoop
             if (p.Ghost != null || p.OrbVis != null || p.Mk != null) _ctx.Mark("союзник: удаление");
             try { if (p.Ghost != null && p.Ghost.Alive) p.Ghost.Remove(); } catch { }
             p.Ghost = null;
+            p.GhostSr = null;
             try { DropMarker(p); } catch { }
             p.HasWorldPos = false;
             try { DestroyOrbVisuals(p); } catch { }
@@ -633,8 +642,9 @@ namespace MagicSurvivalCoop
             ResetMobScale();
             ResetFrameProfile();
             ResetMarkers();
+            ResetSpectate();
             _hookErrors.Clear();
-            foreach (var p in _partners.Values) { p.GhostTr = null; p.Ghost = null; p.NextSpawn = 0; p.GhostSpell = -1; p.Anchors = null; }
+            foreach (var p in _partners.Values) { p.GhostTr = null; p.Ghost = null; p.GhostSr = null; p.NextSpawn = 0; p.GhostSpell = -1; p.Anchors = null; }
             DestroyBtn(ref _menuBtn);
             ResetLobby();
             _nextSend = 0;
@@ -653,6 +663,8 @@ namespace MagicSurvivalCoop
             foreach (var p in _partners.Values) DropPartnerVisuals(p);
             _ctx.Guard("метки союзников", DestroyMarkers);
             DestroyBtn(ref _healBtn);
+            StopSpectate();
+            _specEnded = false;
             _nextSend = 0;
         }
 
@@ -660,7 +672,7 @@ namespace MagicSurvivalCoop
         {
             if (!_client.Connected) return;
             _send.Start();
-            bool battle = _spells.InBattle;
+            bool battle = _spells.InBattle || _specActive;
             double hp = 0, hpMax = 1;
             try { hp = _hero.Hp; hpMax = Math.Max(1, _hero.HpMax); } catch { }
             bool dead = _inRun && hp <= 0;
@@ -793,7 +805,7 @@ namespace MagicSurvivalCoop
 
         private void UpdateGhosts()
         {
-            bool battle = _spells.InBattle;
+            bool battle = _spells.InBattle || _specActive;
             foreach (var p in _partners.Values)
             {
                 bool fresh = p.HasState && _clockMs - p.StateAt < 3000;
@@ -801,6 +813,7 @@ namespace MagicSurvivalCoop
                 if (!want)
                 {
                     if (p.Ghost != null) { try { if (p.Ghost.Alive) p.Ghost.Remove(); } catch { } p.Ghost = null; }
+                    p.GhostSr = null;
                     continue;
                 }
 
@@ -811,11 +824,13 @@ namespace MagicSurvivalCoop
                     var color = SlotColors[Math.Max(0, Math.Min(3, p.Slot - 1))];
                     _ctx.Mark("союзник: создание");
                     int gs = p.Mirror ? NoOwnFire : p.Spell;
-                    p.Ghost = _companions.Spawn(0, 0, gs, color, 0.75, CompanionMode.Follow);
+                    p.Ghost = _companions.Spawn(0, 0, gs, color, _specActive ? 1.0 : 0.75, CompanionMode.Follow);
+                    p.GhostSr = null;
                     p.GhostSpell = gs;
                     p.GhostTr = null;
+                    if (p.Ghost != null) EnsureGhostTr(p);
                     if (p.Ghost == null) continue;
-                    p.Ghost.Speed = 200;   // Библиотека сразу ставит союзника в нашу точку, сглаживаем мы
+                    p.Ghost.Speed = _specActive ? 1000 : 200;   // Библиотека сразу ставит союзника в нашу точку, сглаживаем мы
                     _ctx.Log($"союзник «{p.Name}» создан, слот {p.Ghost.Slot}, заклинание {p.Spell}");
                 }
 
@@ -851,6 +866,7 @@ namespace MagicSurvivalCoop
                 // При timeScale 0 таймер мода может стоять, а без сети не узнать, что друг продолжил
                 if (now - _lastPumpSec > 0.1) { Safe("сеть", _pumpAction); Safe("общая пауза", _pauseAction); }
                 Lap(0);
+                if (_inRun) Safe("слежение", _spectateAction);
                 if (_inRun && _client.Connected) MaybeSend();
                 Lap(1);
                 if (_inRun) ArmageddonStep(now);
@@ -868,7 +884,7 @@ namespace MagicSurvivalCoop
                 foreach (var p in _partners.Values)
                     if (p.Ghost != null && p.Ghost.Alive)
                     {
-                        PlaceGhost(p, dt, hx, hy, hz, _directWrite);
+                        PlaceGhost(p, dt, hx, hy, hz, _directWrite && !_specActive);   // при слежении модель двигает библиотека, мы только читаем её точку
                         if (p.Casts.Count > 0) { if (p.GhostTr == null) EnsureGhostTr(p); RunCasts(p, now, hz); }
                         if (p.Anchors != null) PlaceAnchors(p);
                         if (p.Orb != null) { if (p.GhostTr == null) EnsureGhostTr(p); PlaceOrbits(p, now); }
@@ -992,17 +1008,26 @@ namespace MagicSurvivalCoop
                 p.DispY += (ty - p.DispY) * k;
             }
 
-            double maxDist = WorldOn ? 1000 : _ctx.Setting("ghostDist");   // С общими врагами союзник стоит там же, где друг
+            double maxDist = WorldOn || _specActive ? 1000 : _ctx.Setting("ghostDist");   // С общими врагами и при слежении союзник стоит там же, где друг
             double ox = (_startX ?? heroX) + p.DispX - heroX;
             double oy = (_startY ?? heroY) + p.DispY - heroY;
             double len = Math.Sqrt(ox * ox + oy * oy);
-            if (len > maxDist) { ox = ox / len * maxDist; oy = oy / len * maxDist; }
-            else if (len < 0.8)                                // Не прятаться под героем
+            if (!_specActive)                                  // При слежении союзник стоит точно на друге, без круга у corpse
             {
-                if (len < 1e-3) { ox = 0.8; oy = 0; } else { ox = ox / len * 0.8; oy = oy / len * 0.8; }
+                if (len > maxDist) { ox = ox / len * maxDist; oy = oy / len * maxDist; }
+                else if (len < 0.8)                            // Не прятаться под героем
+                {
+                    if (len < 1e-3) { ox = 0.8; oy = 0; } else { ox = ox / len * 0.8; oy = oy / len * 0.8; }
+                }
             }
             p.Ghost.Offset = new Vector2((float)ox, (float)oy);
-            p.WorldX = heroX + ox; p.WorldY = heroY + oy; p.WorldZ = heroZ; p.HasWorldPos = true;
+            double wx = heroX + ox, wy = heroY + oy;
+            if (_specActive)
+            {
+                if (!p.HasWorldPos) { p.WorldX = wx; p.WorldY = wy; p.WorldZ = heroZ; p.HasWorldPos = true; }
+                try { SetMember(p.Ghost, "Pos", new Vector2((float)wx, (float)wy)); } catch { }   // модель сразу в точке, камеру берём с неё в конце кадра
+            }
+            else { p.WorldX = wx; p.WorldY = wy; p.WorldZ = heroZ; p.HasWorldPos = true; }
             if (writeTransform) WriteGhostTransform(p, heroX + ox, heroY + oy, heroZ);
         }
 

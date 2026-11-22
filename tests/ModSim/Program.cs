@@ -956,6 +956,28 @@ Console.WriteLine("5в. правила боя и множители врагов
     H.Disable(); G.Disable();
 }
 
+Console.WriteLine("5г. после смерти бой не заканчивается: слежение за живым другом");
+{
+    A.Call("Host"); TickAll(500); B.Call("Join"); TickAll(3000);
+    Check(A.Partners().Count == 1 && B.Partners().Count == 1, "хост и друг снова на связи");
+    A.Spells.InBattle = B.Spells.InBattle = true;
+    A.Emit("battleStart"); B.Emit("battleStart");
+    A.Hero.Hp = 100; B.Hero.Hp = 100;
+    TickAll(500);
+    A.Hero.Hp = 0; A.Spells.InBattle = false;
+    bool kept = (bool)A.Session.GetType().GetMethod("KeepBattleOnEnd", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(A.Session, null);
+    Check(kept, "игра хотела закончить бой, мод оставил его ради слежения");
+    TickAll(200);
+    bool spec = (bool)A.Get("_specActive");
+    Check(spec, $"хост погиб — включилось слежение (specActive={spec})");
+    A.Call("SendState"); TickAll(200);
+    object bp = null; foreach (System.Collections.DictionaryEntry kv in B.Partners()) bp = kv.Value;
+    Check(bp != null && (bool)bp.GetType().GetField("Battle").GetValue(bp) && (bool)bp.GetType().GetField("Dead").GetValue(bp),
+          "у друга хост по-прежнему «в бою» и «погиб» — общие враги и часы не останавливаются");
+    A.Call("StopSpectate"); A.Hero.Hp = 100;
+    Check(!(bool)A.Get("_specActive"), "выход из слежения выключает режим");
+}
+
 Console.WriteLine("6. выключение мода");
 A.Disable(); B.Disable();
 Check(true, "моды выключены без исключений");
