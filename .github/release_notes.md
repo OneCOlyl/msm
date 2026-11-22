@@ -1,4 +1,4 @@
-## Не выпущено
+## Co-op 1.11.0
 
 - **Friends look like the characters they play.** An ally used to be a recolored copy of your own hero. Now the friend's appearance number travels in the state update, and the ally is drawn with that character's frames; the animation frame still comes from your hero. Schools and subjects keep their own look. An older version on either side shows the old copy.
 - **After death you can watch your friends.** If a friend is still in battle, declining the offer to continue no longer ends your game: you stay in your own world, the camera follows a living friend, and a «Следить: <name>» (Watch) button cycles between them. «Выйти» (Exit) ends the battle and shows the result. If no friend is left, the battle ends on its own after 10 seconds. A dead hero no longer casts: its coroutines are stopped, and the mod reports it as in battle only for the friend-ally copies. The red damage vignette left after death is hidden too. All players need the same version.

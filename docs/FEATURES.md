@@ -2,7 +2,7 @@
 
 English | [Русский](FEATURES.ru.md)
 
-This description matches mod version **1.10.0** and the unreleased changes. Changes in each version are in the [release notes](../.github/release_notes.md)
+This description matches mod version **1.11.0**. Changes in each version are in the [release notes](../.github/release_notes.md)
 and on the [releases page](https://github.com/OneCOlyl/msm/releases).
 
 ## Contents
