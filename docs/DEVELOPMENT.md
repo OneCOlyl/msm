@@ -20,6 +20,7 @@ document: [installation](INSTALL.md) and [connecting](CONNECT.md) are enough for
 | Path | Contents |
 |---|---|
 | `mod/coop/` | Mod sources. `Net/` is network code with no Unity dependencies (client, embedded server, protocol). |
+| `mod/menu_art/` | Separate «Меню 1.00» mod: the main menu background from the 1.00 announcement, clean frames in `assets/`. |
 | `mod/coop_lab/`, `tools/lab.py` | Test arena: an in-battle «ПОЛИГОН» button (calm arena, any mobs, battle mechanics) and co-op check scenarios on two phones. Players don't need it. |
 | `tools/terra.py` | Two-player Terra autoplay: choice windows, chests, merchant, obelisks. |
 | `tools/phones.py` | Hands-free run on two USB phones: install the build from `dist/`, restart the game, connect, enter a battle, run `lab.py` scenarios, collect logs. |
@@ -48,13 +49,13 @@ Requires .NET SDK 8, Python 3 and bash (Git Bash on Windows).
 bash build.sh
 ```
 
-The script builds the Unity stubs, builds `coop`, `coop_debug`, `coop_cheat` and `coop_lab`, packs them into
+The script builds the Unity stubs, builds `coop`, `coop_debug`, `coop_cheat`, `coop_lab` and `menu_art`, packs them into
 `dist/<mod>.zip` and runs all tests. If tests fail, the script exits with an error. `SKIP_TESTS=1 bash build.sh` only
 builds and packs.
 
 The version is not stored in the repository: `mod.json` and `.csproj` have `0.0.0-dev`. `build.sh` takes it from
-`VERSION` (for all four mods), else from the nearest git tag (`git describe`: `vX.Y.Z` for `coop`, `tools-X.Y.Z` for
-the developer mods), else `0.0.0-dev.<number of commits>`. A build with uncommitted changes gets `-dirty.<time>`:
+`VERSION` (for all five mods), else from the nearest git tag (`git describe`: `vX.Y.Z` for `coop`, `tools-X.Y.Z` for
+the rest), else `0.0.0-dev.<number of commits>`. A build with uncommitted changes gets `-dirty.<time>`:
 ModKit doesn't reread an archive with the same version. The version goes into the dll and into `mod.json` inside the
 archive; the file in the repository doesn't change.
 Tests run in parallel, about 80 s: ModSim takes longest (section 7 runs as a separate process, `ModSim.dll 7`, the rest

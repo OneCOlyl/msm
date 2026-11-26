@@ -30,7 +30,7 @@ echo "== мод"
 EXTRA=()
 [ -n "${REF:-}" ] && EXTRA=(-p:Ref="$REF")
 dotnet build mod/coop/coop.csproj -c Release -nologo -v q -p:Version="$V_COOP" "${EXTRA[@]}"
-for m in coop_debug coop_cheat coop_lab; do dotnet build "mod/$m/$m.csproj" -c Release -nologo -v q -p:Version="$V_TOOLS"; done
+for m in coop_debug coop_cheat coop_lab menu_art; do dotnet build "mod/$m/$m.csproj" -c Release -nologo -v q -p:Version="$V_TOOLS"; done
 
 echo "== упаковка"
 OUT="$ROOT/dist"; mkdir -p "$OUT"
@@ -38,7 +38,7 @@ OUT="$ROOT/dist"; mkdir -p "$OUT"
 pack() {
   rm -f "$OUT/$1.zip"
   ( cd "mod/$1" && python3 - "$OUT/$1.zip" "$1" "$(mod_version "$1")" <<'EOF'
-import json, sys, zipfile
+import json, os, sys, zipfile
 out, name, version = sys.argv[1], sys.argv[2], sys.argv[3]
 with open("mod.json", encoding="utf-8") as f:
     manifest = json.load(f)
@@ -47,11 +47,14 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
     z.writestr("mod.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     z.write(f"bin/Release/net8.0/{name}.dll", f"{name}.dll")
     z.write("icon.png", "icon.png")
+    for root, _, files in os.walk("assets"):
+        for f in files:
+            z.write(os.path.join(root, f))
 print(f"dist/{name}.zip готов, версия {version}")
 EOF
   )
 }
-for m in coop coop_debug coop_cheat coop_lab; do pack "$m"; done
+for m in coop coop_debug coop_cheat coop_lab menu_art; do pack "$m"; done
 
 if [ "${SKIP_TESTS:-}" != "1" ]; then
   for t in NetTest ModSim DebugSim CheatSim; do dotnet build "tests/$t/$t.csproj" -c Release -nologo -v q >/dev/null; done

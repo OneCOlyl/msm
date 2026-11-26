@@ -7,6 +7,7 @@ namespace UnityEngine
     public struct Vector2 { public float x; public float y; public Vector2(float x, float y) { this.x = x; this.y = y; } }
     public struct Vector3 { public float x; public float y; public float z; public Vector3(float x, float y, float z) { this.x = x; this.y = y; this.z = z; } }
     public struct Color { public float r, g, b, a; public Color(float r, float g, float b, float a) { this.r = r; this.g = g; this.b = b; this.a = a; } }
+    public struct Rect { public float x, y, width, height; public Rect(float x, float y, float width, float height) { this.x = x; this.y = y; this.width = width; this.height = height; } }
     public class Object
     {
         public string name { get; set; }
@@ -15,7 +16,7 @@ namespace UnityEngine
         public static void Destroy(Object o) { if (o != null) o.DestroyedForTest = true; }
     }
     public interface ICloneTarget { Object CloneForTest(); }
-    public class Component : Object { public GameObject gameObject { get; set; } public Transform transform => gameObject?.transform; }
+    public class Component : Object { public GameObject gameObject { get; set; } public Transform transform => gameObject?.transform; public T GetComponent<T>() where T : class => gameObject?.GetComponent<T>(); }
     public class Transform : Component { public Vector3 position { get; set; } public Vector3 localScale { get; set; } public Vector3 localEulerAngles { get; set; } public Vector3 localPosition { get; set; } public Transform GetChild(int i) => null; public void SetParent(Transform p, bool worldPositionStays) => parent = p; public int childCount { get; set; } public Transform parent { get; set; } public new Transform transform => this; }
     public class Renderer : Component { }
     public class SpriteRenderer : Renderer { public Color color { get; set; } public bool enabled { get; set; } = true; public Sprite sprite { get; set; } }
@@ -37,7 +38,7 @@ namespace UnityEngine
         public T GetComponent<T>() where T : class => TestComponent as T;
         public T GetComponentInChildren<T>(bool includeInactive) where T : class => TestComponent as T;
     }
-    public class Behaviour : Component { }
+    public class Behaviour : Component { public bool enabled { get; set; } = true; }
     public class MonoBehaviour : Behaviour { public bool CoroutinesStopped; public void StopAllCoroutines() => CoroutinesStopped = true; }
     public class Rigidbody : Component { public bool isKinematic { get; set; } }
     public class Camera : Behaviour { public static Camera main { get; set; } public Vector3 WorldToScreenPoint(Vector3 p) => p; }

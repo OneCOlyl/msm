@@ -1,3 +1,11 @@
+## Не выпущено
+
+- **New 1.00 main menu background.** A separate «Меню 1.00» mod puts the witch and moving clouds from the 1.00 announcement behind the main menu. The settings gear, the bottom button row and the Korean start label are removed from the source frames, so the game's own controls stay in place. Frames come from the official Naver Cafe notice (article 30032).
+
+**По-русски:**
+
+- **Новый фон главного меню 1.00.** Отдельный мод «Меню 1.00» ставит колдунью и плывущие облака из анонса 1.00 за главное меню. Значок настроек, ряд нижних кнопок и корейская надпись «начать игру» убраны с исходных кадров, поэтому кнопки игры остаются на своих местах. Кадры — из официального объявления в Naver Cafe (статья 30032).
+
 ## Co-op 1.11.0
 
 - **Friends look like the characters they play.** An ally used to be a recolored copy of your own hero. Now the friend's appearance number travels in the state update, and the ally is drawn with that character's frames; the animation frame still comes from your hero. Schools and subjects keep their own look. An older version on either side shows the old copy.
