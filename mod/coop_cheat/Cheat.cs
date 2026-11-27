@@ -52,7 +52,14 @@ namespace CoopCheat
         // Комбо и синергии игра даёт сама, когда выучены их составляющие (MagicCom 특성A/B/C레벨, Synergy ID_01…05 — номера
         // способностей Ability): чит учит недостающие составляющие. 0.4.0 клал номер комбо в список выученного — это номер
         // другой способности (Комбо 1 = Пуля), так нельзя.
-        private sealed class Row { public int Id; public string Name; public int[] Req; public int Grade = -1; public int Icon; public int Slot; public TabDef Tab; }
+        private sealed class Row { public int Id; public string Name; public int[] Req; public int Grade = -1; public int Icon; public int Slot; public int ParentId; public TabDef Tab; }
+        private static readonly double[][] TraitColors =
+        {
+            new double[] { 0.95, 0.30, 0.28 }, new double[] { 1.00, 0.55, 0.20 },
+            new double[] { 1.00, 0.85, 0.30 }, new double[] { 0.40, 0.85, 0.35 },
+            new double[] { 0.25, 0.75, 1.00 }, new double[] { 0.70, 0.45, 1.00 },
+        };
+        private static Color TraitColor(Row r) { var c = TraitColors[Math.Abs(r.Slot) % TraitColors.Length]; return UiKit.Col(c[0], c[1], c[2], 1); }
 
         // Редкость артефакта — в каком пуле игры его номер: Z_Database.List_ArtifactPossibleGrade_<буква>, от частых к редким (как в
         // modkit_data: C, B, A, P, S). S игра подписывает «Special Artifact». Пулы читаются при первом открытии меню в бою.
@@ -209,7 +216,7 @@ namespace CoopCheat
                 var img = UiKit.AddImage(icon.go, 1, 1, 1, 1);
                 img.raycastTarget = false;
                 img.preserveAspect = true;
-                img.color = UiKit.Col(1, 1, 1, lit ? 0.96 : 0.35);
+                img.color = Kind == "ability" ? UiKit.Col(TraitColor(r).r, TraitColor(r).g, TraitColor(r).b, lit ? 0.96 : 0.35) : UiKit.Col(1, 1, 1, lit ? 0.96 : 0.35);
                 UiKit.SetSprite(img, sprite);
                 _icons[r.Id] = img;
             }
@@ -317,10 +324,17 @@ namespace CoopCheat
 
         private nint IconSprite(Row r)
         {
-            if (r.Tab?.Kind == "ability" && _sheetIcons != null && _sheetIcons.TryGetValue(r.Id, out var sheet)) return sheet;
+            // У особенности нет своего портрета в SpriteList; игра рисует значок её магии и красит по слоту.
+            if (r.ParentId > 0) { nint parent = UiKit.GameSprite("SpriteList_AbilityPortrait", r.ParentId); if (parent != IntPtr.Zero) return parent; }
             string field = Kind == "combo" ? "SpriteList_MagicComPortrait" : Kind == "syn" ? "SpriteList_SynergyPortrait" : "SpriteList_AbilityPortrait";
             nint sprite = UiKit.GameSprite(field, r.Icon > 0 ? r.Icon : r.Id);
-            if (sprite == IntPtr.Zero && Kind == "ability") { sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Slot); if (sprite == IntPtr.Zero) sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Slot + 1); }
+            if (sprite == IntPtr.Zero && Kind == "ability")
+            {
+                sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Icon);
+                if (sprite == IntPtr.Zero) sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Id);
+                if (sprite == IntPtr.Zero) sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Slot);
+                if (sprite == IntPtr.Zero) sprite = UiKit.GameSprite("SpriteList_AbilityPortrait", r.Id);
+            }
             if (sprite == IntPtr.Zero && Kind == "syn") sprite = UiKit.GameSprite("SpriteList_SynergyNum", r.Id);
             return sprite;
         }
@@ -370,6 +384,7 @@ namespace CoopCheat
                 var cols = tb.Columns();
                 string nameCol = NameColumn(cols), typeCol = cols.Contains("유형") ? "유형" : null, maxCol = cols.Contains("최대레벨") ? "최대레벨" : null;
                 string derivedCol = cols.Contains("파생기술ID") ? "파생기술ID" : null;
+                string iconCol = cols.FirstOrDefault(c => c == "아이콘" || c.IndexOf("Icon", StringComparison.OrdinalIgnoreCase) >= 0);
                 var byType = new Dictionary<string, TabDef>();
                 for (int r = 0; r < tb.Length; r++)
                 {
@@ -391,7 +406,8 @@ namespace CoopCheat
                     int slot = type == "특성" ? CellInt(tb, r, "특성ID") : 0;
                     int icon = id;
                     if (type == "`" && id >= 361 && id <= 541) icon = (id - 361) / 9 + 1;
-                    var newRow = new Row { Id = id, Name = Short(name), Icon = icon, Slot = slot };
+                    else if (id > 21 && iconCol != null) { int v = CellInt(tb, r, iconCol); if (v > 0) icon = v; }
+                    var newRow = new Row { Id = id, Name = Short(name), Icon = icon, Slot = slot, ParentId = derived };
                     td.Rows.Add(newRow);
                     if (derived > 0)
                     {
@@ -847,6 +863,7 @@ namespace CoopCheat
             {
                 var img = UiKit.AddImage(pic.go, 1, 1, 1, 1);
                 img.preserveAspect = true;
+                if (r.Tab?.Kind == "ability") img.color = TraitColor(r);
                 UiKit.SetSprite(img, sprite);
             }
             else if (SlotIcon(iconSlot) is byte[] icon) UiKit.Picture(pic.rt, icon, 0, 0, 200, 200);
@@ -875,26 +892,28 @@ namespace CoopCheat
                     int slot = ti;
                     var b = UiKit.AddButton(win.rt, "", ix, iy, 76, 76, 0, Gray, () => _ctx.Guard("особенность", () => OpenDetail(row, slot)));
                     nint sp = _sheetIcons != null && _sheetIcons.TryGetValue(id, out var sheet) ? sheet : IntPtr.Zero;
+                    if (sp == IntPtr.Zero) sp = IconSprite(row);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", ti);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", ti + 1);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Id);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Slot);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Slot + 1);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityPortrait", id);
-                    if (SlotIcon(ti) is byte[] iconBytes)
-                    {
-                        var ic = UiKit.Node("ic", b.transform);
-                        UiKit.Place(ic.rt, 2, 2, 72, 72);
-                        UiKit.Picture(ic.rt, iconBytes, 0, 0, 72, 72);
-                    }
-                    else if (sp != IntPtr.Zero)
+                    if (sp != IntPtr.Zero)
                     {
                         var ic = UiKit.Node("ic", b.transform);
                         UiKit.Place(ic.rt, 2, 2, 72, 72);
                         var im = UiKit.AddImage(ic.go, 1, 1, 1, 1);
                         im.preserveAspect = true;
                         im.raycastTarget = false;
+                        im.color = TraitColor(row);
                         UiKit.SetSprite(im, sp);
+                    }
+                    else if (SlotIcon(ti) is byte[] iconBytes)
+                    {
+                        var ic = UiKit.Node("ic", b.transform);
+                        UiKit.Place(ic.rt, 2, 2, 72, 72);
+                        UiKit.Picture(ic.rt, iconBytes, 0, 0, 72, 72);
                     }
                     else UiKit.Tint(UiKit.Label(b.transform, Initial(row.Name), 0, 0, 76, 76, 26, 4), UiKit.Gold);
                     ix += 86;
