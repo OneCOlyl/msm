@@ -441,7 +441,8 @@ namespace CoopCheat
             foreach (var kv in _forced)
             {
                 int cur = Convert.ToInt32(Invoke(levels, "get_Item", kv.Key));
-                if (cur != kv.Value) Invoke(levels, "set_Item", kv.Key, kv.Value);
+                // Игра могла поднять уровень сама в окне выбора (перед особенностью) — не откатывать его назад.
+                if (cur < kv.Value) Invoke(levels, "set_Item", kv.Key, kv.Value);
             }
         }
 

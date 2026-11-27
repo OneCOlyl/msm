@@ -27,6 +27,12 @@ int learnBefore = Z_Database.List_AllyAbilityLearn.Count;
 Press(12, "Вихрь");
 Check(Z_Database.List_AllyMagicLevel[12] == 1 && ctx.Logs.Any(l => l.Contains("Вихрь") && l.Contains("прямая запись")), "Вихрь 0 → 1 прямой записью");
 Check(Z_Database.List_AllyAbilityLearn.Count == learnBefore, "неудачная запись в список выученного откатана");
+Z_Database.List_AllyMagicLevel[12] = 3;                                  // игру подняла сама после выбора
+cheat.GetType().GetMethod("EnforceLevels", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(cheat, null);
+Check(Z_Database.List_AllyMagicLevel[12] == 3, "уровень, поднятый игрой, не откатывается к выданному читом");
+Z_Database.List_AllyMagicLevel[12] = 8;                                  // уровень ушёл выше максимума
+cheat.GetType().GetMethod("ClampLevels", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(cheat, null);
+Check(Z_Database.List_AllyMagicLevel[12] == 7, $"уровень обрезан до максимума: {Z_Database.List_AllyMagicLevel[12]}");
 
 Console.WriteLine("2б. как на телефоне: пересчёт библиотеки не работает, менеджер способностей ловится хуком");
 Ctx.Fx.Works = false;
@@ -107,6 +113,10 @@ Console.WriteLine("6. все магии — максимум одним нажа
 {
     var fl = BindingFlags.NonPublic | BindingFlags.Instance; var ct = cheat.GetType();
     Z_Database.RecalcFromLearn = true;
+    var traitLevels = (Dictionary<int, List<int>>)ct.GetField("_traitLevels", fl).GetValue(cheat);
+    traitLevels[1] = new List<int> { 4, 7 };
+    var traits = (Dictionary<int, List<int>>)ct.GetField("_traits", fl).GetValue(cheat);
+    traits[1] = new List<int> { 362 };
     ct.GetMethod("MaxAll", fl).Invoke(cheat, null);
     int Lv(int id) => Z_Database.List_AllyMagicLevel[id];
     int Mx(int id) => (int)ct.GetMethod("Max", fl).Invoke(cheat, new object[] { id });
