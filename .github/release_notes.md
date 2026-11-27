@@ -6,6 +6,9 @@
 - **Cheat: no Research tab in battle.** Research is a main-menu meta upgrade, so the in-battle cheat no longer lists it. The passives offered at the maximum hero level stay under «Спец.пасс.» and «Пассив».
 - **Чит: вкладки исследований в бою больше нет.** Исследования — мета-прогресс главного меню, поэтому в боевом чите их больше нет. Пассивки, которые игра предлагает на максимальном уровне героя, остаются на вкладках «Спец.пасс.» и «Пассив».
 
+- **Cheat: a description window for every entry.** Tapping a card now opens its description instead of changing the level at once. A spell shows its traits and combinations, a synergy its artifacts, an artifact the synergies that use it, a combination its parts. The window raises or lowers a spell or ability by one level, removes an artifact or synergy, and rolls back a combination's abilities.
+- **Чит: окно описания для каждой записи.** Нажатие на карточку теперь открывает описание, а не меняет уровень сразу. У магии видны её особенности и комбинации, у синергии — артефакты, у артефакта — синергии с ним, у комбинации — составляющие. В окне можно поднять или опустить уровень магии или способности на 1, убрать артефакт или синергию и откатить способности комбинации.
+
 ## Co-op 1.11.0
 
 - **Friends look like the characters they play.** An ally used to be a recolored copy of your own hero. Now the friend's appearance number travels in the state update, and the ally is drawn with that character's frames; the animation frame still comes from your hero. Schools and subjects keep their own look. An older version on either side shows the old copy.

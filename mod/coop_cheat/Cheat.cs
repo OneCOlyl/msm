@@ -40,6 +40,7 @@ namespace CoopCheat
         private static readonly double[] GoldTab = { 0.62, 0.48, 0.16, 0.95 };
         private static readonly double[] Page = { 0.12, 0.12, 0.13, 0.96 };
         private static readonly double[] Clear = { 0.0, 0.0, 0.0, 0.01 };
+        private static readonly double[] Red = { 0.60, 0.20, 0.20, 0.95 };
 
         private readonly ModContext _ctx;
         private readonly ISpells _spells;
@@ -51,7 +52,7 @@ namespace CoopCheat
         // Комбо и синергии игра даёт сама, когда выучены их составляющие (MagicCom 특성A/B/C레벨, Synergy ID_01…05 — номера
         // способностей Ability): чит учит недостающие составляющие. 0.4.0 клал номер комбо в список выученного — это номер
         // другой способности (Комбо 1 = Пуля), так нельзя.
-        private sealed class Row { public int Id; public string Name; public int[] Req; public int Grade = -1; public int Icon; }
+        private sealed class Row { public int Id; public string Name; public int[] Req; public int Grade = -1; public int Icon; public TabDef Tab; }
 
         // Редкость артефакта — в каком пуле игры его номер: Z_Database.List_ArtifactPossibleGrade_<буква>, от частых к редким (как в
         // modkit_data: C, B, A, P, S). S игра подписывает «Special Artifact». Пулы читаются при первом открытии меню в бою.
@@ -88,7 +89,6 @@ namespace CoopCheat
         private UiKit.HudButton _toggle;
         private GameObject _panel;
         private RectTransform _content;
-        private Text _modeText;
         private readonly Dictionary<int, Text> _labels = new Dictionary<int, Text>();
         private readonly Dictionary<int, Image> _icons = new Dictionary<int, Image>();
         private readonly Dictionary<int, bool> _lit = new Dictionary<int, bool>();
@@ -183,18 +183,16 @@ namespace CoopCheat
             for (int i = 0; i < items.Count; i++)
                 AddCard(items[i], 8 + (i % cols) * (CardW + CardGap), 8 + (i / cols) * (CardH + CardGap));
 
-            var mode = UiKit.AddButton(win.rt, ModeText(), 22, actionsY, 210, 48, 13, Green,
-                () => _ctx.Guard("режим", () => { _minus = !_minus; if (_modeText != null) _modeText.text = ModeText(); }));
-            _modeText = mode.gameObject.GetComponentInChildren<Text>(true);
-            UiKit.AddButton(win.rt, "Уровень героя +1", 242, actionsY, 230, 48, 13, Blue, () => _ctx.Guard("уровень героя", StartLevelUp));
-            UiKit.AddButton(win.rt, "Все магии — максимум", 482, actionsY, 216, 48, 13, Green, () => _ctx.Guard("все магии", MaxAll));
+            UiKit.AddButton(win.rt, "Уровень героя +1", 22, actionsY, 320, 48, 13, Blue, () => _ctx.Guard("уровень героя", StartLevelUp));
+            UiKit.AddButton(win.rt, "Все магии — максимум", 372, actionsY, 326, 48, 13, Green, () => _ctx.Guard("все магии", MaxAll));
         }
 
         private void AddCard(Row r, double x, double y)
         {
             bool lit = Learned(r);
             var border = Kind == "artifact" && r.Grade >= 0 ? GradeColors[r.Grade] : Gray;
-            var card = UiKit.AddButton(_content, "", x, y, CardW, CardH, 0, border, () => _ctx.Guard("запись", () => PressRow(r)));
+            r.Tab = _tabs[_tab];
+            var card = UiKit.AddButton(_content, "", x, y, CardW, CardH, 0, border, () => _ctx.Guard("описание", () => OpenDetail(r)));
             var tf = card.transform;
 
             var inner = UiKit.Node("in", tf);
@@ -267,7 +265,6 @@ namespace CoopCheat
             if (_panel != null) UiKit.SafeDestroy(_panel);
             _panel = null;
             _content = null;
-            _modeText = null;
             _labels.Clear();
             _icons.Clear();
             _lit.Clear();
@@ -376,8 +373,6 @@ namespace CoopCheat
         }
 
         private static string Err(Exception e) => ((e as TargetInvocationException)?.InnerException ?? e).Message;
-
-        private string ModeText() => _minus ? "Режим: −1 уровень" : "Режим: +1 уровень";
 
         private void HidePanel()
         {
@@ -755,6 +750,108 @@ namespace CoopCheat
             _ctx.Toast(how != null ? $"{name}: уровень {now}" : $"{name}: не удалось (см. журнал)", 2);
             SyncPool();
             Refresh();
+        }
+
+        private void OpenDetail(Row r)
+        {
+            var win = UiKit.OpenPage("cheat_detail", r.Name, r.Tab?.Label, () => Refresh());
+            UiKit.Label(win.rt, Describe(r), 28, 230, 664, 200, 18, 0);
+            UiKit.Label(win.rt, Links(r), 28, 440, 664, 220, 16, 0);
+            double y = UiKit.ScreenH - 140;
+            void Close() { win.go.SetActive(false); }
+            switch (r.Tab?.Kind)
+            {
+                case "spell":
+                case "ability":
+                    UiKit.AddButton(win.rt, "+1 уровень", 28, y, 320, 60, 18, Green, () => { Close(); _ctx.Guard("+1", () => PressOn(r, false)); });
+                    UiKit.AddButton(win.rt, "−1 уровень", 372, y, 320, 60, 18, Gray, () => { Close(); _ctx.Guard("−1", () => PressOn(r, true)); });
+                    break;
+                case "artifact":
+                    UiKit.AddButton(win.rt, "Убрать артефакт", 28, y, 664, 60, 18, Red, () => { Close(); _ctx.Guard("убрать", () => PressOn(r, true)); });
+                    break;
+                case "syn":
+                    UiKit.AddButton(win.rt, "Убрать синергию", 28, y, 664, 60, 18, Red, () => { Close(); _ctx.Guard("убрать", () => PressOn(r, true)); });
+                    break;
+                case "combo":
+                    UiKit.AddButton(win.rt, "Откатить способности", 28, y, 664, 60, 18, Red, () => { Close(); _ctx.Guard("откат", () => PressOn(r, true)); });
+                    break;
+            }
+        }
+
+        private void PressOn(Row r, bool down)
+        {
+            var tab = r.Tab;
+            if (tab == null) return;
+            if (tab.Kind == "spell")
+            {
+                bool old = _minus; _minus = down;
+                try { Press(r.Id, r.Name); } finally { _minus = old; }
+                return;
+            }
+            int oldTab = _tab; bool oldMinus = _minus;
+            _tab = Math.Max(0, _tabs.IndexOf(tab)); _minus = down;
+            try { PressRow(r); } finally { _tab = oldTab; _minus = oldMinus; }
+        }
+
+        private string Describe(Row r)
+        {
+            string table = r.Tab?.Kind switch { "combo" => "MagicCom", "syn" => "Synergy", _ => "Ability" };
+            try
+            {
+                var tb = _tables.Table(table);
+                int i = tb.IndexOf(r.Id, tb.IdColumn);
+                if (i < 0) return "";
+                foreach (var col in new[] { "효과 설명줄01", "설명줄01" })
+                {
+                    string v = Cell(tb, i, col);
+                    if (!Blank(v) && v != "`") return v;
+                }
+            }
+            catch { }
+            return "";
+        }
+
+        private string Links(Row r)
+        {
+            var parts = new List<string>();
+            string kind = r.Tab?.Kind ?? Kind;
+            if (kind == "spell" && _traits.TryGetValue(r.Id, out var traits))
+            {
+                parts.Add("Особенности: " + string.Join(", ", traits.Select(x => NameOf("ability", x))));
+                var combos = CombosUsing(traits);
+                if (combos.Count > 0) parts.Add("Комбинации: " + string.Join(", ", combos));
+            }
+            else if (kind == "ability")
+            {
+                var parent = _traits.FirstOrDefault(kv => kv.Value.Contains(r.Id));
+                if (parent.Value != null) parts.Add("Магия: " + NameOf("spell", parent.Key));
+                var combos = CombosUsing(new[] { r.Id });
+                if (combos.Count > 0) parts.Add("Комбинации: " + string.Join(", ", combos));
+            }
+            else if (kind == "artifact")
+            {
+                var syns = _tabs.Where(t => t.Kind == "syn").SelectMany(t => t.Rows)
+                    .Where(x => x.Req != null && x.Req.Contains(r.Id)).Select(x => x.Name).Distinct().ToList();
+                if (syns.Count > 0) parts.Add("Синергии: " + string.Join(", ", syns));
+            }
+            else if (kind == "syn" && r.Req != null)
+                parts.Add("Артефакты: " + string.Join(", ", r.Req.Select(x => NameOf("artifact", x))));
+            else if (kind == "combo" && r.Req != null)
+                parts.Add("Составляющие: " + string.Join(", ", r.Req.Select(x => NameOf("ability", x))));
+            return parts.Count == 0 ? "Связей в таблицах нет" : string.Join("\n", parts);
+        }
+
+        private List<string> CombosUsing(IEnumerable<int> ids)
+        {
+            var set = new HashSet<int>(ids);
+            return _tabs.Where(t => t.Kind == "combo").SelectMany(t => t.Rows)
+                .Where(x => x.Req != null && x.Req.Any(set.Contains)).Select(x => x.Name).Distinct().ToList();
+        }
+
+        private string NameOf(string kind, int id)
+        {
+            var row = _tabs.Where(t => t.Kind == kind).SelectMany(t => t.Rows).FirstOrDefault(x => x.Id == id);
+            return row?.Name ?? id.ToString();
         }
 
         private void PressRow(Row r)
