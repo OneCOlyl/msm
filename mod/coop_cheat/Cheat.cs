@@ -352,12 +352,13 @@ namespace CoopCheat
 
         private bool Learned(Row r)
         {
-            switch (Kind)
+            string kind = r.Tab?.Kind ?? Kind;
+            switch (kind)
             {
                 case "spell": try { return _spells.Level(r.Id) > 0; } catch { return false; }
                 case "combo":
-                case "syn": { var req = r.Req ?? Array.Empty<int>(); return req.Length > 0 && req.All(x => Count(ListFor(Kind), x) > 0); }
-                default: return Count(ListFor(Kind), r.Id) > 0;
+                case "syn": { var req = r.Req ?? Array.Empty<int>(); return req.Length > 0 && req.All(x => Count(ListFor(kind), x) > 0); }
+                default: return Count(ListFor(kind), r.Id) > 0;
             }
         }
 
@@ -540,12 +541,13 @@ namespace CoopCheat
 
         private string LevelText(Row r)
         {
-            switch (Kind)
+            string kind = r.Tab?.Kind ?? Kind;
+            switch (kind)
             {
                 case "ability":
-                case "artifact": return $"{Count(ListFor(Kind), r.Id)}/{AbilityMax(r.Id)}";
+                case "artifact": return $"{Count(ListFor(kind), r.Id)}/{AbilityMax(r.Id)}";
                 case "combo":
-                case "syn": { var req = r.Req ?? Array.Empty<int>(); return $"{req.Count(x => Count(ListFor(Kind), x) > 0)}/{req.Length}"; }
+                case "syn": { var req = r.Req ?? Array.Empty<int>(); return $"{req.Count(x => Count(ListFor(kind), x) > 0)}/{req.Length}"; }
                 default: { int lv = 0; try { lv = _spells.Level(r.Id); } catch { } return $"{lv}/{GameMax(r.Id)}"; }
             }
         }
@@ -974,10 +976,16 @@ namespace CoopCheat
                     UiKit.AddButton(win.rt, "−1 уровень", 372, y, 320, 60, 18, Gray, () => _ctx.Guard("−1", () => { PressOn(r, true); Update(); }));
                     break;
                 case "artifact":
-                    UiKit.AddButton(win.rt, "Убрать артефакт", 28, y, 664, 60, 18, Red, () => { Close(); _ctx.Guard("убрать", () => PressOn(r, true)); });
+                    if (Learned(r))
+                        UiKit.AddButton(win.rt, "Убрать артефакт", 28, y, 664, 60, 18, Red, () => { Close(); _ctx.Guard("убрать", () => PressOn(r, true)); });
+                    else
+                        UiKit.AddButton(win.rt, "Получить артефакт", 28, y, 664, 60, 18, Green, () => { Close(); _ctx.Guard("получить", () => PressOn(r, false)); });
                     break;
                 case "syn":
-                    UiKit.AddButton(win.rt, "Убрать синергию", 28, y, 664, 60, 18, Red, () => { Close(); _ctx.Guard("убрать", () => PressOn(r, true)); });
+                    if (Learned(r))
+                        UiKit.AddButton(win.rt, "Убрать синергию", 28, y, 664, 60, 18, Red, () => { Close(); _ctx.Guard("убрать", () => PressOn(r, true)); });
+                    else
+                        UiKit.AddButton(win.rt, "Получить синергию", 28, y, 664, 60, 18, Green, () => { Close(); _ctx.Guard("получить", () => PressOn(r, false)); });
                     break;
                 case "combo":
                     UiKit.AddButton(win.rt, "Откатить способности", 28, y, 664, 60, 18, Red, () => { Close(); _ctx.Guard("откат", () => PressOn(r, true)); });
