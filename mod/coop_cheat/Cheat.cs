@@ -862,7 +862,9 @@ namespace CoopCheat
 
             if (r.Tab?.Kind == "spell" && _traits.TryGetValue(r.Id, out var traits))
             {
-                double ix = 34, iy = UiKit.ScreenH - 260;
+                double iy = UiKit.ScreenH - 260;
+                double rowW = traits.Count * 86 - 10;
+                double ix = Math.Max(10, (720 - rowW) / 2);
                 int ti = 0;
                 foreach (int traitId in traits)
                 {
