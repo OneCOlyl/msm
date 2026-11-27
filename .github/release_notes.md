@@ -9,8 +9,8 @@
 - **Cheat: a description window for every entry.** Tapping a card now opens its description instead of changing the level at once. A spell shows its traits and combinations, a synergy its artifacts, an artifact the synergies that use it, a combination its parts. The window raises or lowers a spell or ability by one level, removes an artifact or synergy, and rolls back a combination's abilities.
 - **Чит: окно описания для каждой записи.** Нажатие на карточку теперь открывает описание, а не меняет уровень сразу. У магии видны её особенности и комбинации, у синергии — артефакты, у артефакта — синергии с ним, у комбинации — составляющие. В окне можно поднять или опустить уровень магии или способности на 1, убрать артефакт или синергию и откатить способности комбинации.
 
-- **Cheat: a spell's traits are icons in its window.** At the bottom of a spell's description there is one button per trait; tapping it opens that trait's description. The game's trait sprites are not in the static sprite lists, so the buttons use the trait's initial.
-- **Чит: особенности магии — значки в её окне.** Внизу описания магии по кнопке на каждую особенность; нажатие открывает описание этой особенности. Спрайты особенностей игры не лежат в статических массивах, поэтому на кнопках первая буква названия.
+- **Cheat: a spell's traits are icons in its window.** At the bottom of a spell's description there is one button per trait; tapping it opens that trait's description. The buttons take the game's own trait sprites from its ability-show sheets (`X_Select_AbilityShow`); the initial is only a fallback when the game has not created those sheets yet.
+- **Чит: особенности магии — значки в её окне.** Внизу описания магии по кнопке на каждую особенность; нажатие открывает описание этой особенности. Значки берутся из игровых листов особенностей (`X_Select_AbilityShow`); первая буква — только запасной вариант, если игра ещё не создала эти листы.
 
 ## Co-op 1.11.0
 

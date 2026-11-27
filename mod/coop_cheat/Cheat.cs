@@ -101,6 +101,7 @@ namespace CoopCheat
         private object _abilityMgr;                                  // V_Ability_Manager: ловится хуком на его Update
         private readonly Dictionary<int, int> _forced = new Dictionary<int, int>();   // выданные читом уровни: держим их перед каждым StartInformation_B
         private readonly Dictionary<int, List<int>> _traitLevels = new Dictionary<int, List<int>>();   // магия → уровни, на которых игра предлагает особенность
+        private Dictionary<int, nint> _sheetIcons;   // ID особенности → спрайт из нижнего ряда игрового окна магии
 
         public Cheat(ModContext ctx)
         {
@@ -241,8 +242,51 @@ namespace CoopCheat
         private static string CardName(string name) => name.Length > 15 ? name.Substring(0, 14) + "…" : name;
         private static string Initial(string name) => string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1).ToUpperInvariant();
 
+        private Dictionary<int, nint> ShowIcons()
+        {
+            var res = new Dictionary<int, nint>();
+            try
+            {
+                var asm = _db?.GetType().Assembly;
+                var showType = asm?.GetType("V_AbilityShow");
+                var sheetType = asm?.GetType("X_Select_AbilityShow");
+                if (showType == null || sheetType == null) return res;
+                var find = typeof(Resources).GetMethod("FindObjectsOfTypeAll", new[] { typeof(Type) })
+                    ?? typeof(UnityEngine.Object).GetMethod("FindObjectsOfType", new[] { typeof(Type) });
+                if (find == null) return res;
+                var idField = sheetType.GetField("Apply_AbilityID", Any);
+                var imgField = sheetType.GetField("Img_AbilityPortrait", Any);
+                void Add(object sheet)
+                {
+                    if (sheet == null || res.Count >= 32) return;
+                    int id = Convert.ToInt32(idField?.GetValue(sheet) ?? 0);
+                    var img = imgField?.GetValue(sheet) as Image;
+                    var sprite = img != null ? img.GetType().GetProperty("sprite")?.GetValue(img) : null;
+                    if (id == 0 || sprite == null) return;
+                    var ptr = sprite.GetType().GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance)?.GetValue(sprite);
+                    if (ptr is nint p && p != IntPtr.Zero) res[id] = p;
+                }
+                var sheets = find.Invoke(null, new object[] { sheetType }) as Array;
+                if (sheets != null) foreach (var sheet in sheets) Add(sheet);
+                var shows = find.Invoke(null, new object[] { showType }) as Array;
+                var listField = showType.GetField("List_ObjAbilityShowSheet", Any);
+                if (shows != null) foreach (var show in shows)
+                {
+                    if (!(listField?.GetValue(show) is System.Collections.IEnumerable list)) continue;
+                    foreach (var item in list)
+                    {
+                        if (!(item is GameObject go)) continue;
+                        Add(go.GetType().GetMethod("GetComponent", new[] { typeof(Type) })?.Invoke(go, new object[] { sheetType }));
+                    }
+                }
+            }
+            catch { }
+            return res;
+        }
+
         private nint IconSprite(Row r)
         {
+            if (r.Tab?.Kind == "ability" && _sheetIcons != null && _sheetIcons.TryGetValue(r.Id, out var sheet)) return sheet;
             string field = Kind == "combo" ? "SpriteList_MagicComPortrait" : Kind == "syn" ? "SpriteList_SynergyPortrait" : "SpriteList_AbilityPortrait";
             nint sprite = UiKit.GameSprite(field, r.Icon > 0 ? r.Icon : r.Id);
             if (sprite == IntPtr.Zero && Kind == "ability") { sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Slot); if (sprite == IntPtr.Zero) sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Slot + 1); }
@@ -758,6 +802,7 @@ namespace CoopCheat
 
         private void OpenDetail(Row r)
         {
+            _sheetIcons = r.Tab?.Kind == "spell" || r.Tab?.Kind == "ability" ? ShowIcons() : null;
             var win = UiKit.OpenPage("cheat_detail", r.Tab?.Label ?? "", null, () => Refresh());
             double cardH = UiKit.ScreenH - 460;
             var card = UiKit.Node("detail_card", win.rt);
@@ -786,6 +831,7 @@ namespace CoopCheat
             if (r.Tab?.Kind == "spell" && _traits.TryGetValue(r.Id, out var traits))
             {
                 double ix = 34, iy = UiKit.ScreenH - 260;
+                int ti = 0;
                 foreach (int traitId in traits)
                 {
                     var row = RowOf("ability", traitId);
@@ -793,7 +839,11 @@ namespace CoopCheat
                     row.Tab = _tabs.FirstOrDefault(t => t.Rows.Contains(row));
                     int id = traitId;
                     var b = UiKit.AddButton(win.rt, "", ix, iy, 76, 76, 0, Gray, () => _ctx.Guard("особенность", () => OpenDetail(row)));
-                    nint sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Slot);
+                    nint sp = _sheetIcons != null && _sheetIcons.TryGetValue(id, out var sheet) ? sheet : IntPtr.Zero;
+                    if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", ti);
+                    if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", ti + 1);
+                    if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Id);
+                    if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Slot);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Slot + 1);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityPortrait", id);
                     if (sp != IntPtr.Zero)
@@ -807,6 +857,7 @@ namespace CoopCheat
                     }
                     else UiKit.Tint(UiKit.Label(b.transform, Initial(row.Name), 0, 0, 76, 76, 26, 4), UiKit.Gold);
                     ix += 86;
+                    ti++;
                 }
             }
 
