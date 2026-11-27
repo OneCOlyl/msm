@@ -38,7 +38,7 @@ menu: section tabs on top, then a scrolling grid of the game portraits with the 
 entries are bright, the rest are dim. Tapping a card opens its description: a spell shows its traits and combinations,
 a synergy its artifacts, an artifact the synergies that use it as icons, a combination its parts. A spell also shows its
 traits as icons at the bottom; tapping one opens that trait's description. In that window a spell or
-ability can be raised or lowered by one level, an artifact or synergy removed, and a combination's abilities rolled back.
+ability can be raised or lowered by one level; a missing artifact or synergy can be obtained and an existing one removed; a combination's abilities can be rolled back.
 
 - tabs: spells, traits, special passives, passives, artifacts, enchantments, combinations, synergies;
 - research is a main-menu meta upgrade and is not in the in-battle menu; the passives offered at the maximum hero level are
