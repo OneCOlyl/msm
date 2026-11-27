@@ -1,3 +1,11 @@
+## Не выпущено
+
+- **Cheat: the trait choice stays the game's own.** «Все магии — максимум» stops each spell one level before its next trait choice, for example 6/7 (Magic Bolt — 3/7 before level 4). The player then presses «Уровень героя +1», picks the spell, and the game itself raises it and opens the trait window. The cheat does not open trait windows.
+- **Чит: выбор особенности остаётся игровым.** «Все магии — максимум» останавливает каждую магию за уровень до следующей особенности, например 6/7 (Пуля — 3/7 перед уровнем 4). Дальше игрок нажимает «Уровень героя +1», выбирает магию, и игра сама поднимает уровень и открывает окно особенности. Чит не открывает окна особенностей.
+
+- **Cheat: no Research tab in battle.** Research is a main-menu meta upgrade, so the in-battle cheat no longer lists it. The passives offered at the maximum hero level stay under «Спец.пасс.» and «Пассив».
+- **Чит: вкладки исследований в бою больше нет.** Исследования — мета-прогресс главного меню, поэтому в боевом чите их больше нет. Пассивки, которые игра предлагает на максимальном уровне героя, остаются на вкладках «Спец.пасс.» и «Пассив».
+
 ## Co-op 1.11.0
 
 - **Friends look like the characters they play.** An ally used to be a recolored copy of your own hero. Now the friend's appearance number travels in the state update, and the ally is drawn with that character's frames; the animation frame still comes from your hero. Schools and subjects keep their own look. An older version on either side shows the old copy.

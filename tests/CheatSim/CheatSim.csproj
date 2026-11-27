@@ -17,5 +17,6 @@
     <Reference Include="modkit_data"><HintPath>$(Libs)/modkit_data.dll</HintPath></Reference>
     <Reference Include="modkit_spells_data"><HintPath>$(Libs)/modkit_spells_data.dll</HintPath></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(Stubs)/UnityEngine.CoreModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(Stubs)/UnityEngine.UI.dll</HintPath></Reference>
   </ItemGroup>
 </Project>

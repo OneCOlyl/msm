@@ -33,13 +33,18 @@ Commands: `get`, `ls`, `lsall`, `methods`, `nested`, `set`, `call`, `hook`, `ski
 
 ## coop_cheat: cheat
 
-In battle, the «ЧИТ» button on the right opens a panel:
+In battle, the «ЧИТ» button on the right opens a book-style list, like the game's spell and artifact pages in the pause
+menu: section tabs on top, then a scrolling grid of the game portraits with the current level under each card. Learned
+entries are bright, the rest are dim. Tapping a card gives +1 level; in «−1 уровень» mode it removes a level.
 
-- tabs: spells, traits, special passives, passives, artifacts, other, research, enchantments, combinations, synergies;
-- tapping an entry gives +1 level; in «−1 уровень» mode it removes a level;
+- tabs: spells, traits, special passives, passives, artifacts, other, enchantments, combinations, synergies;
+- research is a main-menu meta upgrade and is not in the in-battle menu; the passives offered at the maximum hero level are
+  under «Спец.пасс.» (special passives) and «Пассив» (passives);
 - «Уровень героя +1» (hero level +1) opens the magic selection window at once: the cheat gives exactly the mana missing
   for the next level;
-- «Все магии — максимум» (all spells to max) raises all 21 spells to their limit with one tap.
+- «Все магии — максимум» (all spells to max) raises each of the 21 spells to the level before its next trait choice,
+  for example 6/7 (Magic Bolt — 3/7 before level 4). Then «Уровень героя +1» and picking the spell raises it to that
+  level, and the game itself opens the trait window (`Canvas_AbilityCh`). The cheat does not open trait windows.
 
 A level is given the same way as a choice in the game: the ID goes into the learned list and the hero is recalculated.
 If the level did not grow, the cheat writes it directly. The log (`[coop_cheat]`) shows which way worked.

@@ -122,9 +122,16 @@ Console.WriteLine("6. все магии — максимум одним нажа
     int Mx(int id) => (int)ct.GetMethod("Max", fl).Invoke(cheat, new object[] { id });
     var notMax = Enumerable.Range(1, 21).Where(id => Mx(id) > 0 && Lv(id) < Mx(id)).ToList();
     Check(notMax.Count == 0, $"все заклинания на максимуме (не дотянули: {string.Join(",", notMax)})");
-    Check(ctx.Toasts.Any(t => t.StartsWith("Все магии на максимуме")), "показано «Все магии на максимуме»");
+    Check(ctx.Toasts.Any(t => t.StartsWith("Все магии готовы к выбору особенностей")), "показано «Все магии готовы к выбору особенностей»");
+    Check(Lv(1) == 3, $"Пуля поднята до 3 — перед особенностью 4, а не до 7: {Lv(1)}");
+    Z_Database.RecalcFromLearn = false;
+    Z_Database.List_AllyMagicLevel[1] = 4;
+    Check((int)ct.GetMethod("Max", fl).Invoke(cheat, new object[] { 1 }) == 6, "после особенности 4 предел чита — 6 (перед 7)");
+    Z_Database.List_AllyMagicLevel[1] = 7;
+    Check((int)ct.GetMethod("Max", fl).Invoke(cheat, new object[] { 1 }) == 7, "на максимуме 7 предел чита — 7");
+    Z_Database.RecalcFromLearn = true;
     ct.GetMethod("MaxAll", fl).Invoke(cheat, null);
-    Check(ctx.Toasts.Last().Contains("уже на максимуме"), "повторное нажатие — «уже на максимуме»");
+    Check(ctx.Toasts.Last().Contains("уже готовы к выбору особенностей"), "повторное нажатие — «уже готовы»");
 }
 ctx.Sp.InBattle = false; Press(1, "Пуля");
 Check(ctx.Toasts.Any(t => t.Contains("Только в бою")), "вне боя не выдаёт");

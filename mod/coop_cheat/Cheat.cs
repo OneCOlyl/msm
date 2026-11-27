@@ -4,6 +4,8 @@ using System.Linq;
 using System.Reflection;
 using ModKit;
 using ModKitData;
+using UnityEngine;
+using UnityEngine.UI;
 
 namespace CoopCheat
 {
@@ -34,8 +36,10 @@ namespace CoopCheat
         };
         private static readonly double[] Gray = { 0.25, 0.25, 0.30, 0.92 };
         private static readonly double[] Green = { 0.18, 0.50, 0.25, 0.95 };
-        private static readonly double[] Red = { 0.60, 0.20, 0.20, 0.95 };
         private static readonly double[] Blue = { 0.20, 0.40, 0.80, 0.95 };
+        private static readonly double[] GoldTab = { 0.62, 0.48, 0.16, 0.95 };
+        private static readonly double[] Page = { 0.12, 0.12, 0.13, 0.96 };
+        private static readonly double[] Clear = { 0.0, 0.0, 0.0, 0.01 };
 
         private readonly ModContext _ctx;
         private readonly ISpells _spells;
@@ -47,7 +51,7 @@ namespace CoopCheat
         // Комбо и синергии игра даёт сама, когда выучены их составляющие (MagicCom 특성A/B/C레벨, Synergy ID_01…05 — номера
         // способностей Ability): чит учит недостающие составляющие. 0.4.0 клал номер комбо в список выученного — это номер
         // другой способности (Комбо 1 = Пуля), так нельзя.
-        private sealed class Row { public int Id; public string Name; public int[] Req; public int Grade = -1; }
+        private sealed class Row { public int Id; public string Name; public int[] Req; public int Grade = -1; public int Icon; }
 
         // Редкость артефакта — в каком пуле игры его номер: Z_Database.List_ArtifactPossibleGrade_<буква>, от частых к редким (как в
         // modkit_data: C, B, A, P, S). S игра подписывает «Special Artifact». Пулы читаются при первом открытии меню в бою.
@@ -59,6 +63,7 @@ namespace CoopCheat
         };
         private sealed class TabDef { public string Label, Kind; public List<Row> Rows = new List<Row>(); }
         private readonly List<TabDef> _tabs = new List<TabDef>();
+        private readonly Dictionary<int, List<int>> _traits = new Dictionary<int, List<int>>();   // базовое заклинание → его особенности (특성)
         private static readonly Dictionary<string, string> TypeNames = new Dictionary<string, string>
         {
             // типы таблицы Ability (журнал 0.4.1): 특성 — особенности заклинаний (Magic Arrow, Fireworks…), 특수패시브 — специальные
@@ -67,18 +72,27 @@ namespace CoopCheat
             ["인챈트"] = "Зачаров.", ["`"] = "Прочее", ["마법"] = "Магия", ["조합"] = "Комбо",
         };
         private static readonly string[] TypeOrder = { "특성", "특수패시브", "패시브", "아티팩트", "`", "연구", "인챈트" };
+        private static readonly Dictionary<string, string> Headers = new Dictionary<string, string>
+        {
+            ["Особенн."] = "Особенности", ["Спец.пасс."] = "Спец. пассивы", ["Пассив"] = "Пассивы",
+            ["Исслед."] = "Исследования", ["Зачаров."] = "Зачарование",
+        };
         // Пустые записи таблиц игры: вместо имени «`» (170 штук в Ability).
         private static bool Blank(string name) => string.IsNullOrWhiteSpace(name) || name.Trim() == "`" || name == "Name";
-        private const int PerPage = 21;
-        private int _tab, _pageStart;
+        private const double CardW = 118, CardH = 150, CardGap = 8;
+        private int _tab;
         private bool _tablesLoaded;
-        private readonly List<UiKit.HudButton> _chrome = new List<UiKit.HudButton>();
         private readonly IEffects _effects;
         private readonly Dictionary<int, int> _max = new Dictionary<int, int>();
 
-        private UiKit.HudButton _toggle, _mode, _close, _levelUp;
-        private readonly Dictionary<int, UiKit.HudButton> _buttons = new Dictionary<int, UiKit.HudButton>();
-        private readonly Dictionary<int, string> _shown = new Dictionary<int, string>();   // текст на кнопке: SetText только при изменении
+        private UiKit.HudButton _toggle;
+        private GameObject _panel;
+        private RectTransform _content;
+        private Text _modeText;
+        private readonly Dictionary<int, Text> _labels = new Dictionary<int, Text>();
+        private readonly Dictionary<int, Image> _icons = new Dictionary<int, Image>();
+        private readonly Dictionary<int, bool> _lit = new Dictionary<int, bool>();
+        private readonly Dictionary<int, string> _shown = new Dictionary<int, string>();   // текст уровня: меняется только при изменении
         private readonly Dictionary<string, Dictionary<int, int>> _counts = new Dictionary<string, Dictionary<int, int>>();   // список игры → сколько раз в нём номер; чистится при каждом обновлении
         private readonly Dictionary<int, int> _abilityMax = new Dictionary<int, int>();   // Ability.최대레벨: больше игра не ждёт — лишние уровни ломали её (Barrier ×10 → Change_ShieldMax вне массива)
         private const string LearnList = "List_AllyAbilityLearn", ArtifactList = "List_ArtifactObtain";
@@ -86,6 +100,7 @@ namespace CoopCheat
         private Type _db;
         private object _abilityMgr;                                  // V_Ability_Manager: ловится хуком на его Update
         private readonly Dictionary<int, int> _forced = new Dictionary<int, int>();   // выданные читом уровни: держим их перед каждым StartInformation_B
+        private readonly Dictionary<int, List<int>> _traitLevels = new Dictionary<int, List<int>>();   // магия → уровни, на которых игра предлагает особенность
 
         public Cheat(ModContext ctx)
         {
@@ -136,51 +151,127 @@ namespace CoopCheat
             ClearPage();
             _counts.Clear();
             if (_tabs.Count == 0) _tabs.Add(new TabDef { Label = "Магии", Kind = "spell", Rows = Spells.Select(x => new Row { Id = x.id, Name = x.name }).ToList() });
-            if (_tab >= _tabs.Count) _tab = 0;
-            int tabRows = (_tabs.Count + 4) / 5;
+            if (_tab < 0 || _tab >= _tabs.Count) _tab = 0;
+            _toggle?.SetVisible(false);
+
+            var win = UiKit.Node("cheat_book", UiKit.CanvasTf);
+            _panel = win.go;
+            UiKit.Stretch(win.rt);
+            UiKit.AddImage(win.go, 0.02, 0.02, 0.03, 0.95);
+
+            UiKit.Tint(UiKit.Label(win.rt, Header(), 0, 26, 720, 62, 34, 4), UiKit.Gold);
+            UiKit.AddButton(win.rt, "X", 636, 24, 64, 64, 38, Clear, HidePanel);
+
+            const int cols = 5;
+            int tabRows = (_tabs.Count + cols - 1) / cols;
             for (int t = 0; t < _tabs.Count; t++)
             {
                 int tab = t;
-                var td = _tabs[t];
-                string text = t == 0 ? td.Label : $"{td.Label} {td.Rows.Count}";
-                _chrome.Add(UiKit.AddHudButton("cheat_tab" + t, text, 15 + (t % 5) * 117, 262 - (tabRows - 1 - t / 5) * 60, 112, 54, 15, t == _tab ? Blue : Gray,
-                    () => _ctx.Guard("вкладка", () => { _tab = tab; _pageStart = 0; ShowPage(); })));
+                UiKit.AddButton(win.rt, TabText(_tabs[t]), 10 + (t % cols) * 142, 96 + (t / cols) * 46, 134, 40, 12,
+                    t == _tab ? GoldTab : Gray, () => _ctx.Guard("вкладка", () => { _tab = tab; ShowPage(); }));
             }
+
+            double pageY = 96 + tabRows * 46 + 8;
+            double actionsY = UiKit.ScreenH - 58;
+            double pageH = actionsY - 10 - pageY;
+            UiKit.AddButton(win.rt, "", 22, pageY, 676, pageH, 0, Page, () => { });
+            _content = UiKit.AddScroll(win.rt, 32, pageY + 10, 656, pageH - 20);
+
             var items = Items();
-            for (int i = 0; i < PerPage && _pageStart + i < items.Count; i++)
+            double height = 8 + ((items.Count + cols - 1) / cols) * (CardH + CardGap);
+            UiKit.SetContentHeight(_content, 660, Math.Max(CardH + 16, height));
+            for (int i = 0; i < items.Count; i++)
+                AddCard(items[i], 8 + (i % cols) * (CardW + CardGap), 8 + (i / cols) * (CardH + CardGap));
+
+            var mode = UiKit.AddButton(win.rt, ModeText(), 22, actionsY, 210, 48, 13, Green,
+                () => _ctx.Guard("режим", () => { _minus = !_minus; if (_modeText != null) _modeText.text = ModeText(); }));
+            _modeText = mode.gameObject.GetComponentInChildren<Text>(true);
+            UiKit.AddButton(win.rt, "Уровень героя +1", 242, actionsY, 230, 48, 13, Blue, () => _ctx.Guard("уровень героя", StartLevelUp));
+            UiKit.AddButton(win.rt, "Все магии — максимум", 482, actionsY, 216, 48, 13, Green, () => _ctx.Guard("все магии", MaxAll));
+        }
+
+        private void AddCard(Row r, double x, double y)
+        {
+            bool lit = Learned(r);
+            var border = Kind == "artifact" && r.Grade >= 0 ? GradeColors[r.Grade] : Gray;
+            var card = UiKit.AddButton(_content, "", x, y, CardW, CardH, 0, border, () => _ctx.Guard("запись", () => PressRow(r)));
+            var tf = card.transform;
+
+            var inner = UiKit.Node("in", tf);
+            UiKit.Place(inner.rt, 3, 3, CardW - 6, CardH - 6);
+            UiKit.AddImage(inner.go, 0.06, 0.07, 0.10, 0.98).raycastTarget = false;
+
+            nint sprite = IconSprite(r);
+            if (sprite != IntPtr.Zero)
             {
-                var r = items[_pageStart + i];
-                int col = i % 3, row = i / 3;
-                string text = Label(r);
-                _shown[r.Id] = text;
-                var color = Kind == "artifact" && r.Grade >= 0 ? GradeColors[r.Grade] : Gray;
-                _buttons[r.Id] = UiKit.AddHudButton("cheat_" + r.Id, text, 15 + col * 235, 330 + row * 66, 225, 58, 16, color, () => _ctx.Guard("запись", () => PressRow(r)));
+                var icon = UiKit.Node("icon", tf);
+                UiKit.Place(icon.rt, 7, 7, CardW - 14, CardH - 48);
+                var img = UiKit.AddImage(icon.go, 1, 1, 1, 1);
+                img.raycastTarget = false;
+                img.preserveAspect = true;
+                img.color = UiKit.Col(1, 1, 1, lit ? 0.96 : 0.35);
+                UiKit.SetSprite(img, sprite);
+                _icons[r.Id] = img;
             }
-            int y = 330 + 7 * 66 + 8;
-            _mode = UiKit.AddHudButton("cheat_mode", ModeText(), 15, y, 340, 60, 22, Green, () => _ctx.Guard("режим", () => { _minus = !_minus; _mode?.SetText(ModeText()); }));
-            _close = UiKit.AddHudButton("cheat_close", "Закрыть", 370, y, 340, 60, 22, Gray, () => _ctx.Guard("закрыть", HidePanel));
-            _levelUp = UiKit.AddHudButton("cheat_levelup", "Уровень героя +1", 15, y + 68, 340, 60, 22, Blue, () => _ctx.Guard("уровень героя", StartLevelUp));
-            _chrome.Add(UiKit.AddHudButton("cheat_maxall", "Все магии — максимум", 370, y + 68, 340, 60, 22, Green, () => _ctx.Guard("все магии", MaxAll)));
-            if (items.Count > PerPage)
+            else
             {
-                int pages = (items.Count + PerPage - 1) / PerPage, page = _pageStart / PerPage + 1;
-                _chrome.Add(UiKit.AddHudButton("cheat_prev", "◀", 15, y + 136, 160, 60, 24, Gray, () => _ctx.Guard("листать", () => { _pageStart = Math.Max(0, _pageStart - PerPage); ShowPage(); })));
-                _chrome.Add(UiKit.AddHudButton("cheat_pagen", $"стр. {page}/{pages}", 185, y + 136, 360, 60, 22, Gray, () => { }));
-                _chrome.Add(UiKit.AddHudButton("cheat_next", "▶", 555, y + 136, 160, 60, 24, Gray, () => _ctx.Guard("листать", () => { if (_pageStart + PerPage < items.Count) _pageStart += PerPage; ShowPage(); })));
+                UiKit.Tint(UiKit.Label(tf, Initial(r.Name), 4, 8, CardW - 8, CardH - 52, 30, 4), UiKit.Gold);
             }
+
+            UiKit.Tint(UiKit.Label(tf, CardName(r.Name), 3, CardH - 40, CardW - 6, 16, 10, 4), UiKit.Col(0.82, 0.85, 0.90, 0.95));
+            _labels[r.Id] = UiKit.Tint(UiKit.Label(tf, LevelText(r), 3, CardH - 24, CardW - 6, 18, 13, 4), UiKit.Gold);
+            _shown[r.Id] = LevelText(r);
+            _lit[r.Id] = lit;
         }
 
         private List<Row> Items() => _tab < _tabs.Count ? _tabs[_tab].Rows : new List<Row>();
         private string Kind => _tab < _tabs.Count ? _tabs[_tab].Kind : "spell";
 
+        private string Header()
+        {
+            switch (Kind)
+            {
+                case "spell": return "Заклинания";
+                case "artifact": return "Артефакты";
+                case "combo": return "Комбинации";
+                case "syn": return "Синергии";
+                default: return Headers.TryGetValue(_tabs[_tab].Label, out var title) ? title : _tabs[_tab].Label;
+            }
+        }
+
+        private static string TabText(TabDef td) => $"{td.Label} {td.Rows.Count}";
+        private static string CardName(string name) => name.Length > 15 ? name.Substring(0, 14) + "…" : name;
+        private static string Initial(string name) => string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1).ToUpperInvariant();
+
+        private nint IconSprite(Row r)
+        {
+            string field = Kind == "combo" ? "SpriteList_MagicComPortrait" : Kind == "syn" ? "SpriteList_SynergyPortrait" : "SpriteList_AbilityPortrait";
+            nint sprite = UiKit.GameSprite(field, r.Icon > 0 ? r.Icon : r.Id);
+            if (sprite == IntPtr.Zero && Kind == "syn") sprite = UiKit.GameSprite("SpriteList_SynergyNum", r.Id);
+            return sprite;
+        }
+
+        private bool Learned(Row r)
+        {
+            switch (Kind)
+            {
+                case "spell": try { return _spells.Level(r.Id) > 0; } catch { return false; }
+                case "combo":
+                case "syn": { var req = r.Req ?? Array.Empty<int>(); return req.Length > 0 && req.All(x => Count(ListFor(Kind), x) > 0); }
+                default: return Count(ListFor(Kind), r.Id) > 0;
+            }
+        }
+
         private void ClearPage()
         {
-            foreach (var b in _buttons.Values) { try { b.Destroy(); } catch { } }
-            _buttons.Clear();
+            if (_panel != null) UiKit.SafeDestroy(_panel);
+            _panel = null;
+            _content = null;
+            _modeText = null;
+            _labels.Clear();
+            _icons.Clear();
+            _lit.Clear();
             _shown.Clear();
-            foreach (var b in _chrome) { try { b?.Destroy(); } catch { } }
-            _chrome.Clear();
-            Kill(ref _mode); Kill(ref _close); Kill(ref _levelUp);
         }
 
         // ------------------------------------------------------------ таблицы игры (Ability, MagicCom, Synergy)
@@ -205,6 +296,7 @@ namespace CoopCheat
                 var tb = _tables.Table("Ability");
                 var cols = tb.Columns();
                 string nameCol = NameColumn(cols), typeCol = cols.Contains("유형") ? "유형" : null, maxCol = cols.Contains("최대레벨") ? "최대레벨" : null;
+                string derivedCol = cols.Contains("파생기술ID") ? "파생기술ID" : null;
                 var byType = new Dictionary<string, TabDef>();
                 for (int r = 0; r < tb.Length; r++)
                 {
@@ -212,11 +304,25 @@ namespace CoopCheat
                     string name = Cell(tb, r, nameCol);
                     if (id <= 0 || Blank(name)) continue;                   // строка 0 — заголовок таблицы; пустые записи
                     _abilityMax[id] = CellInt(tb, r, maxCol);
-                    if (id <= 21) continue;                                 // 21 заклинание — на вкладке «Магии»
+                    if (id <= 21)
+                    {
+                        var levels = new[] { "특성A레벨", "특성B레벨" }.Select(c => CellInt(tb, r, c)).Where(x => x > 0).Distinct().OrderBy(x => x).ToList();
+                        if (levels.Count > 0) _traitLevels[id] = levels;
+                        continue;                                           // 21 заклинание — на вкладке «Магии»
+                    }
                     string type = Cell(tb, r, typeCol) ?? "?";
+                    if (type == "연구") continue;                         // исследования — мета-прогресс главного меню
                     if (!byType.TryGetValue(type, out var td))
                         byType[type] = td = new TabDef { Label = TypeNames.TryGetValue(type, out var ru) ? ru : "Тип " + (byType.Count + 1), Kind = type == "아티팩트" ? "artifact" : "ability" };
-                    td.Rows.Add(new Row { Id = id, Name = Short(name) });
+                    int derived = type == "특성" ? CellInt(tb, r, derivedCol) : 0;
+                    int icon = derived > 0 ? derived : id;
+                    if (type == "`" && id >= 361 && id <= 541) icon = (id - 361) / 9 + 1;
+                    td.Rows.Add(new Row { Id = id, Name = Short(name), Icon = icon });
+                    if (derived > 0)
+                    {
+                        if (!_traits.TryGetValue(derived, out var list)) _traits[derived] = list = new List<int>();
+                        list.Add(id);
+                    }
                 }
                 foreach (var td in byType.Values.Where(t => t.Kind == "artifact")) SortByGrade(td);
                 // особенности и спец. пассивы — первыми (это «специальные магии»), исследования и зачарование — в конце
@@ -277,6 +383,7 @@ namespace CoopCheat
         {
             _open = false;
             ClearPage();
+            _toggle?.SetVisible(true);
         }
 
         public void Close()
@@ -290,19 +397,24 @@ namespace CoopCheat
 
         private void Refresh()
         {
-            if (!_open) return;
+            if (!_open || _panel == null) return;
             _counts.Clear();
             foreach (var r in Items())
             {
-                if (!_buttons.TryGetValue(r.Id, out var b)) continue;
-                string text = Label(r);
-                if (_shown.TryGetValue(r.Id, out var old) && old == text) continue;
-                _shown[r.Id] = text;
-                try { b.SetText(text); } catch { }
+                string text = LevelText(r);
+                if (!_shown.TryGetValue(r.Id, out var old) || old != text)
+                {
+                    _shown[r.Id] = text;
+                    if (_labels.TryGetValue(r.Id, out var label)) { try { label.text = text; } catch { } }
+                }
+                bool lit = Learned(r);
+                if (_lit.TryGetValue(r.Id, out var was) && was == lit) continue;
+                _lit[r.Id] = lit;
+                if (_icons.TryGetValue(r.Id, out var icon)) { try { icon.color = UiKit.Col(1, 1, 1, lit ? 0.96 : 0.35); } catch { } }
             }
         }
 
-        private int Max(int id)
+        private int GameMax(int id)
         {
             if (_max.TryGetValue(id, out var m)) return m;
             try { m = _data.Get(id)?.MaxLevel ?? 0; } catch { m = 0; }
@@ -311,17 +423,35 @@ namespace CoopCheat
             return m;
         }
 
-        private string Label(Row r)
+        private int Max(int id)
+        {
+            int game = GameMax(id);
+            if (!_traitLevels.TryGetValue(id, out var levels) || levels.Count == 0) return game;
+            try
+            {
+                int cur = _spells.Level(id);
+                foreach (var gate in levels)
+                    if (gate > cur) return Math.Min(gate - 1, game);
+            }
+            catch { }
+            return game;
+        }
+
+        private string LevelText(Row r)
         {
             switch (Kind)
             {
-                case "ability": return $"{r.Name} {Count(ListFor(Kind), r.Id)}/{AbilityMax(r.Id)}";
-                case "artifact": return $"{(r.Grade >= 0 ? Grades[r.Grade] : "?")} {r.Name} {Count(ListFor(Kind), r.Id)}/{AbilityMax(r.Id)}";
+                case "ability":
+                case "artifact": return $"{Count(ListFor(Kind), r.Id)}/{AbilityMax(r.Id)}";
                 case "combo":
-                case "syn": { int have = r.Req.Count(x => Count(ListFor(Kind), x) > 0); return $"{r.Name} {have}/{r.Req.Length}"; }
-                default: { int lv = 0; try { lv = _spells.Level(r.Id); } catch { } return $"{r.Name} {lv}/{Max(r.Id)}"; }
+                case "syn": { var req = r.Req ?? Array.Empty<int>(); return $"{req.Count(x => Count(ListFor(Kind), x) > 0)}/{req.Length}"; }
+                default: { int lv = 0; try { lv = _spells.Level(r.Id); } catch { } return $"{lv}/{GameMax(r.Id)}"; }
             }
         }
+
+        private string Label(Row r) => Kind == "artifact"
+            ? $"{(r.Grade >= 0 ? Grades[r.Grade] : "?")} {r.Name} {LevelText(r)}"
+            : $"{r.Name} {LevelText(r)}";
 
         // Артефакты игра держит отдельно от способностей (Z_Database.List_ArtifactObtain), составляющие синергий — артефакты.
         private static string ListFor(string kind) => kind == "artifact" || kind == "syn" ? ArtifactList : LearnList;
@@ -363,12 +493,18 @@ namespace CoopCheat
         private bool SelectOpen()
         {
             var mgr = _abilityMgr;
-            if (mgr == null) return false;
+            if (!Alive(mgr)) return false;
             foreach (var name in SelectCanvases)
             {
-                var p = mgr.GetType().GetProperty(name, Any);
-                object go = p != null ? p.GetValue(mgr) : mgr.GetType().GetField(name, Any)?.GetValue(mgr);
-                if (go != null && Invoke(go, "get_activeSelf") is bool b && b) return true;
+                object go;
+                try
+                {
+                    var p = mgr.GetType().GetProperty(name, Any);
+                    go = p != null ? p.GetValue(mgr) : mgr.GetType().GetField(name, Any)?.GetValue(mgr);
+                }
+                catch { continue; }
+                if (go == null) continue;
+                try { if (Invoke(go, "get_activeSelf") is bool b && b) return true; } catch { }
             }
             return false;
         }
@@ -376,8 +512,16 @@ namespace CoopCheat
         private void StartLevelUp()
         {
             if (!_spells.InBattle) { _ctx.Toast("Только в бою", 2); return; }
-            if (_abilityMgr == null) { _ctx.Toast("Подберите немного маны и нажмите снова", 3); _ctx.Log("уровень героя: менеджер способностей ещё не пойман"); return; }
+            if (!Alive(_abilityMgr))
+            {
+                _abilityMgr = null;
+                _ctx.Toast("Менеджер способностей ещё не готов — подождите", 3);
+                _ctx.Log("уровень героя: менеджер способностей ещё не пойман или уничтожен");
+                return;
+            }
             HidePanel();                                              // окно выбора магии не должно быть закрыто кнопками чита
+            SyncPool();                                               // убрать максимум из пула перед окном выбора
+            ClampLevels();                                            // и не дать уровням уйти выше максимума
             if (_portion > 0 || SelectOpen()) { _levelQueue++; _ctx.Toast($"Ещё уровень в очереди ({_levelQueue})", 2); return; }
             _portion = ManaToLevel(); _given = 0;
             GiveMana();
@@ -392,6 +536,14 @@ namespace CoopCheat
 
         private void GiveMana()
         {
+            if (!Alive(_abilityMgr))
+            {
+                _abilityMgr = null;
+                _portion = -1;
+                _levelQueue = 0;
+                _ctx.Log("уровень героя: менеджер способностей уничтожен");
+                return;
+            }
             var m = _abilityMgr.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance).FirstOrDefault(x => x.Name == "ManaGain" && x.GetParameters().Length == 1)
                     ?? throw new MissingMethodException("V_Ability_Manager.ManaGain");
             var arg = Convert.ChangeType(_portion, m.GetParameters()[0].ParameterType);
@@ -421,6 +573,12 @@ namespace CoopCheat
         private bool Recalc()
         {
             var mgr = _abilityMgr;
+            if (mgr != null && !Alive(mgr))
+            {
+                _ctx.Log("пересчёт: менеджер способностей уничтожен, ищу живой");
+                _abilityMgr = null;
+                mgr = null;
+            }
             if (mgr == null)
             {
                 bool viaLib = false;
@@ -465,9 +623,92 @@ namespace CoopCheat
             return m.Invoke(o, args);
         }
 
+        // Менеджер способностей пересоздаётся при входе в бой: старая обёртка остаётся не null, но объект уже уничтожен.
+        private static bool Alive(object o)
+        {
+            if (o == null) return false;
+            try
+            {
+                var p = o.GetType().GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance);
+                if (p != null && p.GetValue(o) is nint ptr) return !Raw.IsDestroyed(ptr);
+            }
+            catch { return false; }
+            return true;
+        }
+
+        // Пул выбора уровня игра строит из List_AllyAbilityPossible: пока заклинание не максимум, там его номера.
+        // Чит останавливается за уровень до особенности: такое заклинание остаётся в пуле, и следующее
+        // «Уровень героя +1» даёт его выбрать — окно особенности игра откроет сама.
+        private void SyncPool()
+        {
+            if (_traits.Count == 0) return;
+            var pool = Static("List_AllyAbilityPossible");
+            if (pool == null) return;
+            try
+            {
+                var counts = new Dictionary<int, int>();
+                foreach (var x in Items("List_AllyAbilityPossible")) counts[x] = counts.TryGetValue(x, out var n) ? n + 1 : 1;
+                int removed = 0, added = 0;
+
+                void Remove(int id)
+                {
+                    if (!counts.TryGetValue(id, out var n)) return;
+                    for (int k = 0; k < n; k++) { try { Invoke(pool, "Remove", id); } catch { break; } }
+                    counts.Remove(id);
+                    removed += n;
+                }
+                void Add(int id)
+                {
+                    if (counts.ContainsKey(id)) return;
+                    try { Invoke(pool, "Add", id); counts[id] = 1; added++; } catch { }
+                }
+
+                for (int spell = 1; spell <= 21; spell++)
+                {
+                    bool maxed;
+                    try { maxed = _spells.Level(spell) >= GameMax(spell); } catch { continue; }
+                    _traits.TryGetValue(spell, out var traits);
+                    if (maxed)
+                    {
+                        Remove(spell);
+                        if (traits != null) foreach (var trait in traits) Remove(trait);
+                    }
+                    else
+                    {
+                        if (traits != null) foreach (var trait in traits) Remove(trait);
+                        Add(spell);
+                    }
+                }
+                if (removed + added > 0) _ctx.Log($"пул улучшений: убрано {removed}, добавлено {added}");
+            }
+            catch (Exception e) { _ctx.Log("пул улучшений: " + Err(e)); }
+        }
+
+        // Уровни могли уйти выше максимума от прошлых выдач. Лишние записи в списке выученного
+        // заставляют игру снова предлагать ту же магию и её особенность — обрезаем до максимума.
+        private void ClampLevels()
+        {
+            var learn = Static(LearnList);
+            foreach (var (id, _) in Spells)
+            {
+                int max;
+                try { max = GameMax(id); } catch { continue; }
+                int guard = 0;
+                while (true)
+                {
+                    int cur;
+                    try { cur = _spells.Level(id); } catch { break; }
+                    if (cur <= max || learn == null || guard++ > 32) break;
+                    try { if (!(bool)Invoke(learn, "Remove", id)) break; } catch { break; }
+                }
+                try { if (_spells.Level(id) > max) TryDirect(id, max); } catch { }
+            }
+        }
+
         private void MaxAll()
         {
             if (!_spells.InBattle) { _ctx.Toast("Только в бою", 2); return; }
+            ClampLevels();
             var learn = Static("List_AllyAbilityLearn");
             var want = new List<(int id, string name, int max)>();
             int added = 0;
@@ -481,7 +722,7 @@ namespace CoopCheat
                 if (learn != null)
                     for (int k = cur; k < max; k++) { try { Invoke(learn, "Add", id); added++; } catch { break; } }
             }
-            if (want.Count == 0) { _ctx.Toast("Все магии уже на максимуме", 2); return; }
+            if (want.Count == 0) { SyncPool(); _ctx.Toast("Все магии уже готовы к выбору особенностей", 2); return; }
             bool ok = added > 0 && Recalc();
             int direct = 0, failed = 0;
             foreach (var (id, name, max) in want)
@@ -489,8 +730,9 @@ namespace CoopCheat
                 if (_spells.Level(id) >= max) continue;
                 if (TryDirect(id, max)) direct++; else failed++;
             }
-            _ctx.Log($"чит: все магии — максимум: заклинаний {want.Count}, записей в список выученного {added} (пересчёт {(ok ? "прошёл" : "не прошёл")}), прямой записью {direct}, не вышло {failed}");
-            _ctx.Toast(failed == 0 ? $"Все магии на максимуме ({want.Count})" : $"Магии на максимуме, кроме {failed} (см. журнал)", 3);
+            _ctx.Log($"чит: все магии — к особенностям: заклинаний {want.Count}, записей в список выученного {added} (пересчёт {(ok ? "прошёл" : "не прошёл")}), прямой записью {direct}, не вышло {failed}");
+            _ctx.Toast(failed == 0 ? $"Все магии готовы к выбору особенностей ({want.Count})" : $"Магии готовы, кроме {failed} (см. журнал)", 3);
+            SyncPool();
             Refresh();
         }
 
@@ -498,13 +740,20 @@ namespace CoopCheat
         {
             if (!_spells.InBattle) { _ctx.Toast("Только в бою", 2); return; }
             int cur = _spells.Level(id), max = Max(id);
-            if (!_minus && cur >= max) { _ctx.Toast($"{name}: уже максимум", 2); return; }
+            if (!_minus && cur >= max)
+            {
+                string next = _traitLevels.TryGetValue(id, out var levels) && levels.Count > 0 && levels.Any(x => x > cur)
+                    ? "дальше — выбор особенности («Уровень героя +1»)" : "уже максимум";
+                _ctx.Toast($"{name}: {next}", 2);
+                return;
+            }
             if (_minus && cur <= 0) { _ctx.Toast($"{name}: нет уровней", 2); return; }
             int want = _minus ? cur - 1 : cur + 1;
             string how = TryLearnList(id, want) ? "список выученного" : TryDirect(id, want) ? "прямая запись" : null;
             int now = _spells.Level(id);
             _ctx.Log($"{name} (ID {id}): {cur} → {now} (нужно {want}), способ: {how ?? "не сработал"}");
             _ctx.Toast(how != null ? $"{name}: уровень {now}" : $"{name}: не удалось (см. журнал)", 2);
+            SyncPool();
             Refresh();
         }
 
@@ -529,6 +778,7 @@ namespace CoopCheat
             }
             if (changed.Count == 0) { _ctx.Toast(_minus ? $"{r.Name}: нечего снимать" : single ? $"{r.Name}: уже максимум" : $"{r.Name}: уже всё есть", 2); return; }
             bool ok = Recalc();
+            if (Kind == "ability") SyncPool();
             string syn = synBefore == null ? "" : $"; синергии игры: [{string.Join(",", synBefore)}] → [{string.Join(",", Items("List_ApplySynergyON"))}]";
             _ctx.Log($"{_tabs[_tab].Label} «{r.Name}» ({r.Id}): {listName} {string.Join(", ", changed)}; пересчёт {(ok ? "прошёл" : "не прошёл")}{syn}");
             _ctx.Toast($"{r.Name}: {Label(r)}", 2);
