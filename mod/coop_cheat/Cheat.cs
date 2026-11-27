@@ -171,12 +171,14 @@ namespace CoopCheat
             UiKit.Tint(UiKit.Label(win.rt, Header(), 0, 26, 720, 62, 34, 4), UiKit.Gold);
             UiKit.AddButton(win.rt, "X", 636, 24, 64, 64, 38, Clear, HidePanel);
 
-            const int cols = 5;
-            int tabRows = (_tabs.Count + cols - 1) / cols;
+            const int tabCols = 4;
+            int tabRows = (_tabs.Count + tabCols - 1) / tabCols;
+            const double tabW = 134, tabGap = 8, tabStep = tabW + tabGap;
+            double tabX = (720 - (tabCols * tabW + (tabCols - 1) * tabGap)) / 2;
             for (int t = 0; t < _tabs.Count; t++)
             {
                 int tab = t;
-                UiKit.AddButton(win.rt, TabText(_tabs[t]), 10 + (t % cols) * 142, 96 + (t / cols) * 46, 134, 40, 12,
+                UiKit.AddButton(win.rt, TabText(_tabs[t]), tabX + (t % tabCols) * tabStep, 96 + (t / tabCols) * 46, tabW, 40, 12,
                     t == _tab ? GoldTab : Gray, () => _ctx.Guard("вкладка", () => { _tab = tab; ShowPage(); }));
             }
 
@@ -187,6 +189,7 @@ namespace CoopCheat
             _content = UiKit.AddScroll(win.rt, 32, pageY + 10, 656, pageH - 20);
 
             var items = Items();
+            const int cols = 5;
             double height = 8 + ((items.Count + cols - 1) / cols) * (CardH + CardGap);
             UiKit.SetContentHeight(_content, 660, Math.Max(CardH + 16, height));
             for (int i = 0; i < items.Count; i++)
