@@ -102,6 +102,7 @@ namespace CoopCheat
         private readonly Dictionary<int, int> _forced = new Dictionary<int, int>();   // выданные читом уровни: держим их перед каждым StartInformation_B
         private readonly Dictionary<int, List<int>> _traitLevels = new Dictionary<int, List<int>>();   // магия → уровни, на которых игра предлагает особенность
         private Dictionary<int, nint> _sheetIcons;   // ID особенности → спрайт из нижнего ряда игрового окна магии
+        private static readonly byte[][] _slotIcons = new byte[6][];
 
         public Cheat(ModContext ctx)
         {
@@ -241,6 +242,20 @@ namespace CoopCheat
         private static string TabText(TabDef td) => $"{td.Label} {td.Rows.Count}";
         private static string CardName(string name) => name.Length > 15 ? name.Substring(0, 14) + "…" : name;
         private static string Initial(string name) => string.IsNullOrEmpty(name) ? "?" : name.Substring(0, 1).ToUpperInvariant();
+
+        private static byte[] SlotIcon(int slot)
+        {
+            if (slot < 0 || slot >= _slotIcons.Length) return null;
+            if (_slotIcons[slot] != null) return _slotIcons[slot];
+            var asm = typeof(Cheat).Assembly;
+            string name = asm.GetManifestResourceNames().FirstOrDefault(x => x.EndsWith($"slot{slot}.png"));
+            if (name == null) return null;
+            using var s = asm.GetManifestResourceStream(name);
+            if (s == null) return null;
+            using var ms = new System.IO.MemoryStream();
+            s.CopyTo(ms);
+            return _slotIcons[slot] = ms.ToArray();
+        }
 
         private Dictionary<int, nint> ShowIcons()
         {
@@ -816,7 +831,7 @@ namespace CoopCheat
             Refresh();
         }
 
-        private void OpenDetail(Row r)
+        private void OpenDetail(Row r, int iconSlot = -1)
         {
             _sheetIcons = r.Tab?.Kind == "spell" || r.Tab?.Kind == "ability" ? ShowIcons() : null;
             var win = UiKit.OpenPage("cheat_detail", r.Tab?.Label ?? "", null, () => Refresh());
@@ -834,6 +849,7 @@ namespace CoopCheat
                 img.preserveAspect = true;
                 UiKit.SetSprite(img, sprite);
             }
+            else if (SlotIcon(iconSlot) is byte[] icon) UiKit.Picture(pic.rt, icon, 0, 0, 200, 200);
             else UiKit.Tint(UiKit.Label(pic.rt, Initial(r.Name), 0, 0, 200, 200, 90, 4), UiKit.Gold);
 
             UiKit.Tint(UiKit.Label(card.rt, r.Name, 10, 234, 640, 58, 30, 4), UiKit.Gold);
@@ -854,7 +870,8 @@ namespace CoopCheat
                     if (row == null) continue;
                     row.Tab = _tabs.FirstOrDefault(t => t.Rows.Contains(row));
                     int id = traitId;
-                    var b = UiKit.AddButton(win.rt, "", ix, iy, 76, 76, 0, Gray, () => _ctx.Guard("особенность", () => OpenDetail(row)));
+                    int slot = ti;
+                    var b = UiKit.AddButton(win.rt, "", ix, iy, 76, 76, 0, Gray, () => _ctx.Guard("особенность", () => OpenDetail(row, slot)));
                     nint sp = _sheetIcons != null && _sheetIcons.TryGetValue(id, out var sheet) ? sheet : IntPtr.Zero;
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", ti);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", ti + 1);
@@ -862,7 +879,13 @@ namespace CoopCheat
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Slot);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Slot + 1);
                     if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityPortrait", id);
-                    if (sp != IntPtr.Zero)
+                    if (SlotIcon(ti) is byte[] iconBytes)
+                    {
+                        var ic = UiKit.Node("ic", b.transform);
+                        UiKit.Place(ic.rt, 2, 2, 72, 72);
+                        UiKit.Picture(ic.rt, iconBytes, 0, 0, 72, 72);
+                    }
+                    else if (sp != IntPtr.Zero)
                     {
                         var ic = UiKit.Node("ic", b.transform);
                         UiKit.Place(ic.rt, 2, 2, 72, 72);

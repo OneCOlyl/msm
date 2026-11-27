@@ -19,4 +19,7 @@
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(Stubs)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.UI"><HintPath>$(Stubs)/UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="icons\*.png" />
+  </ItemGroup>
 </Project>
