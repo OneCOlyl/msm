@@ -1,5 +1,8 @@
 ## Не выпущено
 
+- **Cheat: an artifact shows its synergies as icons.** Under an artifact's description its synergies are buttons with the game's synergy portraits; tapping one opens that synergy's description.
+- **Чит: у артефакта видны иконки его синергий.** Под описанием артефакта синергии стоят кнопками с игровыми портретами; нажатие открывает описание этой синергии.
+
 - **Cheat: the trait choice stays the game's own.** «Все магии — максимум» stops each spell one level before its next trait choice, for example 6/7 (Magic Bolt — 3/7 before level 4). The player then presses «Уровень героя +1», picks the spell, and the game itself raises it and opens the trait window. The cheat does not open trait windows.
 - **Чит: выбор особенности остаётся игровым.** «Все магии — максимум» останавливает каждую магию за уровень до следующей особенности, например 6/7 (Пуля — 3/7 перед уровнем 4). Дальше игрок нажимает «Уровень героя +1», выбирает магию, и игра сама поднимает уровень и открывает окно особенности. Чит не открывает окна особенностей.
 

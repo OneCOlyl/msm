@@ -36,7 +36,7 @@ Commands: `get`, `ls`, `lsall`, `methods`, `nested`, `set`, `call`, `hook`, `ski
 In battle, the «ЧИТ» button on the right opens a book-style list, like the game's spell and artifact pages in the pause
 menu: section tabs on top, then a scrolling grid of the game portraits with the current level under each card. Learned
 entries are bright, the rest are dim. Tapping a card opens its description: a spell shows its traits and combinations,
-a synergy its artifacts, an artifact the synergies that use it, a combination its parts. A spell also shows its
+a synergy its artifacts, an artifact the synergies that use it as icons, a combination its parts. A spell also shows its
 traits as icons at the bottom; tapping one opens that trait's description. In that window a spell or
 ability can be raised or lowered by one level, an artifact or synergy removed, and a combination's abilities rolled back.
 

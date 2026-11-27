@@ -324,19 +324,30 @@ namespace CoopCheat
 
         private nint IconSprite(Row r)
         {
+            string kind = r.Tab?.Kind ?? Kind;
             // У особенности нет своего портрета в SpriteList; игра рисует значок её магии и красит по слоту.
-            if (r.ParentId > 0) { nint parent = UiKit.GameSprite("SpriteList_AbilityPortrait", r.ParentId); if (parent != IntPtr.Zero) return parent; }
-            string field = Kind == "combo" ? "SpriteList_MagicComPortrait" : Kind == "syn" ? "SpriteList_SynergyPortrait" : "SpriteList_AbilityPortrait";
+            if (kind == "ability" && r.ParentId > 0) { nint parent = UiKit.GameSprite("SpriteList_AbilityPortrait", r.ParentId); if (parent != IntPtr.Zero) return parent; }
+            string field = kind == "combo" ? "SpriteList_MagicComPortrait" : kind == "syn" ? "SpriteList_SynergyPortrait" : "SpriteList_AbilityPortrait";
             nint sprite = UiKit.GameSprite(field, r.Icon > 0 ? r.Icon : r.Id);
-            if (sprite == IntPtr.Zero && Kind == "ability")
+            if (sprite == IntPtr.Zero && kind == "ability")
             {
                 sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Icon);
                 if (sprite == IntPtr.Zero) sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Id);
                 if (sprite == IntPtr.Zero) sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Slot);
                 if (sprite == IntPtr.Zero) sprite = UiKit.GameSprite("SpriteList_AbilityPortrait", r.Id);
             }
-            if (sprite == IntPtr.Zero && Kind == "syn") sprite = UiKit.GameSprite("SpriteList_SynergyNum", r.Id);
+            if (sprite == IntPtr.Zero && kind == "syn") sprite = UiKit.GameSprite("SpriteList_SynergyNum", r.Id);
             return sprite;
+        }
+
+        private List<Row> SynergiesOf(Row artifact)
+        {
+            var res = new List<Row>();
+            var tab = _tabs.FirstOrDefault(t => t.Kind == "syn");
+            if (tab == null) return res;
+            foreach (var row in tab.Rows)
+                if (row.Req != null && row.Req.Contains(artifact.Id)) { row.Tab = tab; res.Add(row); }
+            return res;
         }
 
         private bool Learned(Row r)
@@ -908,16 +919,47 @@ namespace CoopCheat
                         im.raycastTarget = false;
                         im.color = TraitColor(row);
                         UiKit.SetSprite(im, sp);
+                        UiKit.AddButton(ic.rt, "", 0, 0, 72, 72, 0, Clear, () => _ctx.Guard("особенность", () => OpenDetail(row, slot)));
                     }
                     else if (SlotIcon(ti) is byte[] iconBytes)
                     {
                         var ic = UiKit.Node("ic", b.transform);
                         UiKit.Place(ic.rt, 2, 2, 72, 72);
                         UiKit.Picture(ic.rt, iconBytes, 0, 0, 72, 72);
+                        UiKit.AddButton(ic.rt, "", 0, 0, 72, 72, 0, Clear, () => _ctx.Guard("особенность", () => OpenDetail(row, slot)));
                     }
                     else UiKit.Tint(UiKit.Label(b.transform, Initial(row.Name), 0, 0, 76, 76, 26, 4), UiKit.Gold);
                     ix += 86;
                     ti++;
+                }
+            }
+
+            if (r.Tab?.Kind == "artifact")
+            {
+                var syn = SynergiesOf(r);
+                if (syn.Count > 0)
+                {
+                    double iy2 = UiKit.ScreenH - 260;
+                    double rowW = syn.Count * 86 - 10;
+                    double ix2 = Math.Max(10, (720 - rowW) / 2);
+                    foreach (var srow in syn)
+                    {
+                        var sr = srow;
+                        var b = UiKit.AddButton(win.rt, "", ix2, iy2, 76, 76, 0, Gray, () => _ctx.Guard("синергия", () => OpenDetail(sr)));
+                        nint sp2 = IconSprite(sr);
+                        if (sp2 != IntPtr.Zero)
+                        {
+                            var ic = UiKit.Node("ic", b.transform);
+                            UiKit.Place(ic.rt, 2, 2, 72, 72);
+                            var im = UiKit.AddImage(ic.go, 1, 1, 1, 1);
+                            im.preserveAspect = true;
+                            im.raycastTarget = false;
+                            UiKit.SetSprite(im, sp2);
+                            UiKit.AddButton(ic.rt, "", 0, 0, 72, 72, 0, Clear, () => _ctx.Guard("синергия", () => OpenDetail(sr)));
+                        }
+                        else UiKit.Tint(UiKit.Label(b.transform, Initial(sr.Name), 0, 0, 76, 76, 26, 4), UiKit.Gold);
+                        ix2 += 86;
+                    }
                 }
             }
 
