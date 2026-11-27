@@ -754,9 +754,26 @@ namespace CoopCheat
 
         private void OpenDetail(Row r)
         {
-            var win = UiKit.OpenPage("cheat_detail", r.Name, r.Tab?.Label, () => Refresh());
-            UiKit.Label(win.rt, Describe(r), 28, 230, 664, 200, 18, 0);
-            UiKit.Label(win.rt, Links(r), 28, 440, 664, 220, 16, 0);
+            var win = UiKit.OpenPage("cheat_detail", r.Tab?.Label ?? "", null, () => Refresh());
+            double cardH = UiKit.ScreenH - 340;
+            var card = UiKit.Node("detail_card", win.rt);
+            UiKit.Place(card.rt, 30, 190, 660, cardH);
+            UiKit.AddImage(card.go, 0.02, 0.02, 0.03, 0.98);
+
+            var pic = UiKit.Node("pic", card.rt);
+            UiKit.Place(pic.rt, 230, 24, 200, 200);
+            var img = UiKit.AddImage(pic.go, 1, 1, 1, 1);
+            img.preserveAspect = true;
+            nint sprite = IconSprite(r);
+            if (sprite != IntPtr.Zero) UiKit.SetSprite(img, sprite);
+
+            UiKit.Tint(UiKit.Label(card.rt, r.Name, 10, 234, 640, 58, 30, 4), UiKit.Gold);
+            string sub = r.Tab?.Kind == "artifact" && r.Grade >= 0 ? Grades[r.Grade] : LevelText(r);
+            UiKit.Tint(UiKit.Label(card.rt, sub, 10, 292, 640, 34, 18, 4), UiKit.Col(0.55, 0.75, 0.95, 0.95));
+            string desc = Describe(r);
+            if (!string.IsNullOrEmpty(desc)) UiKit.Label(card.rt, desc, 20, 330, 620, 120, 17, 4);
+            UiKit.Label(card.rt, Links(r), 20, 460, 620, Math.Max(100, cardH - 480), 16, 0);
+
             double y = UiKit.ScreenH - 140;
             void Close() { win.go.SetActive(false); }
             switch (r.Tab?.Kind)
