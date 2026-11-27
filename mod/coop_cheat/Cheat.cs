@@ -52,7 +52,7 @@ namespace CoopCheat
         // Комбо и синергии игра даёт сама, когда выучены их составляющие (MagicCom 특성A/B/C레벨, Synergy ID_01…05 — номера
         // способностей Ability): чит учит недостающие составляющие. 0.4.0 клал номер комбо в список выученного — это номер
         // другой способности (Комбо 1 = Пуля), так нельзя.
-        private sealed class Row { public int Id; public string Name; public int[] Req; public int Grade = -1; public int Icon; public TabDef Tab; }
+        private sealed class Row { public int Id; public string Name; public int[] Req; public int Grade = -1; public int Icon; public int Slot; public TabDef Tab; }
 
         // Редкость артефакта — в каком пуле игры его номер: Z_Database.List_ArtifactPossibleGrade_<буква>, от частых к редким (как в
         // modkit_data: C, B, A, P, S). S игра подписывает «Special Artifact». Пулы читаются при первом открытии меню в бою.
@@ -245,6 +245,7 @@ namespace CoopCheat
         {
             string field = Kind == "combo" ? "SpriteList_MagicComPortrait" : Kind == "syn" ? "SpriteList_SynergyPortrait" : "SpriteList_AbilityPortrait";
             nint sprite = UiKit.GameSprite(field, r.Icon > 0 ? r.Icon : r.Id);
+            if (sprite == IntPtr.Zero && Kind == "ability") { sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Slot); if (sprite == IntPtr.Zero) sprite = UiKit.GameSprite("SpriteList_AbilityChPortrait", r.Slot + 1); }
             if (sprite == IntPtr.Zero && Kind == "syn") sprite = UiKit.GameSprite("SpriteList_SynergyNum", r.Id);
             return sprite;
         }
@@ -312,12 +313,15 @@ namespace CoopCheat
                     if (!byType.TryGetValue(type, out var td))
                         byType[type] = td = new TabDef { Label = TypeNames.TryGetValue(type, out var ru) ? ru : "Тип " + (byType.Count + 1), Kind = type == "아티팩트" ? "artifact" : "ability" };
                     int derived = type == "특성" ? CellInt(tb, r, derivedCol) : 0;
-                    int icon = derived > 0 ? derived : id;
+                    int slot = type == "특성" ? CellInt(tb, r, "특성ID") : 0;
+                    int icon = id;
                     if (type == "`" && id >= 361 && id <= 541) icon = (id - 361) / 9 + 1;
-                    td.Rows.Add(new Row { Id = id, Name = Short(name), Icon = icon });
+                    var newRow = new Row { Id = id, Name = Short(name), Icon = icon, Slot = slot };
+                    td.Rows.Add(newRow);
                     if (derived > 0)
                     {
                         if (!_traits.TryGetValue(derived, out var list)) _traits[derived] = list = new List<int>();
+                        newRow.Slot = list.Count;
                         list.Add(id);
                     }
                 }
@@ -755,24 +759,56 @@ namespace CoopCheat
         private void OpenDetail(Row r)
         {
             var win = UiKit.OpenPage("cheat_detail", r.Tab?.Label ?? "", null, () => Refresh());
-            double cardH = UiKit.ScreenH - 340;
+            double cardH = UiKit.ScreenH - 460;
             var card = UiKit.Node("detail_card", win.rt);
             UiKit.Place(card.rt, 30, 190, 660, cardH);
             UiKit.AddImage(card.go, 0.02, 0.02, 0.03, 0.98);
 
             var pic = UiKit.Node("pic", card.rt);
             UiKit.Place(pic.rt, 230, 24, 200, 200);
-            var img = UiKit.AddImage(pic.go, 1, 1, 1, 1);
-            img.preserveAspect = true;
             nint sprite = IconSprite(r);
-            if (sprite != IntPtr.Zero) UiKit.SetSprite(img, sprite);
+            if (sprite != IntPtr.Zero)
+            {
+                var img = UiKit.AddImage(pic.go, 1, 1, 1, 1);
+                img.preserveAspect = true;
+                UiKit.SetSprite(img, sprite);
+            }
+            else UiKit.Tint(UiKit.Label(pic.rt, Initial(r.Name), 0, 0, 200, 200, 90, 4), UiKit.Gold);
 
             UiKit.Tint(UiKit.Label(card.rt, r.Name, 10, 234, 640, 58, 30, 4), UiKit.Gold);
             string SubLabel() => r.Tab?.Kind == "artifact" && r.Grade >= 0 ? Grades[r.Grade] : LevelText(r);
             Text level = UiKit.Tint(UiKit.Label(card.rt, SubLabel(), 10, 292, 640, 34, 18, 4), UiKit.Col(0.55, 0.75, 0.95, 0.95));
             string desc = Describe(r);
             if (!string.IsNullOrEmpty(desc)) UiKit.Label(card.rt, desc, 20, 330, 620, 120, 17, 4);
-            Text links = UiKit.Label(card.rt, Links(r), 20, 460, 620, Math.Max(100, cardH - 480), 16, 0);
+            double linksH = Math.Max(100, cardH - 480 - (r.Tab?.Kind == "spell" ? 120 : 0));
+            Text links = UiKit.Label(card.rt, Links(r), 20, 460, 620, linksH, 16, 0);
+
+            if (r.Tab?.Kind == "spell" && _traits.TryGetValue(r.Id, out var traits))
+            {
+                double ix = 34, iy = UiKit.ScreenH - 260;
+                foreach (int traitId in traits)
+                {
+                    var row = RowOf("ability", traitId);
+                    if (row == null) continue;
+                    row.Tab = _tabs.FirstOrDefault(t => t.Rows.Contains(row));
+                    int id = traitId;
+                    var b = UiKit.AddButton(win.rt, "", ix, iy, 76, 76, 0, Gray, () => _ctx.Guard("особенность", () => OpenDetail(row)));
+                    nint sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Slot);
+                    if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityChPortrait", row.Slot + 1);
+                    if (sp == IntPtr.Zero) sp = UiKit.GameSprite("SpriteList_AbilityPortrait", id);
+                    if (sp != IntPtr.Zero)
+                    {
+                        var ic = UiKit.Node("ic", b.transform);
+                        UiKit.Place(ic.rt, 2, 2, 72, 72);
+                        var im = UiKit.AddImage(ic.go, 1, 1, 1, 1);
+                        im.preserveAspect = true;
+                        im.raycastTarget = false;
+                        UiKit.SetSprite(im, sp);
+                    }
+                    else UiKit.Tint(UiKit.Label(b.transform, Initial(row.Name), 0, 0, 76, 76, 26, 4), UiKit.Gold);
+                    ix += 86;
+                }
+            }
 
             double y = UiKit.ScreenH - 140;
             void Close() { win.go.SetActive(false); }
@@ -835,7 +871,6 @@ namespace CoopCheat
             string kind = r.Tab?.Kind ?? Kind;
             if (kind == "spell" && _traits.TryGetValue(r.Id, out var traits))
             {
-                parts.Add("Особенности: " + string.Join(", ", traits.Select(x => NameOf("ability", x))));
                 var combos = CombosUsing(traits);
                 if (combos.Count > 0) parts.Add("Комбинации: " + string.Join(", ", combos));
             }
@@ -866,11 +901,10 @@ namespace CoopCheat
                 .Where(x => x.Req != null && x.Req.Any(set.Contains)).Select(x => x.Name).Distinct().ToList();
         }
 
-        private string NameOf(string kind, int id)
-        {
-            var row = _tabs.Where(t => t.Kind == kind).SelectMany(t => t.Rows).FirstOrDefault(x => x.Id == id);
-            return row?.Name ?? id.ToString();
-        }
+        private Row RowOf(string kind, int id) =>
+            _tabs.Where(t => t.Kind == kind).SelectMany(t => t.Rows).FirstOrDefault(x => x.Id == id);
+
+        private string NameOf(string kind, int id) => RowOf(kind, id)?.Name ?? id.ToString();
 
         private void PressRow(Row r)
         {
