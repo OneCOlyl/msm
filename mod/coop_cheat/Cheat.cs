@@ -248,12 +248,9 @@ namespace CoopCheat
             try
             {
                 var asm = _db?.GetType().Assembly;
-                var showType = asm?.GetType("V_AbilityShow");
-                var sheetType = asm?.GetType("X_Select_AbilityShow");
-                if (showType == null || sheetType == null) return res;
-                var find = typeof(Resources).GetMethod("FindObjectsOfTypeAll", new[] { typeof(Type) })
-                    ?? typeof(UnityEngine.Object).GetMethod("FindObjectsOfType", new[] { typeof(Type) });
-                if (find == null) return res;
+                var showType = asm?.GetType("V_AbilityShow") ?? AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("V_AbilityShow")).FirstOrDefault(x => x != null);
+                var sheetType = asm?.GetType("X_Select_AbilityShow") ?? AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("X_Select_AbilityShow")).FirstOrDefault(x => x != null);
+                if (sheetType == null) return res;
                 var idField = sheetType.GetField("Apply_AbilityID", Any);
                 var imgField = sheetType.GetField("Img_AbilityPortrait", Any);
                 void Add(object sheet)
@@ -266,10 +263,29 @@ namespace CoopCheat
                     var ptr = sprite.GetType().GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance)?.GetValue(sprite);
                     if (ptr is nint p && p != IntPtr.Zero) res[id] = p;
                 }
-                var sheets = find.Invoke(null, new object[] { sheetType }) as Array;
+
+                // Ресурсный поиск в IL2CPP может быть вырезан; обходим активную сцену и её Canvas.
+                try
+                {
+                    var sceneType = Type.GetType("UnityEngine.SceneManagement.SceneManager, UnityEngine.CoreModule");
+                    var scene = sceneType?.GetMethod("GetActiveScene", Type.EmptyTypes)?.Invoke(null, null);
+                    var roots = scene?.GetType().GetMethod("GetRootGameObjects", Type.EmptyTypes)?.Invoke(scene, null) as Array;
+                    if (roots != null) foreach (var root in roots)
+                    {
+                        var get = root?.GetType().GetMethod("GetComponentsInChildren", new[] { typeof(Type), typeof(bool) });
+                        if (get == null) continue;
+                        var comps = get.Invoke(root, new object[] { sheetType, true }) as Array;
+                        if (comps != null) foreach (var c in comps) Add(c);
+                    }
+                }
+                catch { }
+
+                var find = typeof(Resources).GetMethod("FindObjectsOfTypeAll", new[] { typeof(Type) })
+                    ?? typeof(UnityEngine.Object).GetMethod("FindObjectsOfType", new[] { typeof(Type) });
+                var sheets = find != null ? find.Invoke(null, new object[] { sheetType }) as Array : null;
                 if (sheets != null) foreach (var sheet in sheets) Add(sheet);
-                var shows = find.Invoke(null, new object[] { showType }) as Array;
-                var listField = showType.GetField("List_ObjAbilityShowSheet", Any);
+                var shows = find != null && showType != null ? find.Invoke(null, new object[] { showType }) as Array : null;
+                var listField = showType?.GetField("List_ObjAbilityShowSheet", Any);
                 if (shows != null) foreach (var show in shows)
                 {
                     if (!(listField?.GetValue(show) is System.Collections.IEnumerable list)) continue;
