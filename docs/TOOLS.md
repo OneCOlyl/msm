@@ -40,7 +40,7 @@ a synergy its artifacts, an artifact the synergies that use it as icons, a combi
 traits as icons at the bottom; tapping one opens that trait's description. In that window a spell or
 ability can be raised or lowered by one level, an artifact or synergy removed, and a combination's abilities rolled back.
 
-- tabs: spells, traits, special passives, passives, artifacts, other, enchantments, combinations, synergies;
+- tabs: spells, traits, special passives, passives, artifacts, enchantments, combinations, synergies;
 - research is a main-menu meta upgrade and is not in the in-battle menu; the passives offered at the maximum hero level are
   under «Спец.пасс.» (special passives) and «Пассив» (passives);
 - «Уровень героя +1» (hero level +1) opens the magic selection window at once: the cheat gives exactly the mana missing

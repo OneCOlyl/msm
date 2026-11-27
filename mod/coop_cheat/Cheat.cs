@@ -431,6 +431,7 @@ namespace CoopCheat
                 foreach (var td in byType.Values.Where(t => t.Kind == "artifact")) SortByGrade(td);
                 // особенности и спец. пассивы — первыми (это «специальные магии»), исследования и зачарование — в конце
                 foreach (var kv in byType.OrderBy(kv => Array.IndexOf(TypeOrder, kv.Key) < 0 ? 99 : Array.IndexOf(TypeOrder, kv.Key))) _tabs.Add(kv.Value);
+                _tabs.RemoveAll(t => t.Label == "Прочее"); // дублирует «Магии» и ничего не меняет
                 _ctx.Log($"таблица Ability: типы {string.Join(", ", byType.Select(kv => $"{kv.Key} ({kv.Value.Label}) {kv.Value.Rows.Count}"))}");
                 foreach (var kv in byType)
                     for (int i = 0; i < kv.Value.Rows.Count; i += 60)

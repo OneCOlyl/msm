@@ -1,5 +1,8 @@
 ## Не выпущено
 
+- **Cheat: the “Other” tab is gone.** It repeated the spell entries and changed nothing; the abilities tab keeps the working entries.
+- **Чит: вкладки «Прочее» больше нет.** Она повторяла записи магий и ничего не меняла; рабочие записи остались на вкладке особенностей.
+
 - **Cheat: an artifact shows its synergies as icons.** Under an artifact's description its synergies are buttons with the game's synergy portraits; tapping one opens that synergy's description.
 - **Чит: у артефакта видны иконки его синергий.** Под описанием артефакта синергии стоят кнопками с игровыми портретами; нажатие открывает описание этой синергии.
 
