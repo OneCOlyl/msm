@@ -768,20 +768,21 @@ namespace CoopCheat
             if (sprite != IntPtr.Zero) UiKit.SetSprite(img, sprite);
 
             UiKit.Tint(UiKit.Label(card.rt, r.Name, 10, 234, 640, 58, 30, 4), UiKit.Gold);
-            string sub = r.Tab?.Kind == "artifact" && r.Grade >= 0 ? Grades[r.Grade] : LevelText(r);
-            UiKit.Tint(UiKit.Label(card.rt, sub, 10, 292, 640, 34, 18, 4), UiKit.Col(0.55, 0.75, 0.95, 0.95));
+            string SubLabel() => r.Tab?.Kind == "artifact" && r.Grade >= 0 ? Grades[r.Grade] : LevelText(r);
+            Text level = UiKit.Tint(UiKit.Label(card.rt, SubLabel(), 10, 292, 640, 34, 18, 4), UiKit.Col(0.55, 0.75, 0.95, 0.95));
             string desc = Describe(r);
             if (!string.IsNullOrEmpty(desc)) UiKit.Label(card.rt, desc, 20, 330, 620, 120, 17, 4);
-            UiKit.Label(card.rt, Links(r), 20, 460, 620, Math.Max(100, cardH - 480), 16, 0);
+            Text links = UiKit.Label(card.rt, Links(r), 20, 460, 620, Math.Max(100, cardH - 480), 16, 0);
 
             double y = UiKit.ScreenH - 140;
             void Close() { win.go.SetActive(false); }
+            void Update() { level.text = SubLabel(); links.text = Links(r); }
             switch (r.Tab?.Kind)
             {
                 case "spell":
                 case "ability":
-                    UiKit.AddButton(win.rt, "+1 уровень", 28, y, 320, 60, 18, Green, () => { Close(); _ctx.Guard("+1", () => PressOn(r, false)); });
-                    UiKit.AddButton(win.rt, "−1 уровень", 372, y, 320, 60, 18, Gray, () => { Close(); _ctx.Guard("−1", () => PressOn(r, true)); });
+                    UiKit.AddButton(win.rt, "+1 уровень", 28, y, 320, 60, 18, Green, () => _ctx.Guard("+1", () => { PressOn(r, false); Update(); }));
+                    UiKit.AddButton(win.rt, "−1 уровень", 372, y, 320, 60, 18, Gray, () => _ctx.Guard("−1", () => { PressOn(r, true); Update(); }));
                     break;
                 case "artifact":
                     UiKit.AddButton(win.rt, "Убрать артефакт", 28, y, 664, 60, 18, Red, () => { Close(); _ctx.Guard("убрать", () => PressOn(r, true)); });
